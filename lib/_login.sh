@@ -223,7 +223,82 @@ _tt_login_submit() {
 # The fallback cannot mask a genuinely wrong password: it only runs after a
 # rejection, and if the app's own page rejects too, the failure names both
 # attempts.
+# ---------------------------------------------------------------------------
+# Authentication state cache
+#
+# Every one of the 50 scripts used to call tt_login, and tt_login always did a
+# full logout + form sign-in. Against Mendix Cloud that is ~50 sequential
+# round-trip logins and it dominated the run: the first CI run spent 40+ minutes
+# and was still going. There are only about four distinct identities in the
+# suite, so the other ~46 logins are pure overhead.
+#
+# tt_login now replays a saved storage state when one exists for that identity,
+# and only falls back to the real form sign-in when there is no state or the
+# state no longer works. Correctness rule: the fast path must PROVE it landed
+# authenticated on the expected dashboard, and on any doubt it deletes the cache
+# entry and lets the full sign-in run. A stale session must never look like a
+# pass.
+#
+# Set TT_AUTH_CACHE=0 to force the full form login — verify-smoke-login does
+# this, because testing the login flow is the whole point of that script.
+TT_AUTH_DIR="${TT_AUTH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.auth}"
+
+# Key on user AND base URL, so a cache written against localhost is never
+# replayed against dev/acceptance.
+_tt_auth_file() {
+  local key
+  key="$(printf '%s@%s' "$1" "$TT_BASE" | tr -c 'A-Za-z0-9._@-' '_')"
+  printf '%s/%s.json\n' "$TT_AUTH_DIR" "$key"
+}
+
+_tt_auth_try() {
+  local user="$1" ready="$2" f i
+  [ "${TT_AUTH_CACHE:-1}" = "1" ] || return 1
+  f="$(_tt_auth_file "$user")"
+  [ -s "$f" ] || return 1
+
+  playwright-cli state-load "$f" >/dev/null 2>&1 || return 1
+  playwright-cli goto "$TT_BASE/" >/dev/null 2>&1 || return 1
+
+  # The landing-text assertion is what makes this safe: it is the same check the
+  # interactive path uses to decide a login succeeded.
+  for i in $(seq 1 10); do
+    if playwright-cli eval "() => String(document.body ? document.body.innerText.indexOf('$ready') >= 0 : false)" 2>/dev/null | grep -qiw true; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  rm -f "$f"   # expired or wrong — drop it so we do not retry it all run
+  return 1
+}
+
+_tt_auth_save() {
+  local f
+  [ "${TT_AUTH_CACHE:-1}" = "1" ] || return 0
+  f="$(_tt_auth_file "$1")"
+  mkdir -p "$TT_AUTH_DIR" 2>/dev/null || return 0
+  playwright-cli state-save "$f" >/dev/null 2>&1 || true
+}
+
+# tt_login <username> <ready-text> [password]
+# Replays a cached session when possible; otherwise signs in for real and caches
+# the result. Same signature and same failure behaviour as before.
 tt_login() {
+  local user="$1" ready="$2" pass="${3:-$TT_PASS}"
+
+  if _tt_auth_try "$user" "$ready"; then
+    return 0
+  fi
+
+  _tt_login_interactive "$user" "$ready" "$pass"   # tt_fail's on failure
+  _tt_auth_save "$user"
+  return 0
+}
+
+# The original full sign-in: logout, find the form variant, submit, fall back to
+# Core.Login. Unchanged apart from the name.
+_tt_login_interactive() {
   local user="$1" ready="$2" pass="${3:-$TT_PASS}"
   local variant rc
 

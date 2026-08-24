@@ -6,6 +6,9 @@
 !*.env.example
 
 # --- run artefacts ---------------------------------------------------------
+# .auth/ holds saved browser storage state — live session cookies. Treat it as
+# credentials, never commit it.
+.auth/
 .playwright-cli/
 *-failure.png
 test-results/

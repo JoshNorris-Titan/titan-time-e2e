@@ -21,7 +21,9 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 45 was not enough for a first full run against cloud dev; raised so the
+    # baseline can actually finish rather than being guillotined mid-suite.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +51,9 @@ jobs:
           TT_E2E_CONSULTANTS: ${{ secrets.TT_E2E_CONSULTANTS }}
         run: |
           chmod +x ./run-tests.sh
-          ./run-tests.sh --junit results.xml --skip-file ci-skip.txt --verbose
+          # No --verbose: failures already print their own output, and at 50
+          # scripts the passing chatter buried the signal.
+          ./run-tests.sh --junit results.xml --skip-file ci-skip.txt
 
       - name: Upload results
         if: always()

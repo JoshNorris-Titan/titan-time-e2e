@@ -22,6 +22,10 @@ source "$(dirname "$0")/lib/_login.sh"
 USER="${TT_ADMIN_USER:-MxAdmin}"
 PASS="${TT_ADMIN_PASS:-AdminPassword1!}"
 
+# Exercising the real sign-in IS this test. Replaying a cached session here would
+# assert nothing about the login flow, so opt out of the auth-state cache.
+export TT_AUTH_CACHE=0
+
 # tt_login handles both the legacy /login.html form and the current custom
 # Core.Login page, logs out any prior session, and asserts the landing text.
 # (Third arg overrides the default e2e password with the admin password.)
