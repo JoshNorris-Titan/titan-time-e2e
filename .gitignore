@@ -1,5 +1,7 @@
 # --- secrets: never commit -------------------------------------------------
-# Mailpit SMTP credentials and the TT-654 seed token file hold live secrets.
+# The TT-654 seed token file holds live secrets. .mailpit/ is runtime scratch
+# (pid + log) — it no longer holds credentials, since the catcher runs with
+# --smtp-auth-accept-any and has none, but there is no reason to commit it.
 .mailpit/
 .tt654-seed.env
 *.env

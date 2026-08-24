@@ -458,42 +458,6 @@ tt_testmail_token() {
   return 1
 }
 
-# ---------------------------------------------------------------------------
-# Mail access
-#
-# The suite reads token emails from testmail.app. It is the only option that
-# works when the suite points at a Mendix Cloud environment, since those cannot
-# reach this machine.
-# ---------------------------------------------------------------------------
-
-# tt_mail_prepare — check the mail credentials are present. Call it BEFORE the
-# action that triggers the send.
-tt_mail_prepare() {
-  [ -n "${TT_TESTMAIL_APIKEY:-}" ] && [ -n "${TT_TESTMAIL_NAMESPACE:-}" ] \
-    || tt_fail "set TT_TESTMAIL_APIKEY and TT_TESTMAIL_NAMESPACE"
-}
-
-# tt_mail_address <tag>
-# An address the app can be told to send to and that this suite can then read
-# back: <namespace>.<tag>@inbox.testmail.app. <tag> doubles as the recipient
-# filter for tt_mail_token / tt_mail_message, since it IS the testmail tag.
-tt_mail_address() {
-  local tag="${1:-e2e}"
-  echo "${TT_TESTMAIL_NAMESPACE}.${tag}@inbox.testmail.app"
-}
-
-# tt_mail_token <ts-ms> [link-regex] [recipient]
-# Print the first link matching <link-regex> (default: customer-approval) from
-# the mail the app just sent, newer than <ts-ms>.
-#
-# <recipient> is the inbox TAG, since testmail addresses are
-# namespace.tag@inbox.testmail.app. Pass "" to accept the default tag.
-tt_mail_token() {
-  local ts="$1" rx="${2:-customer-approval}" want="${3:-}"
-  tt_testmail_token "${TT_TESTMAIL_APIKEY}" "${TT_TESTMAIL_NAMESPACE}" \
-    "${want:-${TT_TESTMAIL_CUSTAPPROVAL_TAG:-custapproval}}" "$ts" "$rx"
-}
-
 # tt_testmail_message <apikey> <namespace> <tag> <ts-ms> [timeout-seconds]
 # Print "Subject: <subject>", a blank line, then the body of the newest mail
 # newer than <ts-ms>. Returns 1 on timeout.
@@ -514,16 +478,179 @@ tt_testmail_message() {
   return 1
 }
 
-# tt_mail_message <ts-ms> [recipient] [timeout-seconds]
-# Print the mail the app just sent as "Subject: <s>", blank line, then the body
-# (plain text where present, else HTML with tags stripped) — the primitive for
-# a test that wants to LOOK at the email rather than pull a link out of it.
-# <recipient> follows the same meaning as in tt_mail_token.
-tt_mail_message() {
-  local ts="$1" want="${2:-}" budget="${3:-}"
-  tt_testmail_message "${TT_TESTMAIL_APIKEY}" "${TT_TESTMAIL_NAMESPACE}" \
-    "${want:-${TT_TESTMAIL_CUSTAPPROVAL_TAG:-custapproval}}" "$ts" "${budget:-90}"
+# ---------------------------------------------------------------------------
+# Mail access
+#
+# Two backends, one API. Tests only ever call tt_mail_*, and do not care which
+# one is answering:
+#
+#   mailpit    A catcher running on this machine (see tools/mailpit.sh). Mail
+#              never leaves the laptop, arrives in milliseconds, and the inbox
+#              can be EMPTIED — which is what makes a mail assertion
+#              deterministic rather than a race against yesterday's message.
+#              Only usable when the app itself runs locally: a Mendix Cloud
+#              environment cannot open a connection back to this machine.
+#   testmail   The hosted testmail.app inbox. Slower, needs an API key, and its
+#              inbox cannot be emptied — but it is the only one that works when
+#              the suite points at a cloud environment.
+#
+# TT_MAIL_BACKEND = auto (default) | mailpit | testmail
+#   auto -> mailpit when its API answers locally, otherwise testmail.
+# ---------------------------------------------------------------------------
+
+TT_MAILPIT_URL="${TT_MAILPIT_URL:-http://127.0.0.1:8025}"
+
+# tt_mail_backend — which backend is in play. Resolved once, then cached, so a
+# run cannot start on one backend and silently finish on the other.
+tt_mail_backend() {
+  if [ -n "${_TT_MAIL_BACKEND_RESOLVED:-}" ]; then echo "$_TT_MAIL_BACKEND_RESOLVED"; return 0; fi
+  local want="${TT_MAIL_BACKEND:-auto}"
+  case "$want" in
+    mailpit|testmail) _TT_MAIL_BACKEND_RESOLVED="$want" ;;
+    auto)
+      if curl -fsS --max-time 2 "${TT_MAILPIT_URL}/api/v1/info" >/dev/null 2>&1; then
+        _TT_MAIL_BACKEND_RESOLVED=mailpit
+      else
+        _TT_MAIL_BACKEND_RESOLVED=testmail
+      fi
+      ;;
+    *) tt_fail "TT_MAIL_BACKEND must be auto, mailpit or testmail (got '$want')" ;;
+  esac
+  echo "$_TT_MAIL_BACKEND_RESOLVED"
 }
+
+# _tt_mail_tag [explicit] — the inbox tag a read should filter on.
+_tt_mail_tag() {
+  echo "${1:-${TT_MAIL_CUSTAPPROVAL_TAG:-${TT_TESTMAIL_CUSTAPPROVAL_TAG:-custapproval}}}"
+}
+
+# --- mailpit backend -------------------------------------------------------
+
+# _tt_mailpit_pick <tag> — ID of the newest mail addressed to <tag>@…, or 1.
+#
+# Falls back to the newest message of any recipient, loudly. That is safe only
+# because tt_mail_prepare empties the inbox before the triggering action, so
+# anything present arrived from the step under test — but it is announced,
+# since it would otherwise hide a "sent to the wrong address" bug.
+_tt_mailpit_pick() {
+  local tag="$1" list id
+  list=$(curl -fsS --max-time 5 "${TT_MAILPIT_URL}/api/v1/messages?limit=200" 2>/dev/null) || return 1
+  id=$(printf '%s' "$list" | jq -r --arg t "$tag" \
+        'first(.messages[]? | select([.To[]?.Address // ""] | any(startswith($t + "@"))) | .ID) // ""' 2>/dev/null)
+  if [ -z "$id" ] || [ "$id" = "null" ]; then
+    id=$(printf '%s' "$list" | jq -r 'first(.messages[]?.ID) // ""' 2>/dev/null)
+    if [ -n "$id" ] && [ "$id" != "null" ]; then
+      echo "note: no mail addressed to ${tag}@… — using the newest message instead (inbox was emptied before the trigger)" >&2
+    fi
+  fi
+  [ -n "$id" ] && [ "$id" != "null" ] || return 1
+  echo "$id"
+}
+
+_tt_mailpit_full() { curl -fsS --max-time 5 "${TT_MAILPIT_URL}/api/v1/message/${1}" 2>/dev/null; }
+
+# tt_mailpit_message <tag> [timeout-seconds]
+tt_mailpit_message() {
+  local tag="$1" budget="${2:-30}" waited=0 id full subj body
+  while [ "$waited" -lt "$budget" ]; do
+    if id=$(_tt_mailpit_pick "$tag"); then
+      full=$(_tt_mailpit_full "$id")
+      subj=$(printf '%s' "$full" | jq -r '.Subject // ""' 2>/dev/null)
+      body=$(printf '%s' "$full" \
+             | jq -r 'if (.Text // "") != "" then .Text else (.HTML // "") end' 2>/dev/null \
+             | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' -e 's/&amp;/\&/g')
+      printf 'Subject: %s\n\n%s\n' "$subj" "$body"
+      return 0
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  return 1
+}
+
+# tt_mailpit_token <tag> [link-regex] [timeout-seconds]
+tt_mailpit_token() {
+  local tag="$1" rx="${2:-customer-approval}" budget="${3:-30}" waited=0 id full link
+  while [ "$waited" -lt "$budget" ]; do
+    if id=$(_tt_mailpit_pick "$tag"); then
+      full=$(_tt_mailpit_full "$id")
+      link=$(printf '%s' "$full" | jq -r '((.HTML // "") + " " + (.Text // ""))' 2>/dev/null \
+             | grep -oE "https?://[^ \"<>()]+${rx}[^ \"<>()]*" | head -1)
+      if [ -n "$link" ]; then echo "$link"; return 0; fi
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  return 1
+}
+
+# --- the API the tests use -------------------------------------------------
+
+# tt_mail_prepare — make sure mail can be read, and start from a known-empty
+# inbox. Call it BEFORE the action that triggers the send.
+tt_mail_prepare() {
+  case "$(tt_mail_backend)" in
+    mailpit)
+      curl -fsS --max-time 3 "${TT_MAILPIT_URL}/api/v1/info" >/dev/null 2>&1 \
+        || tt_fail "mailpit is not answering at ${TT_MAILPIT_URL} — run tools/mailpit.sh start"
+      tt_mail_reset
+      ;;
+    testmail)
+      [ -n "${TT_TESTMAIL_APIKEY:-}" ] && [ -n "${TT_TESTMAIL_NAMESPACE:-}" ] \
+        || tt_fail "no mail backend available: either start the local catcher (tools/mailpit.sh start) or set TT_TESTMAIL_APIKEY and TT_TESTMAIL_NAMESPACE"
+      ;;
+  esac
+}
+
+# tt_mail_reset — empty the inbox, so no earlier mail can satisfy a later read.
+# A no-op on testmail, whose API offers no delete; there the <ts-ms> fence
+# passed to tt_mail_token / tt_mail_message does the same job less reliably.
+tt_mail_reset() {
+  case "$(tt_mail_backend)" in
+    mailpit) curl -fsS -X DELETE --max-time 5 "${TT_MAILPIT_URL}/api/v1/messages" >/dev/null 2>&1 || true ;;
+    testmail) : ;;
+  esac
+}
+
+# tt_mail_address <tag>
+# An address the app can be told to send to and that this suite can then read
+# back. <tag> doubles as the recipient filter for tt_mail_token /
+# tt_mail_message on both backends.
+tt_mail_address() {
+  local tag="${1:-e2e}"
+  case "$(tt_mail_backend)" in
+    mailpit)  echo "${tag}@${TT_MAILPIT_DOMAIN:-e2e.local}" ;;
+    testmail) echo "${TT_TESTMAIL_NAMESPACE}.${tag}@inbox.testmail.app" ;;
+  esac
+}
+
+# tt_mail_token <ts-ms> [link-regex] [recipient]
+# Print the first link matching <link-regex> (default: customer-approval) from
+# the mail the app just sent.
+#
+# <ts-ms> is the freshness fence for testmail. mailpit ignores it and relies on
+# the empty inbox from tt_mail_prepare, which is a stronger guarantee; the
+# argument is kept so a test reads the same on either backend.
+tt_mail_token() {
+  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" tag
+  tag="$(_tt_mail_tag "$want")"
+  case "$(tt_mail_backend)" in
+    mailpit)  tt_mailpit_token "$tag" "$rx" ;;
+    testmail) tt_testmail_token "${TT_TESTMAIL_APIKEY}" "${TT_TESTMAIL_NAMESPACE}" "$tag" "$ts" "$rx" ;;
+  esac
+}
+
+# tt_mail_message <ts-ms> [recipient] [timeout-seconds]
+# Print the mail the app just sent as "Subject: <s>", a blank line, then the
+# body (plain text where present, else HTML with tags stripped) — the primitive
+# for a test that wants to LOOK at the email rather than pull a link out of it.
+tt_mail_message() {
+  local ts="$1" want="${2:-}" budget="${3:-}" tag
+  tag="$(_tt_mail_tag "$want")"
+  case "$(tt_mail_backend)" in
+    mailpit)  tt_mailpit_message "$tag" "${budget:-30}" ;;
+    testmail) tt_testmail_message "${TT_TESTMAIL_APIKEY}" "${TT_TESTMAIL_NAMESPACE}" "$tag" "$ts" "${budget:-90}" ;;
+  esac
+}
+
 
 # tt_consultant_submit_entry
 # Fallback data-setup (only used when no pending entry exists): as the currently
