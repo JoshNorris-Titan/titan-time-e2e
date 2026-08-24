@@ -318,24 +318,54 @@ tt654_mcp_tools() {
   playwright-cli eval "$(_tt654_mcp_js "$1" "tools/list" "{}")" 2>/dev/null | _tt_eval_str | tr -d '\r'
 }
 
-# tt654_mint_token — click Generate MCP token on the consultant dashboard and
-# echo the raw token. The stored value is a SHA-256 hash, so this message is the
-# only place the token is ever readable.
+# tt654_mint_token — mint an MCP token via the "Connect my LLM" flow and echo the
+# raw token. The stored value is hashed, so the copy-ready snippet this produces is
+# the only place the token is ever readable.
+#
+# THE UI MOVED. This used to be one button on the dashboard
+# (actionButtonGenerateMCPToken) that popped a message containing the token. That
+# button no longer exists — on dev it returns a count of 0 while
+# actionButtonConnectMyLLM returns 1. The flow is now:
+#
+#   dashboard: actionButtonConnectMyLLM
+#     -> modal "Connect my LLM"
+#          actionButtonGenerateToken2      mints the token
+#          tabContainerClients             one tab per client
+#          textAreaClaudeCode              holds a ready-to-paste command:
+#            claude mcp add --transport http titan-time <base>/titan-time/mcp \
+#              --header "Authorization: Bearer <token>"
+#
+# So the token is now parsed out of that snippet rather than read from a dialog.
+# Driving the old button is what made verify-tt654-a1 time out and left a4/a5/a6
+# asserting against an empty token — which surfaced as "AUTHFAIL" and
+# "MCP rejected a freshly minted token", i.e. as if the server were broken. It is
+# not: a token minted through this flow returns all seven tools from tools/list.
 tt654_mint_token() {
   local tok
-  if ! playwright-cli eval "() => String(!!document.querySelector('.mx-name-actionButtonGenerateMCPToken'))" 2>/dev/null | grep -qiw true; then
+  if ! playwright-cli eval "() => String(!!document.querySelector('.mx-name-actionButtonConnectMyLLM'))" 2>/dev/null | grep -qiw true; then
     playwright-cli goto "$TT_BASE/" >/dev/null 2>&1
     sleep 3
   fi
-  tt_wait_for ".mx-name-actionButtonGenerateMCPToken" "Generate MCP token button"
-  playwright-cli click ".mx-name-actionButtonGenerateMCPToken" >/dev/null 2>&1
+  tt_wait_for ".mx-name-actionButtonConnectMyLLM" "Connect my LLM button on the consultant dashboard"
+  playwright-cli click ".mx-name-actionButtonConnectMyLLM" >/dev/null 2>&1
+
+  tt_wait_for ".mx-name-actionButtonGenerateToken2" "Generate token button inside the Connect my LLM modal"
+  playwright-cli click ".mx-name-actionButtonGenerateToken2" >/dev/null 2>&1
   sleep 3
-  # Read the LAST VISIBLE dialog, not document.querySelector's first match:
-  # Mendix leaves closed dialogs in the DOM, so the first match is often a stale
-  # one whose text no longer holds the token. That is why this returned empty
-  # and verify-tt654-a4/a7 failed with "could not mint an MCP token" while
-  # verify-tt654-a1 — which runs before any dialog has accumulated — passed.
-  tok=$(playwright-cli eval "() => { const d=$(_tt_dialog_js); const t=(d ? d.innerText : document.body.innerText) || ''; const m=t.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32,}/i); return m ? m[0] : ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
-  tt654_dismiss_dialog
-  echo "$tok"
+
+  # Match on "Bearer <token>" rather than a bare hex/UUID shape: the snippet also
+  # contains the app URL, and a looser pattern can match part of that instead.
+  tok="$(playwright-cli eval "() => { const ta=document.querySelector('.mx-name-textAreaClaudeCode textarea, .mx-name-textAreaClaudeCode input'); const v = ta ? (ta.value || ta.innerText || '') : ''; const m = v.match(/Bearer\\s+([A-Za-z0-9-]{20,})/); return m ? m[1] : ''; }" 2>/dev/null | _tt_eval_str)"
+
+  tt654_close_connect_modal
+  printf '%s\n' "$tok"
+}
+
+# tt654_close_connect_modal — dismiss the Connect my LLM popup.
+# It is a Mendix PAGE popup, not a message dialog, so tt654_dismiss_dialog (which
+# hunts for OK/Close buttons in a message box) does not apply. Never press Escape
+# here: on this app that closes the popup AND can drop the surrounding context.
+tt654_close_connect_modal() {
+  playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'none'; const b=[...d.querySelectorAll('.modal-header button, button.close')].filter(x=>x.offsetParent!==null); if(b.length){ b[0].click(); return 'closed'; } return 'nobutton'; }" >/dev/null 2>&1
+  sleep 2
 }

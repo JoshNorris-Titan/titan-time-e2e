@@ -96,7 +96,7 @@ case "$WK2" in
 esac
 
 # 7. SubmitWeek submits
-SUB="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$PROJ',WeekStartDate:'$WEEK_START'}")"
+SUB="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$PROJ',WeekStartDate:'$WEEK_START',ConfirmWarnings:true}")"
 case "$SUB" in
   *'"result":"SUBMITTED"'*) echo "7. SubmitWeek: $SUB" ;;
   *) tt_fail "SubmitWeek did not submit (got: ${SUB:0:400})" ;;
@@ -105,7 +105,7 @@ esac
 # 8. guards hold afterwards — these live inside Main.SUB_AssignmentEntry_Submit
 #    and the resolution/editability checks in the tools, so MCP cannot bypass
 #    what the page enforces.
-AGAIN="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$PROJ',WeekStartDate:'$WEEK_START'}")"
+AGAIN="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$PROJ',WeekStartDate:'$WEEK_START',ConfirmWarnings:true}")"
 case "$AGAIN" in
   *'"error"'*) ;;
   *) tt_fail "re-submitting an already-submitted week was allowed (got: ${AGAIN:0:300})" ;;

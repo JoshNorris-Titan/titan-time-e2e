@@ -58,7 +58,7 @@ TOKEN="$(tt654_mint_token)"
 [ -n "$TOKEN" ] || tt_fail "could not mint an MCP token"
 
 # --- 1) the guard fires ----------------------------------------------------
-OUT="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$LI_PROJ',WeekStartDate:'$WEEK_START'}")"
+OUT="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$LI_PROJ',WeekStartDate:'$WEEK_START',ConfirmWarnings:true}")"
 echo "SubmitWeek('$LI_PROJ'): ${OUT:0:200}"
 
 case "$OUT" in
@@ -90,7 +90,7 @@ case "$WK" in
 esac
 
 # --- 3) control: the same call works on a non-line-items project -----------
-SUB="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$OK_PROJ',WeekStartDate:'$WEEK_START'}")"
+SUB="$(tt654_mcp_call "$TOKEN" SubmitWeek "{ProjectName:'$OK_PROJ',WeekStartDate:'$WEEK_START',ConfirmWarnings:true}")"
 case "$SUB" in
   *'"result":"SUBMITTED"'*) echo "3. control: '$OK_PROJ' submitted normally on the same week" ;;
   *) tt_fail "the control project '$OK_PROJ' did not submit either (got: ${SUB:0:300}) — so step 1 does not prove the line-items guard, it may just be SubmitWeek failing" ;;
