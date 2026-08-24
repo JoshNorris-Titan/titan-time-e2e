@@ -32,15 +32,13 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 
 | | Section | |
 |---|---|---|
-| 1 | [Before you run it](#1-before-you-run-it) | What has to be true first |
-| 2 | [How to run it](#2-how-to-run-it) | The commands |
-| 3 | [How a run works](#3-how-a-run-works) | What the conductor does |
-| 4 | [**The script, step by step**](#4-the-script-step-by-step) | ⭐ All 50 steps |
-| 5 | [Files that aren't part of the run](#5-files-that-arent-part-of-the-run) | Seeders, probes, quality check |
-| 6 | [Settings the suite reads](#6-settings-the-suite-reads) | Addresses and logins |
-| 7 | [Running it automatically](#7-running-it-automatically-on-github) | The GitHub workflow |
-| 8 | [Known traps](#8-known-traps) | Why a PASS can lie |
-| 9 | [Glossary](#9-glossary) | Every term used here |
+| 1 | [How a run works](#1-how-a-run-works) | What the conductor does |
+| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ All 50 steps |
+| 3 | [Files that aren't part of the run](#3-files-that-arent-part-of-the-run) | Seeders, probes, quality check |
+| 4 | [Settings the suite reads](#4-settings-the-suite-reads) | Addresses and logins |
+| 5 | [Running it automatically](#5-running-it-automatically-on-github) | The GitHub workflow |
+| 6 | [Known traps](#6-known-traps) | Why a PASS can lie |
+| 7 | [Glossary](#7-glossary) | Every term used here |
 
 ---
 
@@ -62,51 +60,7 @@ flowchart LR
 
 ---
 
-## 1. Before you run it
-
-> [!IMPORTANT]
-> The suite tests a **running app**. It cannot see a change that only exists in Studio Pro.
-> Locally that means **Ctrl+S, then F5** before you start — otherwise you are testing yesterday's build.
-
-| ✅ Requirement | Why it matters |
-|---|---|
-| The app is running and reachable | Every step is a real browser visiting real pages |
-| Changes are saved **and** running | A test against unsaved work tests the previous build |
-| The four `e2e_*` logins exist | Consultant, Project Manager, HR, Titan Manager |
-| The fixture projects exist | Steps expect specific data, e.g. *E2E Manager Approval* |
-| `npm ci` has been run once | Installs the browser-driving tool |
-
----
-
-## 2. How to run it
-
-```bash
-npm ci                                       # once, to install
-
-./run-tests.sh                               # the whole suite, against localhost
-./run-tests.sh verify-smoke-login.test.sh    # just one step
-./run-tests.sh --list                        # show the checklist without running it
-```
-
-Against a deployed environment:
-
-```bash
-TT_BASE_URL=https://<your-environment> ./run-tests.sh --skip-file ci-skip.txt
-```
-
-You get one line per step:
-
-```text
-PASS  verify-smoke-login  (6s)
-FAIL  verify-pm-approve-action  (exit 1, 41s)
-      FAIL: entry still in PM queue after approve
-----------------------------------------------------------------
-50 tests: 47 passed, 2 failed, 1 skipped  (1832s)
-```
-
----
-
-## 3. How a run works
+## 1. How a run works
 
 `run-tests.sh` is the conductor:
 
@@ -136,7 +90,7 @@ flowchart LR
 
 ---
 
-## 4. The script, step by step
+## 2. The script, step by step
 
 All 50 steps, in the exact order they run, grouped into seven blocks:
 
@@ -508,7 +462,7 @@ makes the *next* run's failures impossible to read.
 
 ---
 
-## 5. Files that aren't part of the run
+## 3. Files that aren't part of the run
 
 The conductor only picks up files ending in `.test.sh`. Everything else here is run by hand.
 
@@ -524,7 +478,7 @@ The conductor only picks up files ending in `.test.sh`. Everything else here is 
 
 ---
 
-## 6. Settings the suite reads
+## 4. Settings the suite reads
 
 | Setting | Meaning |
 |---|---|
@@ -540,7 +494,7 @@ The conductor only picks up files ending in `.test.sh`. Everything else here is 
 
 ---
 
-## 7. Running it automatically on GitHub
+## 5. Running it automatically on GitHub
 
 `.github/workflows/e2e.yml` runs the suite on GitHub's machines:
 **Actions → E2E → Run workflow**, optionally typing an app address.
@@ -556,7 +510,7 @@ one run happens at a time, because the suite changes shared data on the target e
 
 ---
 
-## 8. Known traps
+## 6. Known traps
 
 > [!WARNING]
 > Both traps below produce a **test that passes when it shouldn't** — the worst possible outcome,
@@ -573,7 +527,7 @@ consultants' data only, because anything else on a shared environment can change
 
 ---
 
-## 9. Glossary
+## 7. Glossary
 
 | Term | Meaning here |
 |---|---|
