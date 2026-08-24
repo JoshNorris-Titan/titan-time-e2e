@@ -115,8 +115,18 @@ fi
 # --- shared browser session ------------------------------------------------
 # The scripts assume a session is already open and that state (login, cookies)
 # carries from one script to the next. Open once here, close on exit.
+# Prefer a locally-installed playwright-cli over a global one. `npm ci` puts it in
+# node_modules/.bin, which is NOT on PATH for a plain CI `run:` step — locally it
+# happens to work only because the host has it installed globally. Exporting PATH
+# here also covers the test scripts, which invoke `playwright-cli` directly as
+# child processes of this runner.
+if [ -x "$HERE/node_modules/.bin/playwright-cli" ]; then
+  PATH="$HERE/node_modules/.bin:$PATH"
+  export PATH
+fi
+
 command -v playwright-cli >/dev/null 2>&1 || {
-  echo "FATAL: playwright-cli not on PATH — run 'npm ci' in this directory" >&2; exit 2; }
+  echo "FATAL: playwright-cli not found — run 'npm ci' in $HERE" >&2; exit 2; }
 
 cleanup() { playwright-cli close >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
