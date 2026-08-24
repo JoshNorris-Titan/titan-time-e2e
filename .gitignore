@@ -1,0 +1,24 @@
+# --- secrets: never commit -------------------------------------------------
+# Mailpit SMTP credentials and the TT-654 seed token file hold live secrets.
+.mailpit/
+.tt654-seed.env
+*.env
+!*.env.example
+
+# --- run artefacts ---------------------------------------------------------
+.playwright-cli/
+*-failure.png
+test-results/
+results.xml
+baseline.xml
+quality/.last-check.json
+quality/.last-check.txt
+
+# --- node ------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+package-lock.json.bak
+
+# --- os --------------------------------------------------------------------
+.DS_Store
+Thumbs.db

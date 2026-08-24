@@ -1,0 +1,43 @@
+{
+  "serializationVersion": 2,
+  "suppressions": [
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "c1c0c41c-5505-4ff0-81bc-74509d7618cd",
+      "errorCode": "CW0055",
+      "_note": "AssignmentAttachment_Upload - 4 inert action buttons used as field labels above their value"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "0aba7754-2e7a-4597-8e2e-af0043d57645",
+      "errorCode": "CW0055",
+      "_note": "Review_TimesheetAttachment - 1 inert action buttons used as field labels above their value"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "ba770f16-58aa-4544-8758-7ba96b0a65aa",
+      "errorCode": "CW0055",
+      "_note": "Snip_AssignmentEntry_ExpenseAttachment - 1 inert action buttons used as field labels above their value"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "0230f45e-7da0-4564-a71e-2c9c23f1119e",
+      "errorCode": "CW0055",
+      "_note": "Snip_AssignmentEntry_Header - 6 inert action buttons used as field labels above their value"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "b28df461-9cdb-46ab-99f0-01332a664383",
+      "errorCode": "CW0094",
+      "_note": "Main.WFA_ManagerOrHR - the Workflow parameter is required by the workflow engine for this slot; it cannot be removed"
+    },
+    {
+      "moduleId": "9e77425a-f0a2-47e3-9376-51f7da3c258e",
+      "documentId": "efc4dcff-76ca-4801-a520-6914925c591b",
+      "errorCode": "CW0094",
+      "_note": "Core.WFA_TargetAccount - the Workflow parameter is required by the workflow engine for this slot; it cannot be removed"
+    }
+  ],
+  "suppressAppStoreWarnings": true,
+  "showSuppressionInfo": true
+}

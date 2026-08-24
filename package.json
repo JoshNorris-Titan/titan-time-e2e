@@ -1,0 +1,17 @@
+{
+  "name": "titan-time-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end Playwright suite for the Titan Time Mendix app",
+  "scripts": {
+    "test": "./run-tests.sh",
+    "test:ci": "./run-tests.sh --junit results.xml --skip-file ci-skip.txt",
+    "list": "./run-tests.sh --list"
+  },
+  "dependencies": {
+    "@playwright/cli": "0.1.17"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

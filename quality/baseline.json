@@ -1,0 +1,23 @@
+{
+  "by_code": {
+    "best-practice:MXP001": 1,
+    "best-practice:MXP004": 1,
+    "best-practice:MXP005": 2,
+    "best-practice:MXP006": 5,
+    "best-practice:MXP007": 4,
+    "best-practice:MXP014": 7,
+    "best-practice:MXP015": 6,
+    "deprecations:CW0700": 1,
+    "deprecations:CW0784": 6,
+    "warnings:CE4271": 1,
+    "warnings:CW0040": 2,
+    "warnings:CW0094": 7
+  },
+  "suppressed": 79,
+  "totals": {
+    "best-practice": 26,
+    "deprecations": 7,
+    "errors": 0,
+    "warnings": 10
+  }
+}

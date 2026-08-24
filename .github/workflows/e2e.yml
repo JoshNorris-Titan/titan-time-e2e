@@ -1,0 +1,63 @@
+name: E2E
+
+# Manual trigger only for now. The suite has never had a recorded green run, and a
+# recurring red build trains everyone to ignore it — switch the weekly schedule on
+# once there is one clean baseline (uncomment the `schedule:` block below).
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "App origin to test against (blank = the TT_BASE_URL secret)"
+        required: false
+        type: string
+  # schedule:
+  #   - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+
+concurrency:
+  # One run at a time: the suite mutates shared test data on the target environment.
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: |
+          npx playwright-cli install || true
+          npx playwright-cli install-browser chromium
+
+      - name: Run suite
+        shell: bash
+        env:
+          TT_BASE_URL: ${{ inputs.base_url || secrets.TT_BASE_URL }}
+          TT_ADMIN_USER: ${{ secrets.TT_ADMIN_USER }}
+          TT_ADMIN_PASS: ${{ secrets.TT_ADMIN_PASS }}
+          TT_ROLE_PASS: ${{ secrets.TT_ROLE_PASS }}
+          TT_E2E_CONSULTANTS: ${{ secrets.TT_E2E_CONSULTANTS }}
+        run: |
+          chmod +x ./run-tests.sh
+          ./run-tests.sh --junit results.xml --skip-file ci-skip.txt --verbose
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            results.xml
+            *-failure.png
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,11 @@
+# Shell scripts MUST be stored and checked out with LF endings.
+# The suite is authored on Windows but runs on ubuntu-latest in CI, and a .sh
+# file with CRLF fails there with the classic "$'\r': command not found".
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+
+*.png   binary

@@ -1,0 +1,22 @@
+# Scripts that run-tests.sh should SKIP when running against a remote
+# environment. One basename per line; # starts a comment.
+#
+# Deliberately near-empty. A static read of the suite found FEWER environment
+# couplings than expected:
+#
+#   * nothing hardcodes localhost — the two scripts that mention it use the
+#     overridable default ${TT_BASE_URL:-http://localhost:8080};
+#   * nothing needs mailpit or ngrok at run time (tests/.mailpit/ is scratch
+#     from an old session);
+#   * the TT-654 MCP tests hit an in-app endpoint via TT654_MCP_PATH, not a
+#     local process, so they work anywhere the module is deployed;
+#   * the bookend clear tests are scoped to TT_E2E_CONSULTANTS and explicitly
+#     leave non-e2e data alone, so they are safe on a shared environment.
+#
+# What can still legitimately fail on cloud dev is CONFIGURATION rather than
+# portability — e.g. verify-unittests needs UnitTesting.RemoteApiEnabled set on
+# the target environment, and the TT-654 tests need that module deployed with
+# the right constant. Add entries here as the first cloud runs reveal them,
+# with a one-line reason each, rather than pre-emptively.
+
+# (no skips yet — populate after the first workflow_dispatch run)
