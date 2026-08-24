@@ -93,7 +93,7 @@ hr_reject_card_for_project() {
 # belonging to <project>, not merely the first rejected entry on the dashboard.
 open_review_for_project() {
   local proj="$1"
-  playwright-cli eval "() => { const bs=[...document.querySelectorAll('.mx-name-btnReviewRejected')]; for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | grep -qiw ok || return 1
+  playwright-cli eval "() => { const bs=[...document.querySelectorAll('.mx-name-btnReviewRejected')]; for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 4
   [ "$(tt_popup_open)" = "true" ]
 }

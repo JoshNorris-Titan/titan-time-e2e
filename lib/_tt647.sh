@@ -144,7 +144,7 @@ tt647_require_widgets() {
 # it is dismissed the approval does not commit.
 tt647_hr_approve_card() {
   local needle="$1" i
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnApprove')]; for(const b of bs){ let p=b; for(let i=0;i<9;i++){ if(!p.parentElement) break; p=p.parentElement; if((p.innerText||'').indexOf('$needle')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | grep -qiw ok || return 1
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnApprove')]; for(const b of bs){ let p=b; for(let i=0;i<9;i++){ if(!p.parentElement) break; p=p.parentElement; if((p.innerText||'').indexOf('$needle')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 3
   tt_clear_dialogs 6 >/dev/null 2>&1 || true
   # ACT_HRDashboard_ApproveOrReject refreshes every tab; the card should vanish.

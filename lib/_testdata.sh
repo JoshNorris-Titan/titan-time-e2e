@@ -85,7 +85,7 @@ tt_open_testdata_admin() {
 tt_clear_consultant_testdata() {
   local who="$1" i
 
-  playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-containerConsultantRow')]; for (const r of rows) { const n=r.querySelector('.mx-name-txtConsultantRowName'); const b=r.querySelector('.mx-name-btnClearConsultantTestData'); if (n && b && (n.innerText||'').trim()==='$who') { b.click(); return 'ok'; } } return 'none'; }" 2>/dev/null | grep -qiw ok \
+  playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-containerConsultantRow')]; for (const r of rows) { const n=r.querySelector('.mx-name-txtConsultantRowName'); const b=r.querySelector('.mx-name-btnClearConsultantTestData'); if (n && b && (n.innerText||'').trim()==='$who') { b.click(); return 'ok'; } } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "no 'Clear' control for consultant '$who' on the Test Data page (is the account missing, or not in the Consultant user role?)"
   sleep 2
 

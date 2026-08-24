@@ -75,7 +75,7 @@ tt683_open_export_tab() {
 
 # tt683_click_export_all — click Export All, wait for Main.ExportAll_Waiting.
 tt683_click_export_all() {
-  playwright-cli eval "() => { const b=[...document.querySelectorAll('button,a')].find(e=>/export\\s*all/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | grep -qiw ok \
+  playwright-cli eval "() => { const b=[...document.querySelectorAll('button,a')].find(e=>/export\\s*all/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "could not click the 'Export All' button"
   local i
   for i in $(seq 1 30); do
@@ -200,7 +200,7 @@ tt683_fetch_zip_entries() {
 # tt683_download_zip_entries — arm, click the ZIP button, return entry names.
 tt683_download_zip_entries() {
   tt683_arm_download_capture
-  playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | grep -qiw ok \
+  playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "could not click the ZIP download button"
   tt683_fetch_zip_entries
 }
@@ -246,13 +246,13 @@ tt683_toprocess_weeks() {
 # closes its page the dashboard may already have that tab active, and an
 # "already there" state must not abort the walk. Returns 1 instead.
 tt683_open_toprocess_tab() {
-  playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$TT683_TAB_TOPROCESS' && getComputedStyle(e).cursor==='pointer'); if(el){ el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | grep -qiw ok || return 1
+  playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$TT683_TAB_TOPROCESS' && getComputedStyle(e).cursor==='pointer'); if(el){ el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 2
 }
 
 # tt683_select_week <label> — click a week in the picker of the open tab.
 tt683_select_week() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'ok';} return 'nf'; }" 2>/dev/null | grep -qiw ok
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok
   sleep 4
 }
 
@@ -288,7 +288,7 @@ tt683_process_one() {
   label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400){ if($owned) return t.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,2).join('|'); break; } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   [ -n "$label" ] || return 1
 
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400){ if($owned){ b.click(); return 'ok'; } break; } } } return 'nf'; }" 2>/dev/null | grep -qiw ok || return 1
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400){ if($owned){ b.click(); return 'ok'; } break; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 4
 
   # Main.AssignmentEntry_Process opens with a footer 'Process' button. Its widget
