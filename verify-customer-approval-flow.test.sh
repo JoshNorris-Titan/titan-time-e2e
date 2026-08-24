@@ -14,8 +14,8 @@
 # The entry is left pending (never approved), so the test can run repeatedly
 # against the same standing data.
 #
-# Mail — step 2 reads from testmail.app. Needs TT_TESTMAIL_APIKEY,
-# TT_TESTMAIL_NAMESPACE, and optionally TT_TESTMAIL_CUSTAPPROVAL_TAG
+# Mail — step 2 reads from the mail catcher. Needs TT_MAILPIT_URL, and
+# optionally TT_MAIL_CUSTAPPROVAL_TAG
 # (default: custapproval).
 #
 # Prerequisite data on the target env: a project with ApprovalFromCustomer=Yes

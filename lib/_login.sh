@@ -436,150 +436,73 @@ tt_hr_remind_e2e_entry() {
   return 1
 }
 
-# tt_testmail_token <apikey> <namespace> <tag> <ts-ms> [link-regex]
-# Polls the testmail.app JSON API for a mail (tagged <tag>) newer than <ts-ms>
-# and prints the first link matching <link-regex> (default: customer-approval)
-# found in it. Returns 0 if a link was printed, 1 on timeout.
-#
-# The <ts-ms> fence is load-bearing here and cannot be dropped: testmail.app
-# offers no way to empty an inbox, so without it a stale mail from an earlier
-# run would satisfy the poll immediately.
-tt_testmail_token() {
-  local key="$1" ns="$2" tag="$3" ts="$4" rx="${5:-customer-approval}" i resp c link
-  for i in $(seq 1 15); do
-    resp=$(curl -s --max-time 20 "https://api.testmail.app/api/json?apikey=${key}&namespace=${ns}&tag=${tag}&timestamp_from=${ts}")
-    c=$(printf '%s' "$resp" | jq -r '.count // 0' 2>/dev/null)
-    if [ -n "$c" ] && [ "$c" != "0" ] && [ "$c" != "null" ]; then
-      link=$(printf '%s' "$resp" | jq -r '(.emails[0].html // .emails[0].text // "")' 2>/dev/null | grep -oE "https?://[^ \"<>()]+${rx}[^ \"<>()]+" | head -1)
-      if [ -n "$link" ]; then echo "$link"; return 0; fi
-    fi
-    sleep 6
-  done
-  return 1
-}
-
-# tt_testmail_message <apikey> <namespace> <tag> <ts-ms> [timeout-seconds]
-# Print "Subject: <subject>", a blank line, then the body of the newest mail
-# newer than <ts-ms>. Returns 1 on timeout.
-tt_testmail_message() {
-  local key="$1" ns="$2" tag="$3" ts="$4" budget="${5:-90}" waited=0 resp c subj body
-  while [ "$waited" -lt "$budget" ]; do
-    resp=$(curl -s --max-time 20 "https://api.testmail.app/api/json?apikey=${key}&namespace=${ns}&tag=${tag}&timestamp_from=${ts}")
-    c=$(printf '%s' "$resp" | jq -r '.count // 0' 2>/dev/null)
-    if [ -n "$c" ] && [ "$c" != "0" ] && [ "$c" != "null" ]; then
-      subj=$(printf '%s' "$resp" | jq -r '.emails[0].subject // ""' 2>/dev/null)
-      body=$(printf '%s' "$resp" | jq -r 'if (.emails[0].text // "") != "" then .emails[0].text else (.emails[0].html // "") end' 2>/dev/null \
-             | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' -e 's/&amp;/\&/g')
-      printf 'Subject: %s\n\n%s\n' "$subj" "$body"
-      return 0
-    fi
-    sleep 6; waited=$((waited + 6))
-  done
-  return 1
-}
-
 # ---------------------------------------------------------------------------
 # Mail access
 #
-# Two backends, one API. Tests only ever call tt_mail_*, and do not care which
-# one is answering:
+# The suite reads mail from a CATCHER: a fake SMTP server that accepts every
+# message, delivers none of them, and exposes what it caught over an HTTP API.
+# The app under test is pointed at it as if it were an ordinary mail server.
 #
-#   mailpit    A catcher running on this machine (see tools/mailpit.sh). Mail
-#              never leaves the laptop, arrives in milliseconds, and the inbox
-#              can be EMPTIED — which is what makes a mail assertion
-#              deterministic rather than a race against yesterday's message.
-#              Only usable when the app itself runs locally: a Mendix Cloud
-#              environment cannot open a connection back to this machine.
-#   testmail   The hosted testmail.app inbox. Slower, needs an API key, and its
-#              inbox cannot be emptied — but it is the only one that works when
-#              the suite points at a cloud environment.
+# Two consequences worth knowing:
 #
-# TT_MAIL_BACKEND = auto (default) | mailpit | testmail
-#   auto -> mailpit when its API answers locally, otherwise testmail.
+#   * Because the catcher accepts ANY recipient, the addresses in the app's own
+#     data do not have to be rewritten to something special. Whatever the app
+#     believes it is emailing, the message lands here — so a test can assert
+#     that mail went to the consultant's REAL address, which is a stronger
+#     claim than asserting it reached a shared test inbox.
+#   * Because the inbox can be emptied, freshness is guaranteed rather than
+#     inferred. tt_mail_prepare clears it before the triggering action, so a
+#     read can never be satisfied by a message from an earlier run.
+#
+# Env:
+#   TT_MAILPIT_URL   base URL of the catcher's API — required, no default, so a
+#                    misconfigured run fails instead of silently testing nothing
+#   TT_MAILPIT_USER  basic-auth user for that API, if it is protected
+#   TT_MAILPIT_PASS  basic-auth password
+#   TT_MAIL_DOMAIN   domain used by tt_mail_address (default e2e.local)
 # ---------------------------------------------------------------------------
 
-TT_MAILPIT_URL="${TT_MAILPIT_URL:-http://127.0.0.1:8025}"
-
-# tt_mail_backend — which backend is in play. Resolved once, then cached, so a
-# run cannot start on one backend and silently finish on the other.
-tt_mail_backend() {
-  if [ -n "${_TT_MAIL_BACKEND_RESOLVED:-}" ]; then echo "$_TT_MAIL_BACKEND_RESOLVED"; return 0; fi
-  local want="${TT_MAIL_BACKEND:-auto}"
-  case "$want" in
-    mailpit|testmail) _TT_MAIL_BACKEND_RESOLVED="$want" ;;
-    auto)
-      if curl -fsS --max-time 2 "${TT_MAILPIT_URL}/api/v1/info" >/dev/null 2>&1; then
-        _TT_MAIL_BACKEND_RESOLVED=mailpit
-      else
-        _TT_MAIL_BACKEND_RESOLVED=testmail
-      fi
-      ;;
-    *) tt_fail "TT_MAIL_BACKEND must be auto, mailpit or testmail (got '$want')" ;;
-  esac
-  echo "$_TT_MAIL_BACKEND_RESOLVED"
+# _tt_mail_curl <method> <path> — one call against the catcher's API.
+_tt_mail_curl() {
+  local method="$1" path="$2"
+  [ -n "${TT_MAILPIT_URL:-}" ] || return 1
+  if [ -n "${TT_MAILPIT_USER:-}" ]; then
+    curl -fsS -X "$method" --max-time 10 \
+      -u "${TT_MAILPIT_USER}:${TT_MAILPIT_PASS:-}" "${TT_MAILPIT_URL}${path}" 2>/dev/null
+  else
+    curl -fsS -X "$method" --max-time 10 "${TT_MAILPIT_URL}${path}" 2>/dev/null
+  fi
 }
 
 # _tt_mail_tag [explicit] — the inbox tag a read should filter on.
 _tt_mail_tag() {
-  echo "${1:-${TT_MAIL_CUSTAPPROVAL_TAG:-${TT_TESTMAIL_CUSTAPPROVAL_TAG:-custapproval}}}"
+  echo "${1:-${TT_MAIL_CUSTAPPROVAL_TAG:-custapproval}}"
 }
 
-# --- mailpit backend -------------------------------------------------------
-
-# _tt_mailpit_pick <tag> — ID of the newest mail addressed to <tag>@…, or 1.
+# _tt_mail_pick <tag> — ID of the newest mail whose recipient matches <tag>,
+# or 1 if there is none yet.
+#
+# <tag> matches either a generated address (tag@domain) or any recipient
+# containing the tag, so a test can filter on a real address just as well as on
+# a synthetic one.
 #
 # Falls back to the newest message of any recipient, loudly. That is safe only
 # because tt_mail_prepare empties the inbox before the triggering action, so
 # anything present arrived from the step under test — but it is announced,
 # since it would otherwise hide a "sent to the wrong address" bug.
-_tt_mailpit_pick() {
+_tt_mail_pick() {
   local tag="$1" list id
-  list=$(curl -fsS --max-time 5 "${TT_MAILPIT_URL}/api/v1/messages?limit=200" 2>/dev/null) || return 1
+  list=$(_tt_mail_curl GET "/api/v1/messages?limit=200") || return 1
   id=$(printf '%s' "$list" | jq -r --arg t "$tag" \
-        'first(.messages[]? | select([.To[]?.Address // ""] | any(startswith($t + "@"))) | .ID) // ""' 2>/dev/null)
+        'first(.messages[]? | select([.To[]?.Address // ""] | any(startswith($t + "@") or contains($t))) | .ID) // ""' 2>/dev/null)
   if [ -z "$id" ] || [ "$id" = "null" ]; then
     id=$(printf '%s' "$list" | jq -r 'first(.messages[]?.ID) // ""' 2>/dev/null)
     if [ -n "$id" ] && [ "$id" != "null" ]; then
-      echo "note: no mail addressed to ${tag}@… — using the newest message instead (inbox was emptied before the trigger)" >&2
+      echo "note: no mail matching '${tag}' — using the newest message instead (inbox was emptied before the trigger)" >&2
     fi
   fi
   [ -n "$id" ] && [ "$id" != "null" ] || return 1
   echo "$id"
-}
-
-_tt_mailpit_full() { curl -fsS --max-time 5 "${TT_MAILPIT_URL}/api/v1/message/${1}" 2>/dev/null; }
-
-# tt_mailpit_message <tag> [timeout-seconds]
-tt_mailpit_message() {
-  local tag="$1" budget="${2:-30}" waited=0 id full subj body
-  while [ "$waited" -lt "$budget" ]; do
-    if id=$(_tt_mailpit_pick "$tag"); then
-      full=$(_tt_mailpit_full "$id")
-      subj=$(printf '%s' "$full" | jq -r '.Subject // ""' 2>/dev/null)
-      body=$(printf '%s' "$full" \
-             | jq -r 'if (.Text // "") != "" then .Text else (.HTML // "") end' 2>/dev/null \
-             | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' -e 's/&amp;/\&/g')
-      printf 'Subject: %s\n\n%s\n' "$subj" "$body"
-      return 0
-    fi
-    sleep 1; waited=$((waited + 1))
-  done
-  return 1
-}
-
-# tt_mailpit_token <tag> [link-regex] [timeout-seconds]
-tt_mailpit_token() {
-  local tag="$1" rx="${2:-customer-approval}" budget="${3:-30}" waited=0 id full link
-  while [ "$waited" -lt "$budget" ]; do
-    if id=$(_tt_mailpit_pick "$tag"); then
-      full=$(_tt_mailpit_full "$id")
-      link=$(printf '%s' "$full" | jq -r '((.HTML // "") + " " + (.Text // ""))' 2>/dev/null \
-             | grep -oE "https?://[^ \"<>()]+${rx}[^ \"<>()]*" | head -1)
-      if [ -n "$link" ]; then echo "$link"; return 0; fi
-    fi
-    sleep 1; waited=$((waited + 1))
-  done
-  return 1
 }
 
 # --- the API the tests use -------------------------------------------------
@@ -587,68 +510,73 @@ tt_mailpit_token() {
 # tt_mail_prepare — make sure mail can be read, and start from a known-empty
 # inbox. Call it BEFORE the action that triggers the send.
 tt_mail_prepare() {
-  case "$(tt_mail_backend)" in
-    mailpit)
-      curl -fsS --max-time 3 "${TT_MAILPIT_URL}/api/v1/info" >/dev/null 2>&1 \
-        || tt_fail "mailpit is not answering at ${TT_MAILPIT_URL} — run tools/mailpit.sh start"
-      tt_mail_reset
-      ;;
-    testmail)
-      [ -n "${TT_TESTMAIL_APIKEY:-}" ] && [ -n "${TT_TESTMAIL_NAMESPACE:-}" ] \
-        || tt_fail "no mail backend available: either start the local catcher (tools/mailpit.sh start) or set TT_TESTMAIL_APIKEY and TT_TESTMAIL_NAMESPACE"
-      ;;
-  esac
+  [ -n "${TT_MAILPIT_URL:-}" ] \
+    || tt_fail "TT_MAILPIT_URL is not set — the suite has nowhere to read mail from"
+  _tt_mail_curl GET "/api/v1/info" >/dev/null \
+    || tt_fail "the mail catcher at ${TT_MAILPIT_URL} is not answering (check the host is up, and TT_MAILPIT_USER/PASS if it is protected)"
+  tt_mail_reset
 }
 
 # tt_mail_reset — empty the inbox, so no earlier mail can satisfy a later read.
-# A no-op on testmail, whose API offers no delete; there the <ts-ms> fence
-# passed to tt_mail_token / tt_mail_message does the same job less reliably.
 tt_mail_reset() {
-  case "$(tt_mail_backend)" in
-    mailpit) curl -fsS -X DELETE --max-time 5 "${TT_MAILPIT_URL}/api/v1/messages" >/dev/null 2>&1 || true ;;
-    testmail) : ;;
-  esac
+  _tt_mail_curl DELETE "/api/v1/messages" >/dev/null || true
 }
 
 # tt_mail_address <tag>
-# An address the app can be told to send to and that this suite can then read
-# back. <tag> doubles as the recipient filter for tt_mail_token /
-# tt_mail_message on both backends.
+# A synthetic address the app can be told to send to and that this suite can
+# then read back. Only needed where a test CHOOSES the recipient (the Email
+# Tester, for instance); mail sent to the app's real addresses is caught too,
+# and is filtered by passing that address as the tag.
 tt_mail_address() {
   local tag="${1:-e2e}"
-  case "$(tt_mail_backend)" in
-    mailpit)  echo "${tag}@${TT_MAILPIT_DOMAIN:-e2e.local}" ;;
-    testmail) echo "${TT_TESTMAIL_NAMESPACE}.${tag}@inbox.testmail.app" ;;
-  esac
+  echo "${tag}@${TT_MAIL_DOMAIN:-e2e.local}"
 }
 
-# tt_mail_token <ts-ms> [link-regex] [recipient]
+# tt_mail_token <ts-ms> [link-regex] [recipient] [timeout-seconds]
 # Print the first link matching <link-regex> (default: customer-approval) from
 # the mail the app just sent.
 #
-# <ts-ms> is the freshness fence for testmail. mailpit ignores it and relies on
-# the empty inbox from tt_mail_prepare, which is a stronger guarantee; the
-# argument is kept so a test reads the same on either backend.
+# <ts-ms> is accepted and ignored: freshness comes from the empty inbox that
+# tt_mail_prepare guarantees, which is stronger than a timestamp fence. The
+# argument is kept so existing call sites read unchanged.
 tt_mail_token() {
-  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" tag
+  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" budget="${4:-60}"
+  local tag waited=0 id full link
   tag="$(_tt_mail_tag "$want")"
-  case "$(tt_mail_backend)" in
-    mailpit)  tt_mailpit_token "$tag" "$rx" ;;
-    testmail) tt_testmail_token "${TT_TESTMAIL_APIKEY}" "${TT_TESTMAIL_NAMESPACE}" "$tag" "$ts" "$rx" ;;
-  esac
+  while [ "$waited" -lt "$budget" ]; do
+    if id=$(_tt_mail_pick "$tag"); then
+      full=$(_tt_mail_curl GET "/api/v1/message/${id}")
+      link=$(printf '%s' "$full" | jq -r '((.HTML // "") + " " + (.Text // ""))' 2>/dev/null \
+             | grep -oE "https?://[^ \"<>()]+${rx}[^ \"<>()]*" | head -1)
+      if [ -n "$link" ]; then echo "$link"; return 0; fi
+    fi
+    sleep 2; waited=$((waited + 2))
+  done
+  return 1
 }
 
 # tt_mail_message <ts-ms> [recipient] [timeout-seconds]
 # Print the mail the app just sent as "Subject: <s>", a blank line, then the
 # body (plain text where present, else HTML with tags stripped) — the primitive
 # for a test that wants to LOOK at the email rather than pull a link out of it.
+# <ts-ms> is accepted and ignored, as in tt_mail_token.
 tt_mail_message() {
-  local ts="$1" want="${2:-}" budget="${3:-}" tag
+  local ts="$1" want="${2:-}" budget="${3:-60}"
+  local tag waited=0 id full subj body
   tag="$(_tt_mail_tag "$want")"
-  case "$(tt_mail_backend)" in
-    mailpit)  tt_mailpit_message "$tag" "${budget:-30}" ;;
-    testmail) tt_testmail_message "${TT_TESTMAIL_APIKEY}" "${TT_TESTMAIL_NAMESPACE}" "$tag" "$ts" "${budget:-90}" ;;
-  esac
+  while [ "$waited" -lt "$budget" ]; do
+    if id=$(_tt_mail_pick "$tag"); then
+      full=$(_tt_mail_curl GET "/api/v1/message/${id}")
+      subj=$(printf '%s' "$full" | jq -r '.Subject // ""' 2>/dev/null)
+      body=$(printf '%s' "$full" \
+             | jq -r 'if (.Text // "") != "" then .Text else (.HTML // "") end' 2>/dev/null \
+             | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' -e 's/&amp;/\&/g')
+      printf 'Subject: %s\n\n%s\n' "$subj" "$body"
+      return 0
+    fi
+    sleep 2; waited=$((waited + 2))
+  done
+  return 1
 }
 
 

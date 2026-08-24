@@ -474,7 +474,7 @@ The conductor only picks up files ending in `.test.sh`. Everything else here is 
 | `verify-toprocess-count.sh` | Reports what is actually on the To Process tab by counting cards, rather than trusting the seeder's own tally. Asserts nothing. |
 | `quality/check-app.sh` | Runs Studio Pro's own consistency check from the command line and compares it with a recorded baseline. Exit `0` = no worse than baseline, `1` = new problems. Reads the **last saved** file on disk, so unsaved edits are invisible to it. Marketplace warnings are suppressed so the ones that are ours aren't drowned out. |
 | `MANUAL-MCP-TEST-SCRIPT.md` | Prompts to type into an AI assistant connected to the app — the human half of the TT-654 testing. |
-| `tools/mailpit.sh` | Starts and stops the **mail catcher** — see the note below. `start`, `stop`, `status`, `clear`, `count`. |
+| `tools/mailpit.sh` | Runs the **mail catcher** — see the note below. `start`, `stop`, `status`, `clear`, `count`. |
 | `tools/mail-selfcheck.sh` | Proves the mail catcher works *with no app involved*, by posting a message to it and reading it back. If this passes but an email step fails, the fault is in the app, not the plumbing. |
 | `lib/*.sh` | Shared building blocks (logging in, resetting data, per-ticket fixtures). Not tests; each header explains the traps it exists to avoid. |
 
@@ -485,14 +485,13 @@ inbox, the suite runs a **fake mail server on this machine**: the app hands it a
 delivers nowhere, and the test reads the message straight back. Nothing leaves the laptop, and
 the inbox can be emptied before each check — so a step can never be fooled by last week's email.
 
-```bash
-tools/mailpit.sh start      # then browse http://127.0.0.1:8025 to read the mail yourself
-```
+The catcher runs on a host the app can reach, and the suite reads from it over HTTP. Point the
+suite at it with `TT_MAILPIT_URL`, then browse that same address to read the mail yourself.
 
 > [!IMPORTANT]
-> The catcher only works when the app is running **on this machine**. A cloud environment cannot
-> send mail back to a laptop, so against cloud the email steps fall back to the hosted inbox
-> (`TT_TESTMAIL_*`). With neither available they fail loudly — they never quietly pass.
+> The environment under test must be able to open an SMTP connection to the catcher. That rules
+> out running it on a laptop while testing a cloud environment — the cloud cannot dial back. With
+> `TT_MAILPIT_URL` unset or unreachable, the email steps fail loudly; they never quietly pass.
 
 Full setup, including the one-time change to the app's email settings, is in
 [`tools/README.md`](tools/README.md).
@@ -507,9 +506,8 @@ Full setup, including the one-time change to the app's email settings, is in
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Administrator login |
 | `TT_ROLE_PASS` | Password shared by the four `e2e_*` role accounts |
 | `TT_E2E_CONSULTANTS` | Which consultants the wipe steps are allowed to clear |
-| `TT_MAIL_BACKEND` | `auto` (default), `mailpit`, or `testmail`. `auto` uses the local catcher when it is running, otherwise the hosted inbox |
-| `TT_MAILPIT_URL` | Where the local catcher listens. Defaults to `http://127.0.0.1:8025` |
-| `TT_TESTMAIL_APIKEY` / `TT_TESTMAIL_NAMESPACE` | The hosted inbox, used when the local catcher isn't running |
+| `TT_MAILPIT_URL` | The mail catcher's API. **Required** for any email step — there is no default |
+| `TT_MAILPIT_USER` / `TT_MAILPIT_PASS` | Basic-auth credentials, if the catcher is protected |
 
 > [!WARNING]
 > In GitHub these come from repository secrets. The defaults built into `lib/_login.sh` are a local

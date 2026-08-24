@@ -18,7 +18,7 @@
 #
 # Requires:
 #   TT_ADMIN_USER / TT_ADMIN_PASS   an account holding Main.Administrator
-#   TT_TESTMAIL_APIKEY / TT_TESTMAIL_NAMESPACE   see tests/lib/_login.sh
+#   TT_MAILPIT_URL                  the mail catcher — see tests/tools/README.md
 
 set -uo pipefail
 source "$(dirname "$0")/lib/_login.sh"

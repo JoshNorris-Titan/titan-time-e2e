@@ -13,7 +13,7 @@ later sections depend on earlier ones.
 
 | Project | Client | Notes |
 |---|---|---|
-| E2E Customer Approval | Costco | submitting emails a **real** testmail inbox |
+| E2E Customer Approval | Costco | submitting sends a **real** email, caught by the mail catcher |
 | E2E Manager Approval | Walmart | submitting routes to the PM queue — **safer for submit tests** |
 | E2E Line Items | Yamaha | requires tasks (line items) |
 
@@ -126,7 +126,7 @@ Keep the token — you need it for everything below.
 ## Part 5 — Submitting
 
 > ⚠️ **Use E2E Manager Approval, not E2E Customer Approval.** The customer one
-> emails a real testmail inbox. The manager one routes to the PM queue.
+> sends a real email, caught by the mail catcher. The manager one routes to the PM queue.
 > E2E Line Items' approval route is unconfirmed — check before submitting it.
 
 **5.1** — `Submit my E2E Manager Approval timesheet for the week of 6 September 2026.`
