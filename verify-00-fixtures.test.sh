@@ -13,11 +13,11 @@
 # A preflight that names the missing fixture turns an hour of debugging into a line
 # of output.
 #
-# Verifies + CREATES: projects (with their approval flags).
+# Verifies + CREATES: projects (with their approval flags) and consultant->project
+# assignments. The assignment half matters most: a project with no assignment is
+# invisible to the consultant, which is exactly how verify-tt647-a5 failed.
 # Verifies + REPORTS: consultants/accounts — creating a login is a deliberate act,
 # not a test side effect, so a missing one fails loudly with its name.
-# Does NOT cover: consultant->project assignments (see the scope note in
-# lib/_fixtures.sh).
 #
 # Env:
 #   TT_BASE_URL              REQUIRED — this writes data

@@ -29,10 +29,9 @@
 #              be made deliberately, not as a side effect. Missing accounts FAIL LOUDLY
 #              with the exact list, rather than being half-created.
 #   Assignments
-#              NOT COVERED YET. Consultant→project assignment is what makes a project
-#              visible in a given week; the existence check needs the consultant detail
-#              popup, which is not yet mapped. fx_report prints per-consultant
-#              assignment counts so a zero is at least visible.
+#              verify + create. Consultant→project assignment is what actually makes a
+#              project visible to a consultant in a given week — a project with no
+#              assignment is invisible, which is exactly how verify-tt647-a5 failed.
 #
 # Every selector below was verified against the live dev environment rather than read
 # from the model, because the model is only true after a deploy.
@@ -66,6 +65,34 @@ FX_CONSULTANTS=(
   "E2E Consultant Two"
   "E2E ProjectManger"
 )
+
+# consultant|project|weeklyHours
+#
+# Mirrors what dev already had, plus the one real gap: E2E Consultant had
+# assignments to Manager Approval, Customer Approval and Line Items but NOT to
+# Dual Approval, which is why verify-tt647-a5 could not see it. Declaring the
+# whole set (not just the gap) makes this self-healing on a fresh environment.
+#
+# The owning customer is NOT hardcoded — it is looked up from the project itself,
+# so re-pointing a project to another customer does not silently break seeding.
+FX_ASSIGNMENTS=(
+  "E2E Consultant|E2E Manager Approval|40"
+  "E2E Consultant|E2E Customer Approval|40"
+  "E2E Consultant|E2E Dual Approval|40"
+  "E2E Consultant|E2E Line Items|40"
+  "E2E Consultant Two|E2E Sandbox|40"
+)
+
+# Matches the window every existing E2E assignment uses (Jul 01 2026 - Dec 31 2027).
+# The window must cover the weeks the tests drive, or the assignment exists but
+# renders zero rows — the failure mode seed-shakedown.sh was written to catch.
+#
+# FORMAT IS LOAD-BEARING: the date pickers advertise placeholder "mmm dd, yyyy".
+# "07/01/2026" is accepted into the DOM and then rejected by the widget with
+# "Invalid date", so the save fails while the field looks correctly filled.
+FX_START_DATE="${FX_START_DATE:-Jul 01, 2026}"
+FX_END_DATE="${FX_END_DATE:-Dec 31, 2027}"
+FX_BUDGET_HOURS="${FX_BUDGET_HOURS:-400}"
 
 # Matches the sibling E2E projects already on dev, so a created project is
 # indistinguishable from a hand-made one.
@@ -213,14 +240,143 @@ fx_ensure_consultants() {
   done
 }
 
+# ---------------------------------------------------------------- assignments
+#
+# fx_project_customer <projectName> — which customer owns this project.
+# Read from the project card ("<name> <customer> Active ...") rather than hardcoded,
+# because Assignment_NewEdit constrains cbProject to
+#   [Main.Project_Customer = $currentObject/Main.Assignment_Customer]
+# so the customer must be selected FIRST and must be the right one.
+fx_project_customer() {
+  local name="$1"
+  fx_view "cardProjects" "galProjects" >/dev/null
+  fx_search "txtProjectSearch" "galProjects" "$name" >/dev/null
+  playwright-cli eval "() => { const t=((document.querySelector('.mx-name-galProjects')||{}).innerText||'').replace(/\\s+/g,' '); const i=t.indexOf('$name'); if(i<0) return ''; const rest=t.slice(i+'$name'.length); const m=rest.match(/^\\s*(.+?)\\s+Active\\b/); return m ? m[1].trim() : ''; }" 2>/dev/null | _tt_eval_str
+}
+
+# fx_consultant_assignments <consultantName> — the assignment list text from the
+# consultant detail popup. The popup itself is auto-named (listView1), so this reads
+# its TEXT rather than depending on widget names that will renumber.
+fx_consultant_assignments() {
+  local name="$1" out
+  fx_view "cardConsultants" "galConsultants" >/dev/null
+  fx_search "txtConsultantSearch" "galConsultants" "$name" >/dev/null
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galConsultants'); if(!g) return 'NOGAL'; const c=[...g.querySelectorAll('*')].find(e=>getComputedStyle(e).cursor==='pointer' && (e.innerText||'').indexOf('$name')>=0); if(!c) return 'NOCARD'; c.click(); return 'ok'; }" >/dev/null 2>&1
+  sleep 4
+  out="$(playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; return d ? (d.innerText||'').replace(/\\s+/g,' ') : ''; }" 2>/dev/null | _tt_eval_str)"
+  # Close the popup so the next lookup starts from a clean dashboard.
+  playwright-cli eval "() => { const b=[...document.querySelectorAll('.modal-content button, .modal-header button')].filter(x=>x.offsetParent!==null); if(b.length) b[0].click(); }" >/dev/null 2>&1
+  sleep 2
+  printf '%s\n' "$out"
+}
+
+# fx_fill_date <selector> <value> — type a date the way a person would.
+#
+# `playwright-cli fill` writes straight to the DOM value, which the Mendix date
+# picker never parses: the field then reads "Jul 01, 2026" while the widget reports
+# "Invalid date" and silently refuses the save. Real keystrokes fire the events it
+# listens for. Blur by clicking another field rather than pressing Escape — Escape
+# closes the whole popup.
+fx_fill_date() {
+  local sel="$1" val="$2"
+  playwright-cli fill "$sel" "" >/dev/null 2>&1
+  playwright-cli click "$sel" >/dev/null 2>&1
+  playwright-cli type "$val" >/dev/null 2>&1
+  playwright-cli click ".mx-name-txtWeeklyHours input" >/dev/null 2>&1   # blur
+  sleep 1
+}
+
+fx_create_assignment() {
+  local consultant="$1" project="$2" hours="$3" customer="$4" i ok=""
+
+  fx_log "creating assignment '$consultant' -> '$project' (customer=$customer, ${hours}h/wk)"
+  fx_view "cardConsultants" "galConsultants" >/dev/null
+  playwright-cli click ".mx-name-btnAddAssignment" >/dev/null 2>&1
+  for i in 1 2 3 4 5 6 7 8; do
+    if playwright-cli eval "() => String(!!document.querySelector('.mx-name-cbCustomer'))" 2>/dev/null | grep -qiw true; then
+      ok=1; break
+    fi
+    sleep 1
+  done
+  [ -n "$ok" ] || tt_fail "fixtures: Add Assignment popup did not open (cbCustomer never appeared)"
+
+  # Order is forced by the form: customer gates the project list, project gates
+  # consultant/hours/date editability.
+  tt_combobox_select_text ".mx-name-cbCustomer" "$customer" \
+    || tt_fail "fixtures: customer '$customer' not selectable on the assignment form"
+  tt_combobox_select_text ".mx-name-cbProject" "$project" \
+    || tt_fail "fixtures: project '$project' not selectable under customer '$customer' — the project may belong to a different customer"
+  tt_combobox_select_text ".mx-name-cbConsultant" "$consultant" \
+    || tt_fail "fixtures: consultant '$consultant' not selectable on the assignment form"
+
+  tt_fill ".mx-name-txtWeeklyHours input"      "$hours"
+  tt_fill ".mx-name-txtTotalBudgetHours input" "$FX_BUDGET_HOURS"
+  fx_fill_date ".mx-name-dpStartDate input" "$FX_START_DATE"
+  fx_fill_date ".mx-name-dpEndDate input"   "$FX_END_DATE"
+
+  # Refuse to submit a form the widget has already rejected — otherwise the save
+  # silently no-ops and the failure surfaces later as "project not visible".
+  local bad
+  bad="$(playwright-cli eval "() => [...document.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).map(e=>(e.innerText||'').trim()).filter(Boolean).join(' ~ ')" 2>/dev/null | _tt_eval_str)"
+  [ -z "$bad" ] || tt_fail "fixtures: assignment form rejected the input before save: $bad"
+
+  playwright-cli click ".mx-name-btnSave" >/dev/null 2>&1
+  sleep 4
+  tt_clear_dialogs 4 >/dev/null 2>&1 || true
+
+  # Prove it landed rather than trusting the click.
+  case "$(fx_consultant_assignments "$consultant")" in
+    *"$project"*) fx_log "created '$consultant' -> '$project'" ;;
+    *) tt_fail "fixtures: saved assignment '$consultant' -> '$project' but it is not on the consultant afterwards — the save was rejected" ;;
+  esac
+}
+
+fx_ensure_assignments() {
+  local row consultant project hours have customer last=""
+  for row in "${FX_ASSIGNMENTS[@]}"; do
+    IFS='|' read -r consultant project hours <<< "$row"
+
+    # One popup read per consultant, reused across that consultant's rows.
+    if [ "$consultant" != "$last" ]; then
+      have="$(fx_consultant_assignments "$consultant")"
+      last="$consultant"
+    fi
+
+    case "$have" in
+      NOGAL|NOCARD|"")
+        FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (consultant not found)"
+        fx_log "MISSING consultant '$consultant' — cannot check assignments"
+        continue ;;
+      *"$project"*)
+        FX_PRESENT=$((FX_PRESENT+1))
+        fx_log "ok      assignment '$consultant' -> '$project'"
+        continue ;;
+    esac
+
+    if [ "${TT_FIXTURES_READONLY:-0}" = "1" ]; then
+      FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (${hours}h/wk)"
+      fx_log "MISSING assignment '$consultant' -> '$project' (read-only mode, not creating)"
+      continue
+    fi
+
+    customer="$(fx_project_customer "$project")"
+    [ -n "$customer" ] || tt_fail "fixtures: could not determine which customer owns project '$project'"
+    fx_create_assignment "$consultant" "$project" "$hours" "$customer"
+    FX_CREATED=$((FX_CREATED+1))
+    have="$(fx_consultant_assignments "$consultant")"   # refresh for later rows
+  done
+}
+
 # ---------------------------------------------------------------- entry point
 fx_ensure_all() {
   [ -n "${TT_BASE_URL:-}" ] || tt_fail "fixtures: TT_BASE_URL must be set explicitly — this writes data and must never fall back to a default environment"
 
   tt_login "e2e_tm" "Add Customer"
 
+  # Order matters: a project must exist before it can be assigned.
   fx_ensure_projects
   fx_ensure_consultants
+  fx_ensure_assignments
 
   echo "  [fixtures] $FX_PRESENT present, $FX_CREATED created"
   if [ -n "$FX_MISSING" ]; then
