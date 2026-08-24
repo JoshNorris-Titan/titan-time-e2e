@@ -6,7 +6,7 @@
 It drives a real browser through the real app — logging in, filling a timesheet, approving it,
 downloading the export — and reports PASS or FAIL for every step.
 
-![Steps](https://img.shields.io/badge/steps-50-1f6feb)
+![Steps](https://img.shields.io/badge/steps-51-1f6feb)
 ![Runtime](https://img.shields.io/badge/runtime-30–45%20min-6e7781)
 ![Driver](https://img.shields.io/badge/driver-playwright--cli-2ead33)
 ![CI](https://img.shields.io/badge/CI-manual%20trigger%20only-d29922)
@@ -20,7 +20,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 
 <table>
 <tr><td><b>What it tests</b></td><td>The running Titan Time web app, through a real browser</td></tr>
-<tr><td><b>How long</b></td><td>Roughly 30–45 minutes for all 50 steps</td></tr>
+<tr><td><b>How long</b></td><td>Roughly 30–45 minutes for all 51 steps</td></tr>
 <tr><td><b>What it changes</b></td><td>Only the <code>e2e_*</code> test consultants' data — never real timesheets</td></tr>
 <tr><td><b>Where it runs</b></td><td>Your machine, or GitHub, against local / dev / acceptance</td></tr>
 <tr><td><b>Who reads this page</b></td><td>Anyone who needs to know what is and isn't covered</td></tr>
@@ -33,7 +33,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 | | Section | |
 |---|---|---|
 | 1 | [How a run works](#1-how-a-run-works) | What the conductor does |
-| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ All 50 steps |
+| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ All 51 steps |
 | 3 | [Files that aren't part of the run](#3-files-that-arent-part-of-the-run) | Seeders, probes, quality check |
 | 4 | [Settings the suite reads](#4-settings-the-suite-reads) | Addresses and logins |
 | 5 | [Running it automatically](#5-running-it-automatically-on-github) | The GitHub workflow |
@@ -67,17 +67,34 @@ flowchart LR
 ```mermaid
 flowchart LR
   A["1 · Check the app<br/>answers"] --> B["2 · Open ONE<br/>browser window"]
-  B --> C["3 · Step 1<br/>wipe test data"]
-  C --> D["4 · Steps 2–49<br/>in alphabetical order"]
-  D --> E["5 · Step 50<br/>wipe again"]
+  B --> C["3 · 00-setup<br/>fixtures, then wipe"]
+  C --> D["4 · 10- … 80-<br/>the suites, in order"]
+  D --> E["5 · 99-teardown<br/>wipe again"]
   E --> F["6 · Close browser<br/>write the report"]
 ```
 
 1. **Checks the app answers** at the address given — stops immediately if not.
 2. **Opens one browser window** and keeps it open for the whole run, so steps inherit each
    other's logged-in session. Deliberate, and it saves a lot of time.
-3. **Runs every `verify-*.test.sh` file in alphabetical order.** The order is load-bearing:
-   `verify-000-…` sorts first and `verify-zzz-…` sorts last, so they bookend the run.
+3. **Runs every `verify-*.test.sh` under `suites/`, sorted by path.** The order is load-bearing,
+   and the numbered folder names are what carry it:
+
+   | Folder | What runs there |
+   |---|---|
+   | `00-setup/` | Ensure the projects/assignments exist, then wipe transactional test data |
+   | `10-smoke/` | Login and the role landing pages |
+   | `20-consultant/` | Timesheet entry, line items, attachments |
+   | `30-approval/` | PM, manager and customer approval journeys |
+   | `40-hr/` | HR dashboard |
+   | `50-titan-manager/` | Titan Manager lists, search and dropdowns |
+   | `60-email/` | Outbound mail |
+   | `70-tickets/` | Per-ticket regressions (`tt647/`, `tt654/`, `tt683/`, `tt692693/`) |
+   | `80-platform/` | Unit-test module |
+   | `99-teardown/` | Wipe again |
+
+   Previously this was a flat alphabetical sort, which worked only because `-` sorts before `0`
+   — so `verify-00-fixtures` happened to precede `verify-000-testdata-clear-before`. The folders
+   make that intent explicit instead of incidental.
 4. **Marks a step FAILED if it exits non-zero**, prints its output, and saves a screenshot named
    `<step>-failure.png` so you can see what the page looked like.
 5. **Gives up on a step after 2 minutes** (`--timeout` to change), so one hung page can't stall the run.
@@ -92,7 +109,12 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 50 steps, in the exact order they run, grouped into seven blocks:
+All 51 steps, grouped into seven blocks.
+
+> [!IMPORTANT]
+> The numbering below still reflects the old flat alphabetical run order. Tests now live in
+> `suites/` folders (see section 1) and run in folder order, so **the numbers no longer match
+> execution order**. Every description is still accurate; only the sequence changed.
 
 ```mermaid
 flowchart LR
@@ -130,7 +152,8 @@ leftovers.
 <details>
 <summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21</h3></summary>
 
-These run alphabetically, so the topics interleave. The order below is exactly what happens.
+These used to run alphabetically, which is why the topics interleave below. They are now grouped
+by suite folder instead; the descriptions are unchanged.
 
 **2. `verify-anon-bad-token` — A bad approval link is refused.** &nbsp; `read-only`
 

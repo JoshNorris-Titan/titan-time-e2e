@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Tier 0/1 smoke — the consultant's weekly timesheet grid renders.
+#
+# Logs in as the Consultant role and asserts the timesheet week view shows its
+# core columns (Project, Client, the Sun..Sat day columns, Total). Confirms the
+# consultant's primary screen loads. Text assertions only (no widget names).
+#
+# Env: TT_BASE_URL, TT_ROLE_PASS (see tests/lib/_login.sh)
+set -euo pipefail
+# Resolve the suite root by walking up to the directory that holds lib/, so a test
+# works at any nesting depth and still runs directly, not only via run-tests.sh.
+TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
+source "$TT_ROOT/lib/_login.sh"
+
+tt_login "e2e_consultant" "My Timesheets"
+tt_assert_all "Consultant timesheet grid" "Project" "Client" "Sun" "Sat" "Total"
+
+echo "PASS: verify-consultant-timesheet — consultant weekly timesheet grid renders"

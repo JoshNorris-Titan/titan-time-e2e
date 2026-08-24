@@ -22,8 +22,9 @@ commit` from the project root — that targets the Mendix model and is blocked f
 ## Running
 
 ```bash
-./run-tests.sh                              # whole suite, localhost
-./run-tests.sh verify-smoke-login.test.sh   # one script
+./run-tests.sh                                          # whole suite, localhost
+./run-tests.sh suites/10-smoke/verify-smoke-login.test.sh   # one script
+./run-tests.sh suites/30-approval                        # one suite folder
 ./run-tests.sh --list
 TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh --skip-file ci-skip.txt
 ```
@@ -39,7 +40,19 @@ F5 first — tests written against unsaved model changes test the previous build
 
 ## Conventions
 
+- **Layout:** tests live under `suites/<NN-area>/`. The numeric prefix is the run order —
+  `00-setup` (fixtures, then clear) → `10-smoke` → `20-consultant` → `30-approval` → `40-hr` →
+  `50-titan-manager` → `60-email` → `70-tickets/<ticket>/` → `80-platform` → `99-teardown`.
+  Put a new test in the area it exercises; ticket-specific regressions go in
+  `70-tickets/tt<ticket>/`. `lib/` holds shared helpers, `seeders/` the destructive data
+  builders (never picked up by the runner, which only matches `verify-*.test.sh`).
+- **Paths:** a test resolves its root by walking up to the directory containing `lib/`:
+  `TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"`
+  then `source "$TT_ROOT/lib/_login.sh"`. Depth-independent, and keeps a test directly runnable
+  without the runner. Copy that pattern into any new test.
 - **Naming:** `verify-<slug>.test.sh`; ticket work uses `verify-tt<ticket>-<case>.test.sh`.
+  `ci-skip.txt` keys on the **basename**, so re-filing a test into another folder does not
+  invalidate a skip entry.
 - **Selectors:** `.mx-name-*` only. Mendix generates that class from a widget's *Name* property,
   so it is a contract you control from the model — not a styling class. Auto-generated names
   (`textBox1`, `dataView2`) renumber as pages are edited and must never be used; the fix is to

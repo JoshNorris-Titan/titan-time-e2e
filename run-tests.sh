@@ -66,10 +66,16 @@ export TT_BASE_URL="$BASE_URL"
 # Sorted, because the suite depends on run order (000 clears before, zzz after).
 collect() {
   local t
-  if [ ${#TARGETS[@]} -eq 0 ]; then TARGETS=("$HERE"); fi
+  if [ ${#TARGETS[@]} -eq 0 ]; then TARGETS=("$HERE/suites"); fi
   for t in "${TARGETS[@]}"; do
     if [ -d "$t" ]; then
-      find "$t" -maxdepth 1 -name 'verify-*.test.sh' -type f | LC_ALL=C sort
+      # Recursive, sorted by FULL PATH. The numeric directory prefixes under
+      # suites/ (00-setup ... 99-teardown) are what impose run order now.
+      # Previously order came from a flat lexical sort and depended on the
+      # accident that '-' (0x2D) sorts before '0' (0x30), which is how
+      # verify-00-fixtures came before verify-000-testdata-clear-before.
+      # Directories make that intent explicit instead of incidental.
+      find "$t" -name 'verify-*.test.sh' -type f | LC_ALL=C sort
     elif [ -f "$t" ]; then
       printf '%s\n' "$t"
     else
@@ -95,7 +101,10 @@ fi
 if [ "$LIST_ONLY" -eq 1 ]; then
   for s in "${SCRIPTS[@]}"; do
     b="$(basename "$s")"
-    if [ -n "${SKIP[$b]:-}" ]; then echo "$b  (skipped)"; else echo "$b"; fi
+    # Show the path so the suite grouping is visible, but skip-matching stays on
+    # the basename so ci-skip.txt does not have to churn when a test is re-filed.
+    rel="${s#$HERE/}"
+    if [ -n "${SKIP[$b]:-}" ]; then echo "$rel  (skipped)"; else echo "$rel"; fi
   done
   exit 0
 fi
