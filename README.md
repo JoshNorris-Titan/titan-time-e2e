@@ -225,10 +225,23 @@ A read-only investigation supporting step 9. Two icon-only links sit side by sid
 with no labels; this reads their icon classes to tell Edit from Delete rather than clicking one to
 find out.
 
-**11. `verify-hr-dashboard-summary` — The HR dashboard loads its stages.** &nbsp; `read-only`
+**11. `verify-hr-dashboard-summary` — The stage counters actually count something.** &nbsp; `read-only`
 
-Confirms all four workflow sections render: Pending, Manager Approval, Client Approval, Weekly To
-Process.
+Confirms the workflow sections render, and — the part that matters — that all six stage counters
+are present, show a number, and are not all zero.
+
+It used to assert four section captions, one of which was the very text the login had just waited
+for. That assertion was free, and none of the four touched the aggregation the step existed to
+check. Now the captions it asserts exclude the one the login proves, so they can fail; and the
+counters are checked directly.
+
+All six counters come from a **single retrieve**, filtered five ways, so all-zero is what that one
+retrieve failing looks like — the failure that takes out the whole summary at once. Earlier steps
+leave entries behind, so an empty summary here means broken rather than idle.
+
+It stops short of asserting that a counter matches the list on its own tab: the counters may be
+scoped by month or week while a tab shows one week, and demanding they match would produce a
+confident, wrong failure. That needs one look at a running dashboard.
 
 **12. `verify-hr-sent-consultant-sorted` — Sent-tab filter is alphabetical.** &nbsp; `TT-667` `read-only`
 
