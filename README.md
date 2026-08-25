@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 61 steps, grouped into eight blocks.
+All 62 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +127,7 @@ All 61 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
@@ -160,7 +160,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21, 56–57 and 59</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21, 56–57 and 59–60</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -327,6 +327,25 @@ only prove eleven arrived; addressing them by type turns "email is broken" into
 
 It does not prove the wording is right, or that anything was delivered — only that a template
 exists and a message was raised. Delivery is the send event's job, on its own schedule.
+
+**60. `verify-consultant-data-isolation` — One consultant cannot read another's hours.** &nbsp; `read-only`
+
+A read of the security model found that the timesheet-entry entity has **no XPath constraint** for
+the consultant role. What actually keeps a consultant to their own rows is the XPath on the pages
+and microflows that fetch them. That is real protection for anyone using the app through its
+screens — but it is a single layer, and it is the layer no test exercises, because every other step
+here goes through those same screens and would look identical either way.
+
+So this asks the data layer directly, as an ordinary logged-in consultant, using the app's own
+client API. Not tooling and not an exploit: the same call the app itself makes, with a different
+filter.
+
+The care is in making a zero mean something. "Consultant A retrieved none of B's entries" is only
+reassuring if B *has* entries to retrieve, so the step first proves as administrator that the very
+same query returns rows. If the control comes back empty the run **aborts** rather than passing —
+otherwise this would be a check that passes hardest against an empty database.
+
+If it fails, the fix belongs on the entity access rule, not on any screen.
 
 </details>
 
