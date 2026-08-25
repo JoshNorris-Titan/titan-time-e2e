@@ -62,12 +62,21 @@ _tt_dialog_js() {
 # TT_DIALOG_BLOCKED so callers can fail with the real reason instead of
 # clicking Close and reporting a mystery. (Note the old regexes included
 # "close", which is precisely how that cancel went unnoticed.)
+# Second argument: an EXTRA caption to accept as confirmation, for dialogs whose
+# confirm button is labelled with the action itself ("Approve", "Reject"). It is
+# opt-in per call rather than added to the shared list on purpose: this helper runs
+# in almost every test, and a generic clearer that clicked anything called "Reject"
+# would happily reject an entry a test was trying to approve. Same reasoning as the
+# note above about "close".
 tt_clear_dialogs() {
-  local max="${1:-8}" i r d
+  local max="${1:-8}" extra="${2:-}" i r d alts
   d="$(_tt_dialog_js)"
+  alts='yes|submit anyway|confirm|continue|proceed|ok'
+  # Strip regex metacharacters — the caption is interpolated into a JS literal.
+  [ -n "$extra" ] && alts="$alts|$(printf '%s' "$extra" | tr -d '\^$.[]|()?*+{}/')"
   TT_DIALOG_BLOCKED=""
   for i in $(seq 1 "$max"); do
-    r=$(playwright-cli eval "() => { const d=$d; if(!d) return 'NONE'; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const b=btns.find(x=>/^(yes|submit anyway|confirm|continue|proceed|ok)\$/i.test((x.innerText||'').trim())); if(b){ b.click(); return 'ADVANCED'; } return 'BLOCKED:'+(d.innerText||'').replace(/\\s+/g,' ').slice(0,140); }" 2>/dev/null | _tt_eval_str)
+    r=$(playwright-cli eval "() => { const d=$d; if(!d) return 'NONE'; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const b=btns.find(x=>new RegExp('^(' + '$alts' + ')\$','i').test((x.innerText||'').trim())); if(b){ b.click(); return 'ADVANCED'; } return 'BLOCKED:'+(d.innerText||'').replace(/\\s+/g,' ').slice(0,140); }" 2>/dev/null | _tt_eval_str)
     case "$r" in
       NONE) return 0 ;;
       BLOCKED:*) TT_DIALOG_BLOCKED="${r#BLOCKED:}"; return 1 ;;

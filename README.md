@@ -113,7 +113,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 54 steps, grouped into eight blocks.
+All 55 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -126,7 +126,7 @@ All 54 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27, 53"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
@@ -275,7 +275,7 @@ Enter, and that the expected match is shown.
 </details>
 
 <details>
-<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 &nbsp;·&nbsp; TT-647</h3></summary>
+<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 and 53 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
 
 The To Process card must name the approver **and their role**, and must never imply the wrong
 person approved. Each step drives a different route to that one sentence.
@@ -321,6 +321,23 @@ client stage → the card must list **both** approvers, manager stage first.
 
 The mirror of step 23 at the manager stage: the line must read *"on behalf of Project Manager"*.
 This was the one wording variant with no coverage.
+
+**53. `verify-customer-token-approve` — The client actually approves.** &nbsp; `consumes 1`
+
+Step 26 walks the whole emailed-link journey and then stops one click short, on purpose, so it can
+run again and again against the same standing entry. That left the app's only path where an
+unauthenticated visitor *writes* something with nothing testing it. This one presses the button.
+
+It then checks the two things a click alone does not show: that the entry actually arrives in **To
+Process**, and that the approver is recorded as the **client** rather than as HR acting on their
+behalf. Asserting only that the entry left the queue would pass just as happily if it had been
+rolled back or deleted.
+
+Unlike step 26 this consumes an entry, so it reminds a pending one when there is one and creates
+its own when there is not.
+
+*Why:* five separate strands of the coverage audit — pages, business logic, roles, the status
+lifecycle, and the written scenarios — each independently landed on this as the biggest hole.
 
 </details>
 
