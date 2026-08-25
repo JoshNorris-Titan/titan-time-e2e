@@ -197,9 +197,22 @@ tt_click_text() {
 #   'old' = the stock Mendix /login.html form (#usernameInput)
 #   'new' = the custom Core.Login page (mx widgets, input.form-control)
 #   ''    = neither appeared
+# Budget: each pass costs two evals, so 15 tries was roughly 15-20 seconds. That is
+# plenty against a warm app and not nearly enough against a cold one. The very first
+# login of a CI run lands on a Mendix Cloud environment that may not have served a
+# request in days, and the suite's own ordering makes verify-00-fixtures that first
+# caller -- "-" sorts before "0", so it precedes the clear step. It failed with
+# "login form not found" while every later login in the same run succeeded, which is
+# the signature of a cold start rather than a broken account.
+#
+# The runner's health check does not cover this: it curls the index and gets a 200
+# back long before the client has booted far enough to render a login form.
+#
+# Raised to 60. It costs nothing on the happy path, because it returns the moment a
+# form appears; it only spends the time when the alternative is failing the run.
 _tt_login_form_variant() {
   local _
-  for _ in $(seq 1 15); do
+  for _ in $(seq 1 60); do
     if playwright-cli eval "() => String(!!document.querySelector('#usernameInput'))" 2>/dev/null | grep -qiw true; then
       echo "old"; return 0
     fi

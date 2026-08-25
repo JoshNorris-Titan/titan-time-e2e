@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# NOT A TEST. Moved out of suites/ on 2026-08-25 because the runner was executing
+# it on every pass. It asserts nothing, so it could only ever cost time or do harm:
+# it timed out at the 2-minute cap on each CI run, and with EMAILPREP_APPLY set it
+# rewrites EVERY account's email address to EMAILPREP_TARGET -- which defaults to a
+# real mailbox. Run it by hand, deliberately, or not at all.
 # Redirect dev's outbound mail to one inbox by rewriting recipient DATA.
 #
 #   DRY RUN (default): opens every record, reports old -> new, saves NOTHING.

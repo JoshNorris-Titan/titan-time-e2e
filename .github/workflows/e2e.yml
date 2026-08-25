@@ -49,6 +49,10 @@ jobs:
           TT_ADMIN_PASS: ${{ secrets.TT_ADMIN_PASS }}
           TT_ROLE_PASS: ${{ secrets.TT_ROLE_PASS }}
           TT_E2E_CONSULTANTS: ${{ secrets.TT_E2E_CONSULTANTS }}
+          # verify-unittests needs this to reach the UnitTesting remote API. The
+          # secret existed but was never passed through, so the step failed with
+          # "TT_UNITTEST_PASS is not set" on every run.
+          TT_UNITTEST_PASS: ${{ secrets.TT_UNITTEST_PASS }}
         run: |
           chmod +x ./run-tests.sh
           # No --verbose: failures already print their own output, and at 50

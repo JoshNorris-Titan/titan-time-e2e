@@ -35,9 +35,16 @@ source "$TT_ROOT/lib/_login.sh"
 
 MINE_USER="${TT_ISO_USER:-e2e_consultant}"
 MINE_NAME="${TT_ISO_NAME:-E2E Consultant}"
-OTHER_NAME="${TT_ISO_OTHER:-E2E Consultant Two}"
+# Candidates for "somebody else". The first one the administrator can actually see
+# entries for is the one used. Hardcoding a single name made this step depend on
+# which consultant happened to have data: the first CI run aborted because
+# "E2E Consultant Two" had none. That was the control doing its job, but it told us
+# nothing about isolation. Set TT_ISO_OTHER to pin a specific name.
+OTHER_CANDIDATES="${TT_ISO_OTHER:-E2E Consultant Two|E2E Consultant Three}"
 
-XPATH="//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName = '$OTHER_NAME']"
+iso_xpath() {
+  printf "%s" "//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName = '$1']"
+}
 
 # di_count <xpath> — how many objects the CURRENT session can retrieve.
 # Returns a number, or ERR:<reason>. mx.data.get is the client API the app itself
@@ -49,17 +56,27 @@ di_count() {
 
 # ------------------------------------------------- 1. control: the data exists
 tt_login "${TT_ADMIN_USER:-MxAdmin}" "Welcome to your homepage" "${TT_ADMIN_PASS:-${TT_PASS:-}}"
-admin="$(di_count "$XPATH")"
 
-case "$admin" in
-  ERR:*)
-    tt_fail "the control retrieve failed as administrator ($admin). Without it a zero from the consultant proves nothing, so this step will not report a result." ;;
-  ''|*[!0-9]*)
-    tt_fail "the control retrieve returned something that is not a count: [$admin]" ;;
-esac
+OTHER_NAME=""; XPATH=""; admin=0; tried=""
+_old_ifs="$IFS"; IFS='|'
+for cand in $OTHER_CANDIDATES; do
+  IFS="$_old_ifs"
+  { [ -n "$cand" ] && [ "$cand" != "$MINE_NAME" ]; } || { IFS='|'; continue; }
+  probe="$(di_count "$(iso_xpath "$cand")")"
+  case "$probe" in
+    ERR:*)       tt_fail "the control retrieve failed as administrator ($probe). Without it a zero from the consultant proves nothing, so this step will not report a result." ;;
+    ''|*[!0-9]*) tt_fail "the control retrieve returned something that is not a count: [$probe]" ;;
+  esac
+  tried="$tried '$cand'=$probe"
+  if [ "$probe" -gt 0 ]; then
+    OTHER_NAME="$cand"; XPATH="$(iso_xpath "$cand")"; admin="$probe"; break
+  fi
+  IFS='|'
+done
+IFS="$_old_ifs"
 
-if [ "$admin" -eq 0 ]; then
-  tt_fail "the administrator can see no '$OTHER_NAME' entries at all, so there is nothing for '$MINE_NAME' to be denied. Seed an entry for the second consultant (verify-00-fixtures) and run again — passing here would mean nothing."
+if [ -z "$OTHER_NAME" ]; then
+  tt_fail "no other consultant has entries the administrator can see (tried:$tried), so there is nothing for '$MINE_NAME' to be denied. Seed one and run again - passing here would mean nothing."
 fi
 echo "  control: administrator sees $admin entr(ies) belonging to '$OTHER_NAME'"
 

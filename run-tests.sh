@@ -36,7 +36,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_URL="${TT_BASE_URL:-http://localhost:8080}"
 JUNIT=""
 SKIP_FILE=""
-TIMEOUT="2m"
+# 2m was tuned against a local F5 run. Against Mendix Cloud dev the same steps take
+# noticeably longer -- the first CI baseline lost nine steps to the cap, several of
+# which were merely slow rather than stuck. A longer cap costs nothing on a passing
+# step and only spends time on one that was going to fail anyway.
+TIMEOUT="4m"
 LIST_ONLY=0
 EXPECT_COUNT=""
 VERBOSE=0

@@ -76,6 +76,16 @@ case "$LINK" in
   *) tt_fail "email link is not a customer-approval link: $LINK" ;;
 esac
 
+# The HR tab and the anonymous token page do not render a week the same way: HR gave
+# "Sep 27 - Oct 03, 2026" while the token page lists the same entry under a different
+# form, so an exact match found nothing and the step failed claiming the entry was
+# absent. Match on the leading "Mon DD" instead, which every rendering of that week
+# contains. The token page is already scoped to one customer, so the fragment is not
+# doing the identifying on its own.
+WEEKFRAG="$(printf '%s' "$WEEK" | grep -oE '^[A-Za-z]{3} [0-9]{1,2}' || true)"
+[ -n "$WEEKFRAG" ] || WEEKFRAG="$WEEK"
+echo "matching the token page on '$WEEKFRAG'"
+
 # ------------------------------------------------ 3. anonymous: open the entry
 playwright-cli cookie-clear >/dev/null 2>&1
 playwright-cli goto "$LINK" >/dev/null 2>&1
@@ -83,7 +93,7 @@ tt_wait_for ".mx-name-galPendingEntries" "customer-approval pending list"
 
 # Open the review popup for OUR week. Falling back to the first row would make the
 # later assertions describe an entry we did not choose, so a miss is a failure.
-opened="$(playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView')]; for(const v of vs){ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; if((p.innerText||'').indexOf('$WEEK')>=0){ v.click(); return 'hit'; } } } return vs.length ? 'nomatch' : 'empty'; }" 2>/dev/null | _tt_eval_str)"
+opened="$(playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView')]; for(const v of vs){ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; if((p.innerText||'').indexOf('$WEEKFRAG')>=0){ v.click(); return 'hit'; } } } return vs.length ? 'nomatch' : 'empty'; }" 2>/dev/null | _tt_eval_str)"
 case "$opened" in
   hit)     ;;
   nomatch) tt_fail "the token page lists entries but none for week '$WEEK'" ;;
@@ -107,7 +117,7 @@ sleep 3
 # transition. Poll: the workflow commits asynchronously.
 gone=""
 for _ in $(seq 1 10); do
-  still="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); return String(!!g && (g.innerText||'').indexOf('$WEEK') >= 0); }" 2>/dev/null | _tt_eval_str)"
+  still="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); return String(!!g && (g.innerText||'').indexOf('$WEEKFRAG') >= 0); }" 2>/dev/null | _tt_eval_str)"
   [ "$still" = "false" ] && { gone=1; break; }
   sleep 3
 done
