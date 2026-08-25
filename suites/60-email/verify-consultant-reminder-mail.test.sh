@@ -37,18 +37,22 @@ RECIP="$(tt_mail_address "$TAG")"
 echo "reminder will be addressed to: $RECIP"
 
 # 1) Admin -> Email Tester.
-tt_login "$ADMIN_USER" "Admin Hub" "${TT_ADMIN_PASS:-}"
-tt_click_text "Admin Hub" "admin hub nav item"
-sleep 2
-tt_click_text "Email Tester" "email tester card"
-tt_wait_for ".mx-name-textBox2" "email tester form"
+# The card puts its caption in a child widget and the click handler on the
+# container, which tt_click_text cannot reach; and the form's widgets have been
+# renamed. tt_open_email_tester handles both and reports which naming it found.
+TESTER="$(tt_open_email_tester)"   || tt_fail "could not open the Email Tester from the Admin Hub"
+case "$TESTER" in
+  new) SEL_EMAIL=".mx-name-txtTesterEmail"; SEL_TYPE=".mx-name-cbTesterEmailType"; SEL_SEND=".mx-name-btnTesterSend" ;;
+  *)   SEL_EMAIL=".mx-name-textBox2";       SEL_TYPE=".mx-name-comboBox1";         SEL_SEND=".mx-name-actionButton3" ;;
+esac
+echo "email tester widgets: $TESTER naming"
 
 # 2) Address it, choose the reminder type, send.
 TS=$(date +%s%3N)
-tt_fill ".mx-name-textBox2 input" "$RECIP"
-tt_combobox_select_text ".mx-name-comboBox1" "ToConsultant_SubmissionReminder" \
+tt_fill "$SEL_EMAIL input" "$RECIP"
+tt_combobox_select_text "$SEL_TYPE" "ToConsultant_SubmissionReminder" \
   || tt_fail "email tester: no 'ToConsultant_SubmissionReminder' option in the Email type dropdown"
-playwright-cli click ".mx-name-actionButton3" >/dev/null 2>&1
+playwright-cli click "$SEL_SEND" >/dev/null 2>&1
 sleep 3
 
 # The reminder detail popup (Main.Remind_Consultant_Tester) collects the fields

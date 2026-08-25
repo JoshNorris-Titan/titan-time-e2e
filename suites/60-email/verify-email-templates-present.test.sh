@@ -50,23 +50,23 @@ et_addr() {  # a recipient unique to one email type
   printf 'tmpl-%s@%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" "${TT_MAIL_DOMAIN:-e2e.local}"
 }
 
+# Selectors are decided once, from whichever naming the environment actually has.
+SEL_EMAIL=""; SEL_TYPE=""; SEL_SEND=""
 et_open_tester() {
-  local i
-  [ "$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnTesterSend'))" 2>/dev/null | _tt_eval_str)" = "true" ] && return 0
-  tt_login "${TT_ADMIN_USER:-MxAdmin}" "Welcome to your homepage" "${TT_ADMIN_PASS:-${TT_PASS:-}}" || return 1
-  playwright-cli click ".mx-name-cardEmailTester" >/dev/null 2>&1
-  for i in $(seq 1 20); do
-    [ "$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnTesterSend'))" 2>/dev/null | _tt_eval_str)" = "true" ] && return 0
-    sleep 1
-  done
-  return 1
+  local v
+  v="$(tt_open_email_tester)" || return 1
+  case "$v" in
+    new) SEL_EMAIL=".mx-name-txtTesterEmail"; SEL_TYPE=".mx-name-cbTesterEmailType"; SEL_SEND=".mx-name-btnTesterSend" ;;
+    *)   SEL_EMAIL=".mx-name-textBox2";       SEL_TYPE=".mx-name-comboBox1";         SEL_SEND=".mx-name-actionButton3" ;;
+  esac
+  return 0
 }
 
 # et_pick_type — choose one value in the enum combobox. Mendix's combobox renders
 # its options as role=option nodes once opened, so the value is matched on its own
 # text rather than on a generated widget id.
 et_pick_type() {
-  playwright-cli click ".mx-name-cbTesterEmailType" >/dev/null 2>&1
+  playwright-cli click "$SEL_TYPE" >/dev/null 2>&1
   sleep 1
   playwright-cli eval "() => { const os=[...document.querySelectorAll('[role=option]')]; const o=os.find(e=>(e.innerText||'').trim()==='$1'); if(!o) return 'notoffered:'+os.length; o.click(); return 'picked'; }" 2>/dev/null | _tt_eval_str
 }
@@ -76,13 +76,13 @@ et_pick_type() {
 tt_mail_prepare
 
 # ------------------------------------------------------------ 2. send all eleven
-et_open_tester || tt_fail "could not open the Email Tester as ${TT_ADMIN_USER:-MxAdmin} (Core.AdministratorDashboard -> cardEmailTester)"
+et_open_tester || tt_fail "could not open the Email Tester as ${TT_ADMIN_USER:-MxAdmin} (Admin Hub -> Email Tester)"
 
 sent=""
 notoffered=""
 for t in $TYPES; do
   addr="$(et_addr "$t")"
-  tt_fill ".mx-name-txtTesterEmail input, .mx-name-txtTesterEmail" "$addr" >/dev/null 2>&1 \
+  tt_fill "$SEL_EMAIL input, $SEL_EMAIL" "$addr" >/dev/null 2>&1 \
     || { notoffered="$notoffered $t(no-email-field)"; continue; }
   r="$(et_pick_type "$t")"
   case "$r" in
@@ -94,7 +94,7 @@ for t in $TYPES; do
       notoffered="$notoffered $t(combobox:$r)"
       continue ;;
   esac
-  playwright-cli click ".mx-name-btnTesterSend" >/dev/null 2>&1
+  playwright-cli click "$SEL_SEND" >/dev/null 2>&1
   sleep 2
   tt_clear_dialogs 6 >/dev/null 2>&1 || true
   sent="$sent $t"

@@ -86,6 +86,42 @@ tt_clear_dialogs() {
   return 0
 }
 
+# tt_click_card <text> [label] — click a dashboard card by its caption.
+#
+# tt_click_text is not enough for these. It matches the element whose OWN text is
+# the caption and whose OWN cursor is a pointer, but an Admin Hub card puts its
+# caption in a child text widget while the click handler and the pointer live on
+# the container above it. So the caption element matches on text and fails on
+# cursor, and nothing is clicked. This walks up from the caption to the first
+# ancestor that actually looks clickable.
+tt_click_card() {
+  local txt="$1" label="${2:-$1}" r
+  r=$(playwright-cli eval "() => { const all=[...document.querySelectorAll('*')].filter(e => e.childElementCount < 3 && (e.innerText||'').trim() === '$txt'); const el = all[all.length-1]; if (!el) return 'notext'; let p = el; for (let i = 0; i < 8 && p; i++) { const cs = getComputedStyle(p); if (cs.cursor === 'pointer' || p.onclick || p.getAttribute('role') === 'button') { p.click(); return 'ok'; } p = p.parentElement; } el.click(); return 'leaf'; }" 2>/dev/null | _tt_eval_str)
+  case "$r" in
+    ok|leaf) sleep 3; return 0 ;;
+    *) tt_fail "no clickable card captioned '$txt' ($label)" ;;
+  esac
+}
+
+# tt_open_email_tester — land on Main.EmailTester, whatever it is called today.
+#
+# The page's widgets were auto-named (textBox2 / comboBox1 / actionButton3) and
+# have been renamed to txtTesterEmail / cbTesterEmailType / btnTesterSend. Both
+# names are accepted here so the suite works either side of that reaching an
+# environment, and says which one it found rather than leaving it a mystery.
+# Prints "old" or "new" so a caller can pick its selectors.
+tt_open_email_tester() {
+  local i variant
+  for i in $(seq 1 3); do
+    variant="$(playwright-cli eval "() => { if (document.querySelector('.mx-name-btnTesterSend')) return 'new'; if (document.querySelector('.mx-name-textBox2')) return 'old'; return ''; }" 2>/dev/null | _tt_eval_str)"
+    [ -n "$variant" ] && { echo "$variant"; return 0; }
+    tt_login "${TT_ADMIN_USER:-MxAdmin}" "Admin Hub" "${TT_ADMIN_PASS:-${TT_PASS:-}}" >/dev/null 2>&1 || true
+    tt_click_card "Email Tester" "email tester card" 2>/dev/null || true
+    sleep 3
+  done
+  return 1
+}
+
 # tt_fill <selector> <value> — playwright-cli fill that CANNOT fail silently.
 #
 # Every fill in this suite was written as `playwright-cli fill ... 2>/dev/null`,
