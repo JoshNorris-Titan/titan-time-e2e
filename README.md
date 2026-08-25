@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 63 steps, grouped into eight blocks.
+All 64 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +127,7 @@ All 63 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60"] --> C["C · Who approved it<br/>22–27, 53–54, 62"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
   G --> H["H · Suite self-checks<br/>51–52, 61"]
 ```
@@ -363,7 +363,7 @@ If it fails, the fix belongs on the entity access rule, not on any screen.
 </details>
 
 <details>
-<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 and 53–54 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
+<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27, 53–54 and 62 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
 
 The To Process card must name the approver **and their role**, and must never imply the wrong
 person approved. Each step drives a different route to that one sentence.
@@ -426,6 +426,28 @@ its own when there is not.
 
 *Why:* five separate strands of the coverage audit — pages, business logic, roles, the status
 lifecycle, and the written scenarios — each independently landed on this as the biggest hole.
+
+**62. `verify-pm-approve-wrong-actor` — One project manager cannot act on another's approvals.** &nbsp; `read-only`
+
+Approval is the app's authority boundary: a PM signing off hours is what the customer is eventually
+invoiced for. Nothing tested that the boundary holds *sideways* — every other approval step drives a
+single PM against their own work, which looks identical whether or not the scoping exists.
+
+The scoping is real, and reading it changed the shape of this step. The data source behind both the
+dashboard list and **Approve All** filters on the logged-in manager, so PM B never sees a row for PM
+A's work — there is no forbidden button to press. The interesting question is whether the data
+underneath is equally closed, or whether that one microflow filter is all that stands there.
+
+So it checks both: that PM B's gallery does not show PM A's entries, and that PM B **cannot retrieve
+them from the data layer either**, asked through the app's own client API. The second is the one that
+would catch a real hole — the first can pass on an empty database.
+
+As in step 60, a zero is only allowed to mean something after the administrator has proved the same
+query returns rows; if the control comes back empty the run **aborts** rather than passing.
+
+*Not attempted:* the approval itself. The per-entry action takes a helper object built per session,
+so PM B has no way to obtain PM A's — there is nothing to forge. If that ever becomes reachable by
+id, this is the file to extend.
 
 **54. `verify-customer-token-reject` — The client rejects, and must say why.** &nbsp; `consumes 1`
 
