@@ -113,7 +113,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 55 steps, grouped into eight blocks.
+All 56 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -126,7 +126,7 @@ All 55 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27, 53"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
@@ -275,7 +275,7 @@ Enter, and that the expected match is shown.
 </details>
 
 <details>
-<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 and 53 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
+<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 and 53–54 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
 
 The To Process card must name the approver **and their role**, and must never imply the wrong
 person approved. Each step drives a different route to that one sentence.
@@ -338,6 +338,21 @@ its own when there is not.
 
 *Why:* five separate strands of the coverage audit — pages, business logic, roles, the status
 lifecycle, and the written scenarios — each independently landed on this as the biggest hole.
+
+**54. `verify-customer-token-reject` — The client rejects, and must say why.** &nbsp; `consumes 1`
+
+The other half of step 53. Rejection is how a wrong timesheet gets corrected, and until now it
+appeared in the suite only as un-asserted setup — something rejects an entry so a later step has
+one to resubmit. Nobody checked that the *client* can reject, or that rejecting does what it says.
+
+Two assertions. First the guard: pressing Reject with an **empty comment** must do nothing. The
+rejection flow branches on whether a comment was left, and that branch is the reason a rejection
+always reaches the consultant with a reason attached. Second the transition: with a reason typed
+in, the entry leaves the client's queue *and* reappears in the consultant's **Rejected Entries**.
+Checking only that it left would pass for a rollback just as happily.
+
+*Why:* a silent regression in the comment guard would turn every rejection into a mystery for the
+consultant, and nothing else in the suite would notice.
 
 </details>
 
