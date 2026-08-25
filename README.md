@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 60 steps, grouped into eight blocks.
+All 61 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +127,7 @@ All 60 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
@@ -160,7 +160,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21 and 56–57</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21, 56–57 and 59</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -311,6 +311,22 @@ silently destroy hours somebody had already approved.
 *Why it reads raw values:* the suite's week-finder deliberately treats `''`, `'0'` and `'0.00'` as
 interchangeable when hunting for a usable week — correct for that job, useless for this one. This
 step reads the fields itself rather than borrowing that notion of "blank".
+
+**59. `verify-email-templates-present` — Every email type has a template behind it.** &nbsp; `sends 11`
+
+The wording of each email is not in the model. It lives in database rows, configured per
+environment. When the row for a type is missing the send loop simply **breaks** — no error, no
+warning in the log, no queued message. The email just never happens. That is the likeliest way
+email silently stops working on a fresh or restored environment, and nothing tested it.
+
+So this sends all eleven types from the Email Tester, giving each a **distinct recipient derived
+from the type name**, then reads the Emails Sent page once. A type whose template is missing
+produces no row, and the per-type address is what says *which* one. Counting eleven rows would
+only prove eleven arrived; addressing them by type turns "email is broken" into
+"`ToManager_HoursNotice` has no template".
+
+It does not prove the wording is right, or that anything was delivered — only that a template
+exists and a message was raised. Delivery is the send event's job, on its own schedule.
 
 </details>
 
