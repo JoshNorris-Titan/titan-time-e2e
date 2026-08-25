@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 58 steps, grouped into eight blocks.
+All 63 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,9 +127,9 @@ All 58 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
-  D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
-  G --> H["H · Suite self-checks<br/>51–52"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
+  G --> H["H · Suite self-checks<br/>51–52, 61"]
 ```
 
 **Tags used below**
@@ -160,7 +160,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21 and 56</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21, 56–57 and 59–60</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -225,10 +225,23 @@ A read-only investigation supporting step 9. Two icon-only links sit side by sid
 with no labels; this reads their icon classes to tell Edit from Delete rather than clicking one to
 find out.
 
-**11. `verify-hr-dashboard-summary` — The HR dashboard loads its stages.** &nbsp; `read-only`
+**11. `verify-hr-dashboard-summary` — The stage counters actually count something.** &nbsp; `read-only`
 
-Confirms all four workflow sections render: Pending, Manager Approval, Client Approval, Weekly To
-Process.
+Confirms the workflow sections render, and — the part that matters — that all six stage counters
+are present, show a number, and are not all zero.
+
+It used to assert four section captions, one of which was the very text the login had just waited
+for. That assertion was free, and none of the four touched the aggregation the step existed to
+check. Now the captions it asserts exclude the one the login proves, so they can fail; and the
+counters are checked directly.
+
+All six counters come from a **single retrieve**, filtered five ways, so all-zero is what that one
+retrieve failing looks like — the failure that takes out the whole summary at once. Earlier steps
+leave entries behind, so an empty summary here means broken rather than idle.
+
+It stops short of asserting that a counter matches the list on its own tab: the counters may be
+scoped by month or week while a tab shows one week, and demanding they match would produce a
+confident, wrong failure. That needs one look at a running dashboard.
 
 **12. `verify-hr-sent-consultant-sorted` — Sent-tab filter is alphabetical.** &nbsp; `TT-667` `read-only`
 
@@ -293,6 +306,59 @@ nothing about whether the rule still held.
 *Why this layer:* the twenty-four-hour arithmetic is already pinned down by three unit tests, so
 this does not re-test it. The popup, its two buttons and the override exist only in the UI, and
 nothing but a browser can reach them.
+
+**57. `verify-timesheet-clear` — Clearing a week empties it, and empty is not zero.** &nbsp; `consumes 2 weeks`
+
+Blank and `0` are different things here. A blank day means *nothing recorded*; a `0` means *worked
+none, and I am telling you so*. They drive different behaviour downstream, and the Clear action
+carries a note from its own author calling the distinction "delicate" — which is exactly the kind
+of rule that rots unnoticed, because a regression writing `0.00` instead of blank looks identical
+on screen.
+
+Three checks. After Clear every day cell must be **exactly empty**, not `0` and not `0.00`. An
+explicit `0` must survive a save and reload **as a zero**, which taken with the first check is what
+proves the two states are genuinely distinct rather than one being a rendering of the other. And
+Clear must be **refused** once the week is no longer editable — clearing a submitted week would
+silently destroy hours somebody had already approved.
+
+*Why it reads raw values:* the suite's week-finder deliberately treats `''`, `'0'` and `'0.00'` as
+interchangeable when hunting for a usable week — correct for that job, useless for this one. This
+step reads the fields itself rather than borrowing that notion of "blank".
+
+**59. `verify-email-templates-present` — Every email type has a template behind it.** &nbsp; `sends 11`
+
+The wording of each email is not in the model. It lives in database rows, configured per
+environment. When the row for a type is missing the send loop simply **breaks** — no error, no
+warning in the log, no queued message. The email just never happens. That is the likeliest way
+email silently stops working on a fresh or restored environment, and nothing tested it.
+
+So this sends all eleven types from the Email Tester, giving each a **distinct recipient derived
+from the type name**, then reads the Emails Sent page once. A type whose template is missing
+produces no row, and the per-type address is what says *which* one. Counting eleven rows would
+only prove eleven arrived; addressing them by type turns "email is broken" into
+"`ToManager_HoursNotice` has no template".
+
+It does not prove the wording is right, or that anything was delivered — only that a template
+exists and a message was raised. Delivery is the send event's job, on its own schedule.
+
+**60. `verify-consultant-data-isolation` — One consultant cannot read another's hours.** &nbsp; `read-only`
+
+A read of the security model found that the timesheet-entry entity has **no XPath constraint** for
+the consultant role. What actually keeps a consultant to their own rows is the XPath on the pages
+and microflows that fetch them. That is real protection for anyone using the app through its
+screens — but it is a single layer, and it is the layer no test exercises, because every other step
+here goes through those same screens and would look identical either way.
+
+So this asks the data layer directly, as an ordinary logged-in consultant, using the app's own
+client API. Not tooling and not an exploit: the same call the app itself makes, with a different
+filter.
+
+The care is in making a zero mean something. "Consultant A retrieved none of B's entries" is only
+reassuring if B *has* entries to retrieve, so the step first proves as administrator that the very
+same query returns rows. If the control comes back empty the run **aborts** rather than passing —
+otherwise this would be a check that passes hardest against an empty database.
+
+If it fails, the fix belongs on the entity access rule, not on any screen.
 
 </details>
 
@@ -544,7 +610,7 @@ value, cancels, and confirms the original numbers are back. Never resubmits.
 </details>
 
 <details open>
-<summary><h3>Section G — Unit tests and teardown &nbsp;·&nbsp; steps 49–50</h3></summary>
+<summary><h3>Section G — Unit tests, model checks and teardown &nbsp;·&nbsp; steps 49–50 and 58</h3></summary>
 
 **49. `verify-unittests` — Run the app's own internal tests.**
 
@@ -561,12 +627,36 @@ Identical to step 1. Leaves the environment as it was found, so this run's data 
 one. If teardown fails, **the whole run is marked failed** — silently leaving data behind is what
 makes the *next* run's failures impossible to read.
 
+**58. `verify-scheduled-event-config` — The reminders still fire when they should.** &nbsp; `read-only` `no app needed`
+
+Scheduled events are invisible to every other kind of test. No browser can see them, the runtime
+does not expose them, and no unit test can reach them. A regression in *when* they fire would
+surface weeks later as "the reminders went out at the wrong time" — to customers.
+
+So this reads the model on disk and pins the timing fix of 2026-08-19: the three weekly reminders
+fire at **14:00**, because Mendix Cloud runs the scheduler in UTC. It also pins the thing that was
+deliberately **not** changed — `Assignment_VerifyHours` stays monthly at **00:00**, because it is a
+data job rather than a message to a person, and moving it would shift which month's hours get
+verified. Those two settings look identical and are not, which is exactly how a well-meaning
+tidy-up breaks one of them. Two documents in the repo still describe the old 09:00 timing, so the
+wrong value is already written down somewhere and will be believed.
+
+It also checks all five first-party events still run through their `_Guarded` wrapper — the thing
+that stops them acting for real on a test environment.
+
+*Two honest limits.* The **timezone** property itself is not readable by the format reader, so only
+the hour is pinned; the step says so rather than implying coverage it lacks. And it reads the
+**last saved** model, so an unsaved change in Studio Pro is invisible to it.
+
+Needing no app makes this the one step you can run any time, in seconds. It is skipped in CI only
+because the model is not checked out beside the suite there.
+
 </details>
 
 <br/>
 
 <details open>
-<summary><h3>Section H — The suite checking itself &nbsp;·&nbsp; steps 51–52</h3></summary>
+<summary><h3>Section H — The suite checking itself &nbsp;·&nbsp; steps 51–52 and 61</h3></summary>
 
 Both steps exist because of one discovery: the two traps in section 6 were found by an audit,
 not by a failing test. A trap only a human can spot will come back. These make the suite fail on
@@ -597,6 +687,27 @@ It injects its own clickable element rather than relying on a real caption, so i
 login, cares about no particular page, and does not break when a dashboard is redesigned.
 
 *Why:* a green suite only means something if its helpers can go red.
+
+**61. `verify-session-identity` — When a step says it is logged in as someone, it really is.**
+
+The suite shares one browser session across every step and caches a login per identity. That cache
+used to be accepted on **landing text alone**: replay the cookie, look for a phrase, carry on. Which
+is not proof of identity. Two roles can share a phrase, and a replayed cookie belongs to whoever was
+logged in when it was written — so a cache hit could hand a step the wrong user while looking
+perfectly healthy, and everything after it would be describing somebody else's data.
+
+That is a nasty failure because it does not look like one. Nothing goes red; the results are just
+about the wrong person. Every role-scoped step depends on this, and step 60 in particular is
+meaningless if the session is not who it claims.
+
+The login helper now checks **who the session actually belongs to**, not just where it landed. This
+step proves that it does, by logging in as each role in turn and asking the app who it is — ending
+by returning to the first identity, because the return trip is what goes through the cache rather
+than a fresh login.
+
+*Why the loop reads from a here-document:* a piped `while` runs in a subshell, so every failure it
+counted would be thrown away on the way out and the step would pass whatever it found. That is the
+exact bug class Tier 0 existed to remove, and it would have been embarrassing here of all places.
 
 </details>
 

@@ -72,6 +72,30 @@ COUNT="$(printf '%s\n' "$ENTRIES" | grep -c .)"
 echo "archive contains $COUNT entr(y/ies):"
 printf '%s\n' "$ENTRIES" | sed 's/^/  /'
 
+# Are they actually PDFs? Everything above and below reads the central directory
+# only, which sees names, sizes and CRCs without opening a single entry. An export
+# that produced error pages, empty stubs or an HTML login redirect would still give
+# correctly-named entries with distinct CRCs and satisfy every one of those checks.
+# This opens them: first five bytes "%PDF-", and big enough to be a real document.
+PDFREPORT="$(tt683_zip_pdf_report)"
+case "$PDFREPORT" in
+  ERR*) tt_fail "could not re-open the archive to check its contents: ${PDFREPORT#ERR }" ;;
+  "")   tt_fail "the archive content check returned nothing, so no entry was actually opened" ;;
+esac
+
+BADPDF="$(printf '%s
+' "$PDFREPORT" | grep '~~BAD' || true)"
+if [ -n "$BADPDF" ]; then
+  echo "$(printf '%s
+' "$BADPDF" | grep -c .) archive entr(y/ies) are not usable PDFs:"
+  printf '%s
+' "$BADPDF" | sed 's/^/  /'
+  tt_fail "the export produced files that are not PDFs. Correct names and distinct CRCs are not enough - something generated content that will not open."
+fi
+echo "all $COUNT entr(y/ies) are PDFs:"
+printf '%s
+' "$PDFREPORT" | sed 's/^/  /'
+
 # Distinct names. ZipDocuments de-duplicates by prefixing the object ID, so a
 # collision shows up as a leading numeric id rather than a lost file.
 UNIQ="$(printf '%s\n' "$ENTRIES" | sort -u | grep -c .)"

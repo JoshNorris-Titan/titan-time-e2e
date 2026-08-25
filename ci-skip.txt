@@ -21,4 +21,8 @@
 # the right constant. Add entries here as the first cloud runs reveal them,
 # with a one-line reason each, rather than pre-emptively.
 
-# (no skips yet — populate after the first workflow_dispatch run)
+# verify-scheduled-event-config reads the Mendix model on disk. The suite is its
+# own repository, so the model is not checked out beside it in CI and the step
+# cannot run there. It is the one step that needs no app at all, so run it
+# locally instead - it is fast and needs nothing deployed.
+verify-scheduled-event-config.test.sh
