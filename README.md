@@ -90,6 +90,7 @@ flowchart LR
    | `60-email/` | Outbound mail |
    | `70-tickets/` | Per-ticket regressions (`tt647/`, `tt654/`, `tt683/`, `tt692693/`) |
    | `75-export/` | Corrections after an export has gone out |
+   | `76-bulk/` | Bulk actions, which clear a whole queue at once |
    | `80-platform/` | Unit-test module, and the suite's checks on itself |
    | `99-teardown/` | Wipe again |
 
@@ -114,7 +115,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 63 steps, grouped into eight blocks.
+All 66 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +128,7 @@ All 63 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60, 63"] --> C["C · Who approved it<br/>22–27, 53–54, 62, 64"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
   G --> H["H · Suite self-checks<br/>51–52, 61"]
 ```
@@ -160,7 +161,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21, 56–57 and 59–60</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21, 56–57, 59–60 and 63</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -360,10 +361,26 @@ otherwise this would be a check that passes hardest against an empty database.
 
 If it fails, the fix belongs on the entity access rule, not on any screen.
 
+**63. `verify-timesheet-status-rollup` — The week keeps up with what happens inside it.** &nbsp; `consumes 1 week`
+
+A timesheet carries a status of its own — Draft, Awaiting Approval, Approved, Rejected — rolled up
+from the entries beneath it. It is what a consultant sees when they look at a *week* rather than a
+line, and **no step had ever read it**. Every status assertion in the suite is about an individual
+entry. A rollup that stopped updating would leave weeks showing Draft forever while their entries
+sailed through approval, and nothing would notice.
+
+Two checks. Submitting a week must move that week's own status to Awaiting Approval — observed
+causally: read, submit, read again. And **no week may sit in `Awaiting_Export`**, a fifth enum value
+that exists but is referenced nowhere in the model: nothing sets it and nothing reads it, so a week
+in that state is invisible to every piece of logic that switches on timesheet status.
+
+It asks the objects directly rather than reading the screen, because the rollup is a property of the
+data and the page may well render a per-entry status instead.
+
 </details>
 
 <details>
-<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 and 53–54 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
+<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27, 53–54, 62 and 64 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
 
 The To Process card must name the approver **and their role**, and must never imply the wrong
 person approved. Each step drives a different route to that one sentence.
@@ -426,6 +443,44 @@ its own when there is not.
 
 *Why:* five separate strands of the coverage audit — pages, business logic, roles, the status
 lifecycle, and the written scenarios — each independently landed on this as the biggest hole.
+
+**62. `verify-pm-approve-wrong-actor` — One project manager cannot act on another's approvals.** &nbsp; `read-only`
+
+Approval is the app's authority boundary: a PM signing off hours is what the customer is eventually
+invoiced for. Nothing tested that the boundary holds *sideways* — every other approval step drives a
+single PM against their own work, which looks identical whether or not the scoping exists.
+
+The scoping is real, and reading it changed the shape of this step. The data source behind both the
+dashboard list and **Approve All** filters on the logged-in manager, so PM B never sees a row for PM
+A's work — there is no forbidden button to press. The interesting question is whether the data
+underneath is equally closed, or whether that one microflow filter is all that stands there.
+
+So it checks both: that PM B's gallery does not show PM A's entries, and that PM B **cannot retrieve
+them from the data layer either**, asked through the app's own client API. The second is the one that
+would catch a real hole — the first can pass on an empty database.
+
+As in step 60, a zero is only allowed to mean something after the administrator has proved the same
+query returns rows; if the control comes back empty the run **aborts** rather than passing.
+
+*Not attempted:* the approval itself. The per-entry action takes a helper object built per session,
+so PM B has no way to obtain PM A's — there is nothing to forge. If that ever becomes reachable by
+id, this is the file to extend.
+
+**64. `verify-pm-approve-all` — Approve All really approves them all.** &nbsp; `consumes the PM's queue`
+
+Two earlier steps assert that the Approve All button *exists*. Neither has ever pressed it. It is
+the only bulk action a project manager has, and the one most likely to be used on a busy Monday.
+
+It runs late, in its own block, for a reason: the action clears the logged-in manager's **entire**
+queue. That is bounded — the data source behind it is filtered to the current user, so it cannot
+reach another PM's work — but it does empty everything of `e2e_pm`'s awaiting manager approval, and
+the TT-647 steps need entries in exactly that state. Running after them lets them have their data
+first. It is also why the step does not seed two entries and approve just those: the action is bulk
+by nature, and pretending otherwise would test something the button does not do.
+
+Beyond "the queue emptied", it checks the work **arrived**: the manager stage counter falls, and the
+total across all six stage counters does not drop. Leaving one queue is not the same as reaching the
+next — a rollback or a delete would empty the queue just as convincingly.
 
 **54. `verify-customer-token-reject` — The client rejects, and must say why.** &nbsp; `consumes 1`
 
@@ -758,8 +813,23 @@ using. Details in [`tools/README.md`](tools/README.md).
 |---|---|
 | `TT_BASE_URL` | Which app to test, no trailing slash. Defaults to localhost |
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Administrator login |
-| `TT_ROLE_PASS` | Password shared by the four `e2e_*` role accounts |
+| `TT_ROLE_PASS` | Password shared by the `e2e_*` role accounts (see below) |
 | `TT_E2E_CONSULTANTS` | Which consultants the wipe steps are allowed to clear |
+
+**The role accounts.** `e2e_consultant`, `e2e_consultant2`, `e2e_hr`, `e2e_pm`, `e2e_pm2` and
+`e2e_tm`, all sharing `TT_ROLE_PASS`. They are **not** created by any fixture — `fx_ensure_*` only
+checks they exist and tells you what is missing.
+
+`e2e_pm2` is the second project manager, added so the suite can test that one PM cannot act on
+another's work. It deliberately manages **no projects**: the point is that it is *not* the manager
+of the E2E project and still must not be able to approve there.
+
+Provisioning one by hand is not obvious, so for the next time: Admin Hub → Accounts Overview → New
+local user. Employment status is required (the save is rejected without it). No password is asked
+for — one is **autogenerated** and mailed as the *Welcome to the Titan Timesheet App* message, and
+the account is flagged to reset on first login. Read that temporary password from **Admin Hub →
+Emails Sent**, whose Body columns show it, then log in as the new account once and set the password
+to `TT_ROLE_PASS` at the forced-reset prompt.
 
 > [!WARNING]
 > In GitHub these come from repository secrets. The defaults built into `lib/_login.sh` are a local
