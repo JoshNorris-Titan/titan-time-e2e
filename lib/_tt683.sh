@@ -295,7 +295,7 @@ tt683_process_one() {
   # name is generated (actionButton3), so match the caption instead.
   local clicked=""
   for i in 1 2 3 4 5 6 7 8; do
-    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>(e.innerText||'').trim().toLowerCase()==='process'); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | grep -qiw ok; then
+    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>(e.innerText||'').trim().toLowerCase()==='process'); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
       clicked=1; break
     fi
     sleep 2

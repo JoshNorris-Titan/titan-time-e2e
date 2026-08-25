@@ -89,7 +89,7 @@ flowchart LR
    | `50-titan-manager/` | Titan Manager lists, search and dropdowns |
    | `60-email/` | Outbound mail |
    | `70-tickets/` | Per-ticket regressions (`tt647/`, `tt654/`, `tt683/`, `tt692693/`) |
-   | `80-platform/` | Unit-test module |
+   | `80-platform/` | Unit-test module, and the suite's checks on itself |
    | `99-teardown/` | Wipe again |
 
    Previously this was a flat alphabetical sort, which worked only because `-` sorts before `0`
@@ -99,7 +99,11 @@ flowchart LR
    `<step>-failure.png` so you can see what the page looked like.
 5. **Gives up on a step after 2 minutes** (`--timeout` to change), so one hung page can't stall the run.
 6. **Writes a `results.xml` report** when asked (`--junit`) — that is what GitHub reads.
-7. **Closes the browser** at the end, whatever happened.
+7. **Closes the browser** at the end, whatever happened — and on Ctrl-C it stops the run
+   instead of carrying on against a session it just closed.
+8. **Refuses to start if the number of steps is not what you expected** (`--expect-count N`).
+   Without it the run itself cannot fail: rename a step out of the `verify-*.test.sh` pattern
+   and the conductor reports "3 steps: 3 passed" and exits happy. CI should always pass it.
 
 > [!NOTE]
 > `ci-skip.txt` lists steps to skip on a given environment. It is **empty on purpose** — entries
@@ -109,7 +113,11 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 51 steps, grouped into seven blocks.
+All 54 steps, grouped into eight blocks.
+
+> [!NOTE]
+> One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
+> below yet. The count above includes it; the walkthrough does not.
 
 > [!IMPORTANT]
 > The numbering below still reflects the old flat alphabetical run order. Tests now live in
@@ -120,6 +128,7 @@ All 51 steps, grouped into seven blocks.
 flowchart LR
   A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
+  G --> H["H · Suite self-checks<br/>51–52"]
 ```
 
 **Tags used below**
@@ -483,6 +492,43 @@ makes the *next* run's failures impossible to read.
 
 </details>
 
+<br/>
+
+<details open>
+<summary><h3>Section H — The suite checking itself &nbsp;·&nbsp; steps 51–52</h3></summary>
+
+Both steps exist because of one discovery: the two traps in section 6 were found by an audit,
+not by a failing test. A trap only a human can spot will come back. These make the suite fail on
+its own behalf.
+
+**51. `verify-no-echo-trap` — No assertion may match its own question.** &nbsp; `read-only`
+
+Scans every script for the echo trap: asking the browser something and then searching the raw
+output for the answer, where the answer also appears in the question. Fails the run and names
+each offending line. Needs no browser, so it is quick and works anywhere.
+
+Before trusting a clean scan it checks its own detector against a known-bad and a known-good
+example. A detector that quietly stopped detecting would otherwise turn this step into exactly
+the kind of always-green check it exists to prevent.
+
+*Why:* the trap is documented in three places and still reached six live call sites. A comment
+cannot fail a build.
+
+**52. `verify-helper-selftest` — The shared helpers must still be able to fail.**
+
+The runtime half of step 51. The click helper underneath every tab switch in the suite once
+could not fail, so a caption that did not exist still "clicked" and the step then asserted
+against whatever tab was already open. This proves the decoder is sane, that the click helper
+both clicks a real element *and* actually lands the click, that it fails on a caption that
+cannot exist, and that `tt_fail` still exits non-zero.
+
+It injects its own clickable element rather than relying on a real caption, so it needs no
+login, cares about no particular page, and does not break when a dashboard is redesigned.
+
+*Why:* a green suite only means something if its helpers can go red.
+
+</details>
+
 ---
 
 ## 3. Files that aren't part of the run
@@ -563,8 +609,19 @@ one run happens at a time, because the suite changes shared data on the target e
 1. **The echo trap.** Asking the browser a question and then searching the raw output for the answer
    can match the *question being echoed back* rather than the answer. Use the decoding helper in
    `lib/_login.sh` instead of searching raw output.
-2. **Assertions that cannot fail.** An audit found roughly 16 of them. Treat an unexpected PASS as
-   suspicious until you have broken the check on purpose and watched it go red.
+   **Now guarded:** step 51 (`verify-no-echo-trap`) fails the run on any new occurrence, with no
+   browser needed.
+2. **Assertions that cannot fail.** Treat an unexpected PASS as suspicious until you have broken the
+   check on purpose and watched it go red.
+   **Now partly guarded:** step 52 (`verify-helper-selftest`) proves at runtime that the shared
+   helpers can still fail, and `--expect-count` stops the *run itself* from passing green when
+   steps vanish from discovery. Neither covers an individual weak assertion — that still needs the
+   break-it-on-purpose habit.
+
+> [!NOTE]
+> Counts go stale fast, so run the guard rather than quoting a number. For the record: an audit on
+> 2026-08-24 put the echo trap at roughly 16 sites; commit `f885008` fixed most of them, and a
+> mechanical scan the same day found 6 remaining, all since fixed.
 
 A third, softer rule: **never assert on a count you don't own.** Steps assert on the `e2e_*`
 consultants' data only, because anything else on a shared environment can change under you.

@@ -179,7 +179,7 @@ tt_wait_for() {
 tt_click_text() {
   local txt="$1" label="${2:-$1}"
   local r
-  r=$(playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$txt' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | grep -iw ok || true)
+  r=$(playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$txt' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -iw ok || true)
   [ -n "$r" ] || tt_fail "clickable element with text '$txt' not found ($label)"
   sleep 2
 }
@@ -463,7 +463,7 @@ tt_hr_remind_e2e_entry() {
     [ -n "$lbl" ] || continue
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 4
-    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(el && (el.innerText||'').indexOf('$who')>=0){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | grep -qiw true; then
+    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(el && (el.innerText||'').indexOf('$who')>=0){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
       echo "$lbl"
       return 0
     fi
