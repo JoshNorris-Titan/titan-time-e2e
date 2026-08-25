@@ -89,6 +89,7 @@ flowchart LR
    | `50-titan-manager/` | Titan Manager lists, search and dropdowns |
    | `60-email/` | Outbound mail |
    | `70-tickets/` | Per-ticket regressions (`tt647/`, `tt654/`, `tt683/`, `tt692693/`) |
+   | `75-export/` | Corrections after an export has gone out |
    | `80-platform/` | Unit-test module, and the suite's checks on itself |
    | `99-teardown/` | Wipe again |
 
@@ -113,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 56 steps, grouped into eight blocks.
+All 57 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +128,7 @@ All 56 steps, grouped into eight blocks.
 ```mermaid
 flowchart LR
   A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
-  D --> E["E · Monthly export<br/>38–40"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
+  D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
 
@@ -421,7 +422,7 @@ happened *before* submitting, not after), and that a normal project still submit
 </details>
 
 <details>
-<summary><h3>Section E — The monthly export &nbsp;·&nbsp; steps 38–40 &nbsp;·&nbsp; TT-683 / TT-652</h3></summary>
+<summary><h3>Section E — The monthly export &nbsp;·&nbsp; steps 38–40 and 55 &nbsp;·&nbsp; TT-683 / TT-652</h3></summary>
 
 **38. `…-a0-seed-awaiting-export` — Push entries to "awaiting export".** &nbsp; `seeds data`
 
@@ -449,6 +450,23 @@ happened to be processed last. Downloads the archive and checks:
 > [!CAUTION]
 > The riskiest part is the **day**. A timezone slip turns a 30 June month-end into `0629`.
 > Step 4 of this test catches exactly that.
+
+**55. `verify-hr-reject-after-export` — Taking back a week that has already gone out.** &nbsp; `consumes 1`
+
+Once a week is exported it has, in practice, been invoiced, and this is the only route back. The
+flow is supposed to do two things: set the entry to rejected, **and** subtract its hours from the
+assignment's running total.
+
+The subtraction is what this really guards. If it silently stopped, the entry would still visibly
+leave the tab, every ordinary check would pass, and the assignment would over-report hours worked
+for the rest of its life. So the step reads the entry's hours off the card, reads the assignment
+total before and after, and requires the difference to match exactly — reporting the "rejected but
+total unchanged" case in those words, because that is the failure that would otherwise hide.
+
+It runs here, after the TT-683 steps, because the only way to reach the exported state is Process
+followed by Export All — and Export All exports everything awaiting export on the environment.
+Reusing what those steps already exported avoids setting that off from an earlier block. It can
+still drive the chain itself if nothing is available, and says so loudly when it does.
 
 </details>
 
