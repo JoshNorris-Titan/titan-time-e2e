@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 59 steps, grouped into eight blocks.
+All 60 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -128,7 +128,7 @@ All 59 steps, grouped into eight blocks.
 ```mermaid
 flowchart LR
   A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
-  D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
+  D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
 
@@ -562,7 +562,7 @@ value, cancels, and confirms the original numbers are back. Never resubmits.
 </details>
 
 <details open>
-<summary><h3>Section G — Unit tests and teardown &nbsp;·&nbsp; steps 49–50</h3></summary>
+<summary><h3>Section G — Unit tests, model checks and teardown &nbsp;·&nbsp; steps 49–50 and 58</h3></summary>
 
 **49. `verify-unittests` — Run the app's own internal tests.**
 
@@ -578,6 +578,30 @@ progress message — the only free-form text that endpoint returns.
 Identical to step 1. Leaves the environment as it was found, so this run's data can't skew the next
 one. If teardown fails, **the whole run is marked failed** — silently leaving data behind is what
 makes the *next* run's failures impossible to read.
+
+**58. `verify-scheduled-event-config` — The reminders still fire when they should.** &nbsp; `read-only` `no app needed`
+
+Scheduled events are invisible to every other kind of test. No browser can see them, the runtime
+does not expose them, and no unit test can reach them. A regression in *when* they fire would
+surface weeks later as "the reminders went out at the wrong time" — to customers.
+
+So this reads the model on disk and pins the timing fix of 2026-08-19: the three weekly reminders
+fire at **14:00**, because Mendix Cloud runs the scheduler in UTC. It also pins the thing that was
+deliberately **not** changed — `Assignment_VerifyHours` stays monthly at **00:00**, because it is a
+data job rather than a message to a person, and moving it would shift which month's hours get
+verified. Those two settings look identical and are not, which is exactly how a well-meaning
+tidy-up breaks one of them. Two documents in the repo still describe the old 09:00 timing, so the
+wrong value is already written down somewhere and will be believed.
+
+It also checks all five first-party events still run through their `_Guarded` wrapper — the thing
+that stops them acting for real on a test environment.
+
+*Two honest limits.* The **timezone** property itself is not readable by the format reader, so only
+the hour is pinned; the step says so rather than implying coverage it lacks. And it reads the
+**last saved** model, so an unsaved change in Studio Pro is invisible to it.
+
+Needing no app makes this the one step you can run any time, in seconds. It is skipped in CI only
+because the model is not checked out beside the suite there.
 
 </details>
 
