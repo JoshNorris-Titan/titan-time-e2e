@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 58 steps, grouped into eight blocks.
+All 59 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +127,7 @@ All 58 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
@@ -160,7 +160,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21 and 56</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21 and 56–57</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -293,6 +293,24 @@ nothing about whether the rule still held.
 *Why this layer:* the twenty-four-hour arithmetic is already pinned down by three unit tests, so
 this does not re-test it. The popup, its two buttons and the override exist only in the UI, and
 nothing but a browser can reach them.
+
+**57. `verify-timesheet-clear` — Clearing a week empties it, and empty is not zero.** &nbsp; `consumes 2 weeks`
+
+Blank and `0` are different things here. A blank day means *nothing recorded*; a `0` means *worked
+none, and I am telling you so*. They drive different behaviour downstream, and the Clear action
+carries a note from its own author calling the distinction "delicate" — which is exactly the kind
+of rule that rots unnoticed, because a regression writing `0.00` instead of blank looks identical
+on screen.
+
+Three checks. After Clear every day cell must be **exactly empty**, not `0` and not `0.00`. An
+explicit `0` must survive a save and reload **as a zero**, which taken with the first check is what
+proves the two states are genuinely distinct rather than one being a rendering of the other. And
+Clear must be **refused** once the week is no longer editable — clearing a submitted week would
+silently destroy hours somebody had already approved.
+
+*Why it reads raw values:* the suite's week-finder deliberately treats `''`, `'0'` and `'0.00'` as
+interchangeable when hunting for a usable week — correct for that job, useless for this one. This
+step reads the fields itself rather than borrowing that notion of "blank".
 
 </details>
 
