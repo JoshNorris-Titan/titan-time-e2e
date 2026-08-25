@@ -377,3 +377,80 @@ tt683_is_month_end() {
   nextmonth=$(date -d "${y}-${m}-${d} +1 day" +%m 2>/dev/null) || return 2
   [ "$nextmonth" != "$m" ]
 }
+
+# tt683_zip_pdf_report — one line per archive entry: "<name>~~OK <bytes>" or
+# "<name>~~BAD <reason>".
+#
+# WHY THIS EXISTS SEPARATELY FROM tt683_download_zip_entries. That reader stops at
+# the central directory: it can see every entry's name, size and CRC without
+# inflating a byte, which is enough to prove the archive holds one distinct file
+# per consultant/project. What it cannot see is whether those files are PDFs. An
+# export that produced an error page, an empty stub or an HTML login redirect would
+# still yield correctly-named entries with distinct CRCs, and every existing
+# assertion would pass.
+#
+# So this one actually opens them: it locates each entry's data, inflates it when
+# the entry is deflated, and checks the first five bytes are "%PDF-". It also
+# rejects entries too small to be a real document, because a valid-but-empty PDF
+# shell is the other way this fails quietly.
+#
+# It does NOT read the text inside. PDF content sits in compressed streams, so
+# searching the bytes for a name would miss text that is genuinely rendered and
+# report a defect that is not there. Whether the approver appears on the page is a
+# question for the model, not for these bytes.
+tt683_zip_pdf_report() {
+  local min="${1:-512}"
+  playwright-cli eval "() => (async () => {
+    const url = window.__ttDlUrl || '';
+    if (!url) return 'ERR no download URL captured';
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) return 'ERR HTTP ' + r.status;
+    const buf = await r.arrayBuffer();
+    const b = new Uint8Array(buf), dv = new DataView(buf);
+    if (!(b[0] === 0x50 && b[1] === 0x4b)) return 'ERR not a ZIP';
+    let eo = -1;
+    for (let i = b.length - 22; i >= 0 && i > b.length - 66000; i--) {
+      if (b[i] === 0x50 && b[i+1] === 0x4b && b[i+2] === 0x05 && b[i+3] === 0x06) { eo = i; break; }
+    }
+    if (eo < 0) return 'ERR no end-of-central-directory record';
+    const total = dv.getUint16(eo + 10, true);
+    let off = dv.getUint32(eo + 16, true);
+    const out = [];
+    for (let n = 0; n < total; n++) {
+      if (dv.getUint32(off, true) !== 0x02014b50) break;
+      const method   = dv.getUint16(off + 10, true);
+      const compSize = dv.getUint32(off + 20, true);
+      const rawSize  = dv.getUint32(off + 24, true);
+      const nameLen  = dv.getUint16(off + 28, true);
+      const extraLen = dv.getUint16(off + 30, true);
+      const cmtLen   = dv.getUint16(off + 32, true);
+      const lho      = dv.getUint32(off + 42, true);
+      const nm = new TextDecoder().decode(b.subarray(off + 46, off + 46 + nameLen));
+      off += 46 + nameLen + extraLen + cmtLen;
+      try {
+        if (dv.getUint32(lho, true) !== 0x04034b50) { out.push(nm + '~~BAD no local header'); continue; }
+        const lNameLen  = dv.getUint16(lho + 26, true);
+        const lExtraLen = dv.getUint16(lho + 28, true);
+        const start = lho + 30 + lNameLen + lExtraLen;
+        const comp = b.subarray(start, start + compSize);
+        let head;
+        if (method === 0) {
+          head = comp.subarray(0, 5);
+        } else if (method === 8) {
+          const ds = new DecompressionStream('deflate-raw');
+          const inflated = await new Response(new Blob([comp]).stream().pipeThrough(ds)).arrayBuffer();
+          head = new Uint8Array(inflated).subarray(0, 5);
+        } else {
+          out.push(nm + '~~BAD compression method ' + method); continue;
+        }
+        const magic = new TextDecoder().decode(head);
+        if (magic !== '%PDF-') { out.push(nm + '~~BAD starts with ' + JSON.stringify(magic)); continue; }
+        if (rawSize < $min) { out.push(nm + '~~BAD only ' + rawSize + ' bytes'); continue; }
+        out.push(nm + '~~OK ' + rawSize);
+      } catch (e) {
+        out.push(nm + '~~BAD ' + (e && e.message ? e.message : 'unreadable'));
+      }
+    }
+    return out.join('\\n');
+  })()" 2>/dev/null | _tt_eval_str
+}
