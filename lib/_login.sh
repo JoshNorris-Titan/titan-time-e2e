@@ -101,6 +101,41 @@ tt_fill() {
   esac
 }
 
+# ---------------------------------------------------------------------------
+# Line-item name guards
+#
+# "Add Task" COMMITS a Main.LineItem immediately with an EMPTY Name, and the name
+# is filled afterwards. Main.LineItem.Name is a REQUIRED validation and a timesheet
+# week saves as ONE unit — so a single unnamed line item makes the entire week
+# unsaveable, for every project on it, not just the one that owns the task.
+#
+# The consequences land nowhere near the cause. An interrupted TT-654 task-add left
+# one unnamed row behind, after which verify-tt654-a2 and -a5 reported "row is still
+# editable after Submit" and the MCP SubmitWeek returned "The timesheet could not be
+# saved" — three tests, two independent submit paths, all reading like a product or
+# MCP fault that did not exist.
+#
+# Use tt_assert_task_named right after naming a task, and tt_assert_no_unnamed_tasks
+# before any submit.
+
+# tt_assert_task_named <rows-selector> <idx> <expected-name>
+# Read the name back. The fills that set it are usually silenced with 2>/dev/null,
+# which hides the one error that matters (a strict-mode violation refuses the write
+# outright), so a read-back is the only proof it landed.
+tt_assert_task_named() {
+  local rows="$1" idx="$2" want="$3" got
+  got="$(playwright-cli eval "() => { const els=document.querySelectorAll('$rows .mx-name-txtLineItemName input'); const el=els[$idx-1]; return el ? (el.value||'') : '__MISSING__'; }" 2>/dev/null | _tt_eval_str)"
+  [ "$got" = "$want" ] || tt_fail "task #$idx name did not stick (wanted '$want', got '$got'). An unnamed line item makes this ENTIRE week unsaveable for every project on it — clear the week before retrying."
+}
+
+# tt_assert_no_unnamed_tasks <rows-selector>
+# Refuse to proceed while any line item on this week has an empty Name.
+tt_assert_no_unnamed_tasks() {
+  local rows="$1" bad
+  bad="$(playwright-cli eval "() => { const els=[...document.querySelectorAll('$rows .mx-name-txtLineItemName input')]; return els.map((e,i)=>[i+1,(e.value||'').trim()]).filter(p=>!p[1]).map(p=>'#'+p[0]).join(','); }" 2>/dev/null | _tt_eval_str)"
+  [ -z "$bad" ] || tt_fail "unnamed line item(s) $bad on this week — Main.LineItem.Name is required, so the week cannot be saved and EVERY project on it will fail to submit. Almost certainly debris from an interrupted run; clear the week and retry."
+}
+
 # _tt_eval_str — decode a `playwright-cli eval` result read from stdin.
 #
 # playwright-cli prints:

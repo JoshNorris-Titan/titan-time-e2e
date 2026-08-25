@@ -79,6 +79,10 @@ for d in Mon Tues Wed Thurs Fri; do
 done
 playwright-cli click ":nth-match($ROW .mx-name-txtLineItemName input, $IDX)" >/dev/null 2>&1
 sleep 2; dismiss_dialog
+# The fill above is silenced, which hides a strict-mode violation refusing the
+# write. Prove the name landed: an unnamed line item makes the whole week
+# unsaveable for every project on it (see lib/_login.sh).
+tt_assert_task_named "$ROW" "$IDX" "E2E Task A"
 LT="$(line_total "$IDX")"
 case "$LT" in *30*) echo "line total (6x5): $LT" ;; *) tt_fail "line total wrong after fill (expected 30, got '$LT')" ;; esac
 
@@ -94,6 +98,16 @@ playwright-cli click ".mx-name-btnAddTask" >/dev/null 2>&1
 sleep 2; dismiss_dialog
 [ "$(task_count)" = "$((N0 + 2))" ] || tt_fail "second Add Task did not add (got $(task_count))"
 
+# This step only asserts the COUNT, so the second task used to be left unnamed.
+# That is exactly the poison: if the delete in step 5 misses it (and step 5 openly
+# expects to be flaky), an unnamed line item survives and every later submit on this
+# week fails somewhere else entirely. Naming it costs nothing and defuses that.
+IDX2=$((N0 + 2))
+playwright-cli fill ":nth-match($ROW .mx-name-txtLineItemName input, $IDX2)" "E2E Task B" >/dev/null 2>&1
+playwright-cli click ":nth-match($ROW .mx-name-txtLineItemName input, $IDX2)" >/dev/null 2>&1
+sleep 2; dismiss_dialog
+tt_assert_task_named "$ROW" "$IDX2" "E2E Task B"
+
 # 5) Delete the tasks we added -> back to N0.
 tries=0
 while [ "$(task_count)" -gt "$N0" ] && [ "$tries" -lt 6 ]; do
@@ -102,6 +116,11 @@ while [ "$(task_count)" -gt "$N0" ] && [ "$tries" -lt 6 ]; do
   tries=$((tries + 1))
 done
 FINAL="$(task_count)"
-[ "$FINAL" = "$N0" ] || echo "WARN: cleanup left $FINAL task(s) (started $N0) — likely TT-692 delete flakiness"
+# This used to WARN and pass. Leftover tasks are not cosmetic: they accumulate
+# hours on the project and skew later assertions, and this test runs EARLY
+# (20-consultant), so whatever it leaves behind is inherited by every suite after
+# it. A cleanup that did not clean up is a failure.
+[ "$FINAL" = "$N0" ] || tt_fail "cleanup left $FINAL task(s) (started $N0) — likely TT-692 delete flakiness. Left in place these skew every later test on this week; clear the week before re-running."
+tt_assert_no_unnamed_tasks "$ROW"
 
 echo "PASS: line-items add / recalc / update / second-task / delete ($WEEK)"

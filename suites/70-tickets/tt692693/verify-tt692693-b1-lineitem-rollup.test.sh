@@ -67,6 +67,19 @@ probe_fresh_entry() {
   [ "$(task_count)" = "$idx" ] || { echo "  [$label] Add Task did not add a row"; FAILED="$FAILED $label(no-row)"; return 1; }
 
   playwright-cli fill ":nth-match($ROW .mx-name-txtLineItemName input, $idx)" "B1 $label" >/dev/null 2>&1
+  # Prove the name landed before going further. Add Task COMMITS the LineItem with
+  # an empty Name and the fill above is silenced, so a refused write (strict-mode
+  # violation) leaves an unnamed row behind. Main.LineItem.Name is required and the
+  # week saves as one unit, so that row makes the ENTIRE week unsaveable for every
+  # project on it — surfacing much later, in another test, as a bogus submit bug.
+  # Reported the way this test reports everything else, rather than aborting.
+  local got
+  got="$(playwright-cli eval "() => { const els=document.querySelectorAll('$ROW .mx-name-txtLineItemName input'); const el=els[$idx-1]; return el ? (el.value||'') : '__MISSING__'; }" 2>/dev/null | _tt_eval_str)"
+  if [ "$got" != "B1 $label" ]; then
+    echo "  [$label] task name did not stick (wanted 'B1 $label', got '$got') — this leaves an UNNAMED line item that will block every submit on this week"
+    FAILED="$FAILED $label(name-not-set)"; return 1
+  fi
+
   # THE critical step: first edit of a brand-new entry (Tuesday, 7h)
   playwright-cli click ":nth-match($ROW .mx-name-txtLineTues input, $idx)" >/dev/null 2>&1
   sleep 1

@@ -221,7 +221,32 @@ tt654_add_task() {
   done
   playwright-cli click ":nth-match($TT654_ROWS .mx-name-txtLineItemName input, $idx)" >/dev/null 2>&1
   sleep 2; tt654_dismiss_dialog
+
+  # PROVE the name landed before moving on.
+  #
+  # Add Task COMMITS the LineItem immediately with an empty Name, and the name is
+  # filled afterwards. That leaves a window in which an interrupted or silently
+  # failed fill leaves an unnamed LineItem in shared data — and Main.LineItem.Name
+  # is a required validation, so the WHOLE week then refuses to save, for every
+  # project on it, not just this one.
+  #
+  # That is not hypothetical: a3 timed out mid-task and left one behind, after
+  # which a2 and a5 reported "still editable after Submit" and the MCP SubmitWeek
+  # returned "The timesheet could not be saved" — three tests failing on two
+  # different submit paths, all pointing at a product bug that did not exist.
+  #
+  # The fill above is deliberately silenced (a strict-mode violation prints to
+  # stderr), so a read-back is the only way to know it worked. Shared helper in
+  # lib/_login.sh — the same guard is needed by every test that adds tasks.
+  tt_assert_task_named "$TT654_ROWS" "$idx" "$name"
+
   echo "$idx"
+}
+
+# tt654_assert_no_unnamed_tasks — thin alias over the shared guard, bound to this
+# suite's row selector. See lib/_login.sh for why it exists.
+tt654_assert_no_unnamed_tasks() {
+  tt_assert_no_unnamed_tasks "$TT654_ROWS"
 }
 
 # tt654_submit_row <ordinal>
@@ -236,6 +261,10 @@ tt654_submit_row() {
   local ord="$1"
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnSubmit'))" 2>/dev/null | grep -qiw true \
     || tt_fail "no Submit button on this week"
+  # Check BEFORE clicking: an unnamed line item anywhere on this week blocks the
+  # save silently, and the resulting "row is still editable after Submit" reads as
+  # a submit-path bug rather than as leftover debris.
+  tt654_assert_no_unnamed_tasks
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
   tt654_dismiss_dialog
