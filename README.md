@@ -593,27 +593,30 @@ The conductor only picks up files ending in `.test.sh`. Everything else here is 
 | `verify-toprocess-count.sh` | Reports what is actually on the To Process tab by counting cards, rather than trusting the seeder's own tally. Asserts nothing. |
 | `quality/check-app.sh` | Runs Studio Pro's own consistency check from the command line and compares it with a recorded baseline. Exit `0` = no worse than baseline, `1` = new problems. Reads the **last saved** file on disk, so unsaved edits are invisible to it. Marketplace warnings are suppressed so the ones that are ours aren't drowned out. |
 | `MANUAL-MCP-TEST-SCRIPT.md` | Prompts to type into an AI assistant connected to the app — the human half of the TT-654 testing. |
-| `tools/mailpit.sh` | Runs the **mail catcher** — see the note below. `start`, `stop`, `status`, `clear`, `count`. |
-| `tools/mail-selfcheck.sh` | Proves the mail catcher works *with no app involved*, by posting a message to it and reading it back. If this passes but an email step fails, the fault is in the app, not the plumbing. |
+| `tools/mail-selfcheck.sh` | Proves the suite can *read* mail, by opening the app's Emails Sent admin page and reporting what it sees. If this passes but an email step fails, the app did not raise the message — the plumbing is fine. |
 | `lib/*.sh` | Shared building blocks (logging in, resetting data, per-ticket fixtures). Not tests; each header explains the traps it exists to avoid. |
 
-### The mail catcher
+### Reading email
 
-Several steps need to read an email the app just sent. Rather than send real mail to a real
-inbox, the suite runs a **fake mail server on this machine**: the app hands it a message, it
-delivers nowhere, and the test reads the message straight back. Nothing leaves the laptop, and
-the inbox can be emptied before each check — so a step can never be fooled by last week's email.
+Several steps need to read an email the app just sent. They read it from **the app's own admin
+page** — "Emails Sent" on the administrator homepage — which lists every message the app has
+produced with its recipient, subject, status and body.
 
-The catcher runs on a host the app can reach, and the suite reads from it over HTTP. Point the
-suite at it with `TT_MAILPIT_URL`, then browse that same address to read the mail yourself.
+There is nothing to install or configure. This replaced an external mail catcher — a fake SMTP
+server — that only ever worked on a laptop: the *app* has to reach a catcher over SMTP, so testing a cloud
+environment would have meant a publicly reachable host with an open SMTP port and a secret in
+CI. That was the only thing CI needed beyond the app itself, and it was never set up.
 
-> [!IMPORTANT]
-> The environment under test must be able to open an SMTP connection to the catcher. That rules
-> out running it on a laptop while testing a cloud environment — the cloud cannot dial back. With
-> `TT_MAILPIT_URL` unset or unreachable, the email steps fail loudly; they never quietly pass.
+Two things the admin page gives that the catcher could not: the recipient is a column, so mail
+going to the **wrong address** is detectable; and messages are visible while still *queued*,
+before the send event runs, so a step need not wait for delivery to prove a mail was raised.
 
-Full setup, including the one-time change to the app's email settings, is in
-[`tools/README.md`](tools/README.md).
+Freshness comes from a **high-water mark** rather than an emptied inbox — the suite notes which
+messages already exist before triggering the action, and only considers newer ones. Nothing is
+deleted, so this is safe on a shared environment.
+
+The cost: the page is administrator-only, so reading mail ends whatever role session a step was
+using. Details in [`tools/README.md`](tools/README.md).
 
 ---
 
@@ -625,8 +628,6 @@ Full setup, including the one-time change to the app's email settings, is in
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Administrator login |
 | `TT_ROLE_PASS` | Password shared by the four `e2e_*` role accounts |
 | `TT_E2E_CONSULTANTS` | Which consultants the wipe steps are allowed to clear |
-| `TT_MAILPIT_URL` | The mail catcher's API. **Required** for any email step — there is no default |
-| `TT_MAILPIT_USER` / `TT_MAILPIT_PASS` | Basic-auth credentials, if the catcher is protected |
 
 > [!WARNING]
 > In GitHub these come from repository secrets. The defaults built into `lib/_login.sh` are a local

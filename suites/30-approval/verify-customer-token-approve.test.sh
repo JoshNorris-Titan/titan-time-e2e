@@ -27,9 +27,10 @@
 # A rename in Studio Pro is what makes .mx-name-* a contract; do not go back to
 # matching on button text here.
 #
-# Mail: reads from the mail catcher. Needs TT_MAILPIT_URL.
-# Prerequisite data: a project with ApprovalFromCustomer=Yes whose approver email
-# is that inbox, with the E2E consultant assigned.
+# Mail: read from the app's own Emails Sent admin page, so this needs the
+# administrator account and nothing else — no catcher, no SMTP, no secret.
+# Prerequisite data: a project with ApprovalFromCustomer=Yes and an approver email
+# set, with the E2E consultant assigned.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.

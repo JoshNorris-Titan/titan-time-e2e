@@ -25,7 +25,8 @@
 # Consumes one pending client-approval entry: it reminds an existing one when there
 # is one and creates its own when there is not.
 #
-# Mail: reads from the mail catcher. Needs TT_MAILPIT_URL.
+# Mail: read from the app's own Emails Sent admin page, so this needs the
+# administrator account and nothing else — no catcher, no SMTP, no secret.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.

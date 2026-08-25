@@ -18,7 +18,7 @@
 #
 # Requires:
 #   TT_ADMIN_USER / TT_ADMIN_PASS   an account holding Main.Administrator
-#   TT_MAILPIT_URL                  the mail catcher — see tests/tools/README.md
+#   TT_ADMIN_USER / TT_ADMIN_PASS   administrator, to read the Emails Sent page
 
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
