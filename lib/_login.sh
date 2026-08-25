@@ -304,12 +304,19 @@ _tt_auth_try() {
   playwright-cli state-load "$f" >/dev/null 2>&1 || return 1
   playwright-cli goto "$TT_BASE/" >/dev/null 2>&1 || return 1
 
-  # The landing-text assertion is what makes this safe: it is the same check the
-  # interactive path uses to decide a login succeeded.
+  # Landing text alone is NOT enough. Two roles can share a landing string, and a
+  # replayed cookie can belong to whoever was logged in when it was written - so a
+  # cache hit could hand a test the wrong identity while looking perfectly healthy.
+  # Every assertion downstream would then be describing the wrong user. Check WHO
+  # the session actually belongs to as well, the same way lib/_seed.sh does.
+  local r
   for i in $(seq 1 10); do
-    if playwright-cli eval "() => String(document.body ? document.body.innerText.indexOf('$ready') >= 0 : false)" 2>/dev/null | grep -qiw true; then
-      return 0
-    fi
+    r="$(playwright-cli eval "() => { let n=''; try { n = mx.session.userObject.jsonData.attributes.Name.value; } catch (e) {} const landed = document.body ? document.body.innerText.indexOf('$ready') >= 0 : false; if (n && n !== '$user') return 'WHO:' + n; return String(n === '$user' && landed); }" 2>/dev/null | _tt_eval_str)"
+    case "$r" in
+      true)   return 0 ;;
+      WHO:*)  echo "  (cached session belonged to ${r#WHO:}, not $user - logging in properly)" >&2
+              break ;;
+    esac
     sleep 1
   done
 

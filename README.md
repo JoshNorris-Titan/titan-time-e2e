@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 62 steps, grouped into eight blocks.
+All 63 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -129,7 +129,7 @@ All 62 steps, grouped into eight blocks.
 flowchart LR
   A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56–57, 59–60"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50, 58"]
-  G --> H["H · Suite self-checks<br/>51–52"]
+  G --> H["H · Suite self-checks<br/>51–52, 61"]
 ```
 
 **Tags used below**
@@ -656,7 +656,7 @@ because the model is not checked out beside the suite there.
 <br/>
 
 <details open>
-<summary><h3>Section H — The suite checking itself &nbsp;·&nbsp; steps 51–52</h3></summary>
+<summary><h3>Section H — The suite checking itself &nbsp;·&nbsp; steps 51–52 and 61</h3></summary>
 
 Both steps exist because of one discovery: the two traps in section 6 were found by an audit,
 not by a failing test. A trap only a human can spot will come back. These make the suite fail on
@@ -687,6 +687,27 @@ It injects its own clickable element rather than relying on a real caption, so i
 login, cares about no particular page, and does not break when a dashboard is redesigned.
 
 *Why:* a green suite only means something if its helpers can go red.
+
+**61. `verify-session-identity` — When a step says it is logged in as someone, it really is.**
+
+The suite shares one browser session across every step and caches a login per identity. That cache
+used to be accepted on **landing text alone**: replay the cookie, look for a phrase, carry on. Which
+is not proof of identity. Two roles can share a phrase, and a replayed cookie belongs to whoever was
+logged in when it was written — so a cache hit could hand a step the wrong user while looking
+perfectly healthy, and everything after it would be describing somebody else's data.
+
+That is a nasty failure because it does not look like one. Nothing goes red; the results are just
+about the wrong person. Every role-scoped step depends on this, and step 60 in particular is
+meaningless if the session is not who it claims.
+
+The login helper now checks **who the session actually belongs to**, not just where it landed. This
+step proves that it does, by logging in as each role in turn and asking the app who it is — ending
+by returning to the first identity, because the return trip is what goes through the cache rather
+than a fresh login.
+
+*Why the loop reads from a here-document:* a piped `while` runs in a subshell, so every failure it
+counted would be thrown away on the way out and the step would pass whatever it found. That is the
+exact bug class Tier 0 existed to remove, and it would have been embarrassing here of all places.
 
 </details>
 
