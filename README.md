@@ -114,7 +114,7 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 57 steps, grouped into eight blocks.
+All 58 steps, grouped into eight blocks.
 
 > [!NOTE]
 > One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
@@ -127,7 +127,7 @@ All 57 steps, grouped into eight blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
   D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
   G --> H["H · Suite self-checks<br/>51–52"]
 ```
@@ -160,7 +160,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21 and 56</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -272,6 +272,27 @@ per run.
 
 Types part of a customer name and confirms the list narrows on each keystroke without pressing
 Enter, and that the expected match is shown.
+
+**56. `verify-hours-validation` — The limits on what you can enter.** &nbsp; `consumes 2 weeks`
+
+Every other step in the suite submits exactly forty hours, so the over-limit branch had never
+once fired in a test run. That left the warning popup and its **Submit Anyway** override with no
+coverage at all.
+
+Four checks. Forty-five hours must raise the warning, and **Cancel must leave the week
+unsubmitted** — a warning you can dismiss into a silent submit would be worse than no warning.
+Submit Anyway must then genuinely submit. And a day of twenty-five hours, or of minus five, must
+not be accepted in silence.
+
+Those last two are deliberately phrased as *not silently accepted* rather than naming a
+particular error. Whether the field refuses the keystrokes, a validation message appears, or a
+popup intervenes is a design detail that may change; that **something** stops it is the actual
+rule. A step demanding one specific surface would go red on a harmless redesign and tell you
+nothing about whether the rule still held.
+
+*Why this layer:* the twenty-four-hour arithmetic is already pinned down by three unit tests, so
+this does not re-test it. The popup, its two buttons and the override exist only in the UI, and
+nothing but a browser can reach them.
 
 </details>
 
