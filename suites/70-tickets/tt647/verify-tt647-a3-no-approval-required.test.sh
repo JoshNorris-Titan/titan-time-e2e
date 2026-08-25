@@ -45,7 +45,7 @@ seed_zero_hour_week() {
   sleep 2
   # Confirmation chain: "Are you Sure? yes", then "Submit Anyway" for the <40h warning.
   for i in 1 2 3 4 5 6; do
-    if playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],.modal-dialog,[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(yes|submit anyway|confirm|continue|proceed|ok)$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" 2>/dev/null | grep -qiw none; then
+    if playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],.modal-dialog,[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(yes|submit anyway|confirm|continue|proceed|ok)$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" 2>/dev/null | sed -n '2p' | grep -qiw none; then
       break
     fi
     sleep 3

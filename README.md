@@ -89,7 +89,8 @@ flowchart LR
    | `50-titan-manager/` | Titan Manager lists, search and dropdowns |
    | `60-email/` | Outbound mail |
    | `70-tickets/` | Per-ticket regressions (`tt647/`, `tt654/`, `tt683/`, `tt692693/`) |
-   | `80-platform/` | Unit-test module |
+   | `75-export/` | Corrections after an export has gone out |
+   | `80-platform/` | Unit-test module, and the suite's checks on itself |
    | `99-teardown/` | Wipe again |
 
    Previously this was a flat alphabetical sort, which worked only because `-` sorts before `0`
@@ -99,7 +100,11 @@ flowchart LR
    `<step>-failure.png` so you can see what the page looked like.
 5. **Gives up on a step after 2 minutes** (`--timeout` to change), so one hung page can't stall the run.
 6. **Writes a `results.xml` report** when asked (`--junit`) — that is what GitHub reads.
-7. **Closes the browser** at the end, whatever happened.
+7. **Closes the browser** at the end, whatever happened — and on Ctrl-C it stops the run
+   instead of carrying on against a session it just closed.
+8. **Refuses to start if the number of steps is not what you expected** (`--expect-count N`).
+   Without it the run itself cannot fail: rename a step out of the `verify-*.test.sh` pattern
+   and the conductor reports "3 steps: 3 passed" and exits happy. CI should always pass it.
 
 > [!NOTE]
 > `ci-skip.txt` lists steps to skip on a given environment. It is **empty on purpose** — entries
@@ -109,7 +114,11 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 51 steps, grouped into seven blocks.
+All 58 steps, grouped into eight blocks.
+
+> [!NOTE]
+> One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
+> below yet. The count above includes it; the walkthrough does not.
 
 > [!IMPORTANT]
 > The numbering below still reflects the old flat alphabetical run order. Tests now live in
@@ -118,8 +127,9 @@ All 51 steps, grouped into seven blocks.
 
 ```mermaid
 flowchart LR
-  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21"] --> C["C · Who approved it<br/>22–27"] --> D["D · Connect-my-LLM<br/>28–37"]
-  D --> E["E · Monthly export<br/>38–40"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
+  A["A · Setup<br/>1"] --> B["B · Core app<br/>2–21, 56"] --> C["C · Who approved it<br/>22–27, 53–54"] --> D["D · Connect-my-LLM<br/>28–37"]
+  D --> E["E · Monthly export<br/>38–40, 55"] --> F["F · Timesheet fixes<br/>41–48"] --> G["G · Unit tests<br/>+ teardown<br/>49–50"]
+  G --> H["H · Suite self-checks<br/>51–52"]
 ```
 
 **Tags used below**
@@ -150,7 +160,7 @@ leftovers.
 </details>
 
 <details>
-<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21</h3></summary>
+<summary><h3>Section B — Core app behaviour &nbsp;·&nbsp; steps 2–21 and 56</h3></summary>
 
 These used to run alphabetically, which is why the topics interleave below. They are now grouped
 by suite folder instead; the descriptions are unchanged.
@@ -263,10 +273,31 @@ per run.
 Types part of a customer name and confirms the list narrows on each keystroke without pressing
 Enter, and that the expected match is shown.
 
+**56. `verify-hours-validation` — The limits on what you can enter.** &nbsp; `consumes 2 weeks`
+
+Every other step in the suite submits exactly forty hours, so the over-limit branch had never
+once fired in a test run. That left the warning popup and its **Submit Anyway** override with no
+coverage at all.
+
+Four checks. Forty-five hours must raise the warning, and **Cancel must leave the week
+unsubmitted** — a warning you can dismiss into a silent submit would be worse than no warning.
+Submit Anyway must then genuinely submit. And a day of twenty-five hours, or of minus five, must
+not be accepted in silence.
+
+Those last two are deliberately phrased as *not silently accepted* rather than naming a
+particular error. Whether the field refuses the keystrokes, a validation message appears, or a
+popup intervenes is a design detail that may change; that **something** stops it is the actual
+rule. A step demanding one specific surface would go red on a harmless redesign and tell you
+nothing about whether the rule still held.
+
+*Why this layer:* the twenty-four-hour arithmetic is already pinned down by three unit tests, so
+this does not re-test it. The popup, its two buttons and the override exist only in the UI, and
+nothing but a browser can reach them.
+
 </details>
 
 <details>
-<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 &nbsp;·&nbsp; TT-647</h3></summary>
+<summary><h3>Section C — "Who approved this?" &nbsp;·&nbsp; steps 22–27 and 53–54 &nbsp;·&nbsp; TT-647 / TT-649</h3></summary>
 
 The To Process card must name the approver **and their role**, and must never imply the wrong
 person approved. Each step drives a different route to that one sentence.
@@ -312,6 +343,38 @@ client stage → the card must list **both** approvers, manager stage first.
 
 The mirror of step 23 at the manager stage: the line must read *"on behalf of Project Manager"*.
 This was the one wording variant with no coverage.
+
+**53. `verify-customer-token-approve` — The client actually approves.** &nbsp; `consumes 1`
+
+Step 26 walks the whole emailed-link journey and then stops one click short, on purpose, so it can
+run again and again against the same standing entry. That left the app's only path where an
+unauthenticated visitor *writes* something with nothing testing it. This one presses the button.
+
+It then checks the two things a click alone does not show: that the entry actually arrives in **To
+Process**, and that the approver is recorded as the **client** rather than as HR acting on their
+behalf. Asserting only that the entry left the queue would pass just as happily if it had been
+rolled back or deleted.
+
+Unlike step 26 this consumes an entry, so it reminds a pending one when there is one and creates
+its own when there is not.
+
+*Why:* five separate strands of the coverage audit — pages, business logic, roles, the status
+lifecycle, and the written scenarios — each independently landed on this as the biggest hole.
+
+**54. `verify-customer-token-reject` — The client rejects, and must say why.** &nbsp; `consumes 1`
+
+The other half of step 53. Rejection is how a wrong timesheet gets corrected, and until now it
+appeared in the suite only as un-asserted setup — something rejects an entry so a later step has
+one to resubmit. Nobody checked that the *client* can reject, or that rejecting does what it says.
+
+Two assertions. First the guard: pressing Reject with an **empty comment** must do nothing. The
+rejection flow branches on whether a comment was left, and that branch is the reason a rejection
+always reaches the consultant with a reason attached. Second the transition: with a reason typed
+in, the entry leaves the client's queue *and* reappears in the consultant's **Rejected Entries**.
+Checking only that it left would pass for a rollback just as happily.
+
+*Why:* a silent regression in the comment guard would turn every rejection into a mystery for the
+consultant, and nothing else in the suite would notice.
 
 </details>
 
@@ -380,7 +443,7 @@ happened *before* submitting, not after), and that a normal project still submit
 </details>
 
 <details>
-<summary><h3>Section E — The monthly export &nbsp;·&nbsp; steps 38–40 &nbsp;·&nbsp; TT-683 / TT-652</h3></summary>
+<summary><h3>Section E — The monthly export &nbsp;·&nbsp; steps 38–40 and 55 &nbsp;·&nbsp; TT-683 / TT-652</h3></summary>
 
 **38. `…-a0-seed-awaiting-export` — Push entries to "awaiting export".** &nbsp; `seeds data`
 
@@ -408,6 +471,23 @@ happened to be processed last. Downloads the archive and checks:
 > [!CAUTION]
 > The riskiest part is the **day**. A timezone slip turns a 30 June month-end into `0629`.
 > Step 4 of this test catches exactly that.
+
+**55. `verify-hr-reject-after-export` — Taking back a week that has already gone out.** &nbsp; `consumes 1`
+
+Once a week is exported it has, in practice, been invoiced, and this is the only route back. The
+flow is supposed to do two things: set the entry to rejected, **and** subtract its hours from the
+assignment's running total.
+
+The subtraction is what this really guards. If it silently stopped, the entry would still visibly
+leave the tab, every ordinary check would pass, and the assignment would over-report hours worked
+for the rest of its life. So the step reads the entry's hours off the card, reads the assignment
+total before and after, and requires the difference to match exactly — reporting the "rejected but
+total unchanged" case in those words, because that is the failure that would otherwise hide.
+
+It runs here, after the TT-683 steps, because the only way to reach the exported state is Process
+followed by Export All — and Export All exports everything awaiting export on the environment.
+Reusing what those steps already exported avoids setting that off from an earlier block. It can
+still drive the chain itself if nothing is available, and says so loudly when it does.
 
 </details>
 
@@ -483,6 +563,43 @@ makes the *next* run's failures impossible to read.
 
 </details>
 
+<br/>
+
+<details open>
+<summary><h3>Section H — The suite checking itself &nbsp;·&nbsp; steps 51–52</h3></summary>
+
+Both steps exist because of one discovery: the two traps in section 6 were found by an audit,
+not by a failing test. A trap only a human can spot will come back. These make the suite fail on
+its own behalf.
+
+**51. `verify-no-echo-trap` — No assertion may match its own question.** &nbsp; `read-only`
+
+Scans every script for the echo trap: asking the browser something and then searching the raw
+output for the answer, where the answer also appears in the question. Fails the run and names
+each offending line. Needs no browser, so it is quick and works anywhere.
+
+Before trusting a clean scan it checks its own detector against a known-bad and a known-good
+example. A detector that quietly stopped detecting would otherwise turn this step into exactly
+the kind of always-green check it exists to prevent.
+
+*Why:* the trap is documented in three places and still reached six live call sites. A comment
+cannot fail a build.
+
+**52. `verify-helper-selftest` — The shared helpers must still be able to fail.**
+
+The runtime half of step 51. The click helper underneath every tab switch in the suite once
+could not fail, so a caption that did not exist still "clicked" and the step then asserted
+against whatever tab was already open. This proves the decoder is sane, that the click helper
+both clicks a real element *and* actually lands the click, that it fails on a caption that
+cannot exist, and that `tt_fail` still exits non-zero.
+
+It injects its own clickable element rather than relying on a real caption, so it needs no
+login, cares about no particular page, and does not break when a dashboard is redesigned.
+
+*Why:* a green suite only means something if its helpers can go red.
+
+</details>
+
 ---
 
 ## 3. Files that aren't part of the run
@@ -497,27 +614,30 @@ The conductor only picks up files ending in `.test.sh`. Everything else here is 
 | `verify-toprocess-count.sh` | Reports what is actually on the To Process tab by counting cards, rather than trusting the seeder's own tally. Asserts nothing. |
 | `quality/check-app.sh` | Runs Studio Pro's own consistency check from the command line and compares it with a recorded baseline. Exit `0` = no worse than baseline, `1` = new problems. Reads the **last saved** file on disk, so unsaved edits are invisible to it. Marketplace warnings are suppressed so the ones that are ours aren't drowned out. |
 | `MANUAL-MCP-TEST-SCRIPT.md` | Prompts to type into an AI assistant connected to the app — the human half of the TT-654 testing. |
-| `tools/mailpit.sh` | Runs the **mail catcher** — see the note below. `start`, `stop`, `status`, `clear`, `count`. |
-| `tools/mail-selfcheck.sh` | Proves the mail catcher works *with no app involved*, by posting a message to it and reading it back. If this passes but an email step fails, the fault is in the app, not the plumbing. |
+| `tools/mail-selfcheck.sh` | Proves the suite can *read* mail, by opening the app's Emails Sent admin page and reporting what it sees. If this passes but an email step fails, the app did not raise the message — the plumbing is fine. |
 | `lib/*.sh` | Shared building blocks (logging in, resetting data, per-ticket fixtures). Not tests; each header explains the traps it exists to avoid. |
 
-### The mail catcher
+### Reading email
 
-Several steps need to read an email the app just sent. Rather than send real mail to a real
-inbox, the suite runs a **fake mail server on this machine**: the app hands it a message, it
-delivers nowhere, and the test reads the message straight back. Nothing leaves the laptop, and
-the inbox can be emptied before each check — so a step can never be fooled by last week's email.
+Several steps need to read an email the app just sent. They read it from **the app's own admin
+page** — "Emails Sent" on the administrator homepage — which lists every message the app has
+produced with its recipient, subject, status and body.
 
-The catcher runs on a host the app can reach, and the suite reads from it over HTTP. Point the
-suite at it with `TT_MAILPIT_URL`, then browse that same address to read the mail yourself.
+There is nothing to install or configure. This replaced an external mail catcher — a fake SMTP
+server — that only ever worked on a laptop: the *app* has to reach a catcher over SMTP, so testing a cloud
+environment would have meant a publicly reachable host with an open SMTP port and a secret in
+CI. That was the only thing CI needed beyond the app itself, and it was never set up.
 
-> [!IMPORTANT]
-> The environment under test must be able to open an SMTP connection to the catcher. That rules
-> out running it on a laptop while testing a cloud environment — the cloud cannot dial back. With
-> `TT_MAILPIT_URL` unset or unreachable, the email steps fail loudly; they never quietly pass.
+Two things the admin page gives that the catcher could not: the recipient is a column, so mail
+going to the **wrong address** is detectable; and messages are visible while still *queued*,
+before the send event runs, so a step need not wait for delivery to prove a mail was raised.
 
-Full setup, including the one-time change to the app's email settings, is in
-[`tools/README.md`](tools/README.md).
+Freshness comes from a **high-water mark** rather than an emptied inbox — the suite notes which
+messages already exist before triggering the action, and only considers newer ones. Nothing is
+deleted, so this is safe on a shared environment.
+
+The cost: the page is administrator-only, so reading mail ends whatever role session a step was
+using. Details in [`tools/README.md`](tools/README.md).
 
 ---
 
@@ -529,8 +649,6 @@ Full setup, including the one-time change to the app's email settings, is in
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Administrator login |
 | `TT_ROLE_PASS` | Password shared by the four `e2e_*` role accounts |
 | `TT_E2E_CONSULTANTS` | Which consultants the wipe steps are allowed to clear |
-| `TT_MAILPIT_URL` | The mail catcher's API. **Required** for any email step — there is no default |
-| `TT_MAILPIT_USER` / `TT_MAILPIT_PASS` | Basic-auth credentials, if the catcher is protected |
 
 > [!WARNING]
 > In GitHub these come from repository secrets. The defaults built into `lib/_login.sh` are a local
@@ -563,8 +681,19 @@ one run happens at a time, because the suite changes shared data on the target e
 1. **The echo trap.** Asking the browser a question and then searching the raw output for the answer
    can match the *question being echoed back* rather than the answer. Use the decoding helper in
    `lib/_login.sh` instead of searching raw output.
-2. **Assertions that cannot fail.** An audit found roughly 16 of them. Treat an unexpected PASS as
-   suspicious until you have broken the check on purpose and watched it go red.
+   **Now guarded:** step 51 (`verify-no-echo-trap`) fails the run on any new occurrence, with no
+   browser needed.
+2. **Assertions that cannot fail.** Treat an unexpected PASS as suspicious until you have broken the
+   check on purpose and watched it go red.
+   **Now partly guarded:** step 52 (`verify-helper-selftest`) proves at runtime that the shared
+   helpers can still fail, and `--expect-count` stops the *run itself* from passing green when
+   steps vanish from discovery. Neither covers an individual weak assertion — that still needs the
+   break-it-on-purpose habit.
+
+> [!NOTE]
+> Counts go stale fast, so run the guard rather than quoting a number. For the record: an audit on
+> 2026-08-24 put the echo trap at roughly 16 sites; commit `f885008` fixed most of them, and a
+> mechanical scan the same day found 6 remaining, all since fixed.
 
 A third, softer rule: **never assert on a count you don't own.** Steps assert on the `e2e_*`
 consultants' data only, because anything else on a shared environment can change under you.

@@ -1,60 +1,57 @@
 #!/usr/bin/env bash
-# Proves the mail catcher works, with NO app involved.
+# mail-selfcheck.sh — can the suite read mail at all?
 #
-# Hands a message straight to the catcher over SMTP, then reads it back through
-# the same helpers the tests use. If this passes but a mail test fails, the
-# fault is in the app or its email configuration — not in the plumbing.
+# Run this BEFORE debugging a failing email test. It checks the READER, not the
+# app's sending: it logs in as the administrator, opens the Emails Sent page, and
+# reports what it can see. If this passes and an email test still fails, the
+# problem is the app not raising the mail — not the suite being unable to read it.
 #
-# Run it after standing up a catcher, and again whenever a mail test starts
-# failing for reasons nobody can explain.
+# There is no mail catcher any more. Mail is read from the app's own admin page
+# (Core.EmailsSent_Overview), so there is nothing to install, expose or configure
+# beyond an administrator login that already exists on every environment.
 #
-# This is a probe, not a test: it is deliberately NOT named verify-*.test.sh, so
-# run-tests.sh never picks it up and the suite's run order is untouched.
+#   tools/mail-selfcheck.sh
 #
-#   TT_MAILPIT_URL   the catcher's API              (required)
-#   TT_MAILPIT_SMTP  its SMTP host:port to send to  (required)
-#   TT_MAILPIT_USER / TT_MAILPIT_PASS   API basic auth, if protected
-#   TT_MAILPIT_SMTP_USER / TT_MAILPIT_SMTP_PASS   SMTP auth, if required
-
+# Env:
+#   TT_BASE_URL                    app origin (default http://localhost:8080)
+#   TT_ADMIN_USER / TT_ADMIN_PASS  administrator account
 set -uo pipefail
-cd "$(dirname "$0")/.."
-source lib/_login.sh
+TT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$TT_ROOT/lib/_login.sh"
 
-[ -n "${TT_MAILPIT_URL:-}" ]  || tt_fail "set TT_MAILPIT_URL to the catcher's API"
-[ -n "${TT_MAILPIT_SMTP:-}" ] || tt_fail "set TT_MAILPIT_SMTP to the catcher's SMTP host:port"
+BASE="${TT_BASE_URL:-http://localhost:8080}"
 
-tt_mail_prepare          # reachable? then empty the inbox
+command -v playwright-cli >/dev/null 2>&1 \
+  || { echo "FAIL: playwright-cli not found — run 'npm ci' in $TT_ROOT"; exit 1; }
 
-TAG="selfcheck"
-RECIP="$(tt_mail_address "$TAG")"
-NONCE="tt-selfcheck-$$-$(date +%s)"
-TS=$(date +%s%3N)
+# Open a session if one is not already up; harmless when it is.
+playwright-cli open "$BASE/" >/dev/null 2>&1 || true
 
-# curl speaks SMTP, so the probe needs no extra tooling.
-SMTP_AUTH=()
-[ -n "${TT_MAILPIT_SMTP_USER:-}" ] && SMTP_AUTH=(--user "${TT_MAILPIT_SMTP_USER}:${TT_MAILPIT_SMTP_PASS:-}")
+echo "checking the mail reader against $BASE"
 
-printf 'From: probe@e2e.local\r\nTo: %s\r\nSubject: Timesheet reminder %s\r\n\r\nThis is a submission reminder probe. Link: https://example.invalid/customer-approval?token=%s\r\n' \
-  "$RECIP" "$NONCE" "$NONCE" \
-  | curl -s --max-time 15 --url "smtp://${TT_MAILPIT_SMTP}" "${SMTP_AUTH[@]}" \
-      --mail-from "probe@e2e.local" --mail-rcpt "$RECIP" --upload-file - \
-  || tt_fail "could not hand a message to the catcher's SMTP port at ${TT_MAILPIT_SMTP}"
+# tt_mail_prepare tt_fail's with a pointed message if the page cannot be opened.
+tt_mail_prepare
 
-echo "sent a probe message to $RECIP via ${TT_MAILPIT_SMTP}"
+rows="$(_tt_mail_rows)"
+count="$(printf '%s\n' "$rows" | grep -c . || true)"
 
-MSG=$(tt_mail_message "$TS" "$TAG" 30) \
-  || tt_fail "the probe message was not readable back from ${TT_MAILPIT_URL} within 30s"
+echo "  Emails Sent page opened as ${TT_ADMIN_USER:-MxAdmin}"
+echo "  rows visible on the first page: $count"
 
-printf '%s' "$MSG" | grep -q "$NONCE" \
-  || tt_fail "read a message back, but not the one just sent (nonce $NONCE missing)"
+if [ "$count" -gt 0 ]; then
+  echo "  newest row: $(printf '%s\n' "$rows" | head -1 | cut -c1-160)"
+else
+  echo "  note: the page is readable but empty. That is a valid state on a fresh"
+  echo "        environment; it only means this check cannot show you a sample."
+fi
 
-LINK=$(tt_mail_token "$TS" "customer-approval" "$TAG" 30) \
-  || tt_fail "link extraction failed on a message known to contain one"
-
-case "$LINK" in
-  *customer-approval*"$NONCE") ;;
-  *) tt_fail "extracted the wrong link: $LINK" ;;
+# The sort matters: the grid pages at 20, and without a newest-first order a fresh
+# message can land on a page no read would ever look at.
+sorted="$(_tt_mail_sort_newest)"
+case "$sorted" in
+  desc) echo "  sorted newest-first: yes" ;;
+  nocol) echo "  WARNING: no 'Sent Date' column found — new mail may not be on page one" ;;
+  *)     echo "  WARNING: could not sort newest-first (state: $sorted) — new mail may not be on page one" ;;
 esac
 
-echo "read it back, and pulled the token link out of it"
-echo "PASS: mail catcher self-check (send -> store -> read -> extract link)"
+echo "PASS: the suite can read mail from the Emails Sent admin page"

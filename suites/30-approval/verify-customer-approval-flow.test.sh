@@ -14,7 +14,7 @@
 # The entry is left pending (never approved), so the test can run repeatedly
 # against the same standing data.
 #
-# Mail — step 2 reads from the mail catcher. Needs TT_MAILPIT_URL, and
+# Mail — step 2 reads the app's own Emails Sent admin page (Administrator only),
 # optionally TT_MAIL_CUSTAPPROVAL_TAG
 # (default: custapproval).
 #

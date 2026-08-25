@@ -62,12 +62,21 @@ _tt_dialog_js() {
 # TT_DIALOG_BLOCKED so callers can fail with the real reason instead of
 # clicking Close and reporting a mystery. (Note the old regexes included
 # "close", which is precisely how that cancel went unnoticed.)
+# Second argument: an EXTRA caption to accept as confirmation, for dialogs whose
+# confirm button is labelled with the action itself ("Approve", "Reject"). It is
+# opt-in per call rather than added to the shared list on purpose: this helper runs
+# in almost every test, and a generic clearer that clicked anything called "Reject"
+# would happily reject an entry a test was trying to approve. Same reasoning as the
+# note above about "close".
 tt_clear_dialogs() {
-  local max="${1:-8}" i r d
+  local max="${1:-8}" extra="${2:-}" i r d alts
   d="$(_tt_dialog_js)"
+  alts='yes|submit anyway|confirm|continue|proceed|ok'
+  # Strip regex metacharacters — the caption is interpolated into a JS literal.
+  [ -n "$extra" ] && alts="$alts|$(printf '%s' "$extra" | tr -d '\^$.[]|()?*+{}/')"
   TT_DIALOG_BLOCKED=""
   for i in $(seq 1 "$max"); do
-    r=$(playwright-cli eval "() => { const d=$d; if(!d) return 'NONE'; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const b=btns.find(x=>/^(yes|submit anyway|confirm|continue|proceed|ok)\$/i.test((x.innerText||'').trim())); if(b){ b.click(); return 'ADVANCED'; } return 'BLOCKED:'+(d.innerText||'').replace(/\\s+/g,' ').slice(0,140); }" 2>/dev/null | _tt_eval_str)
+    r=$(playwright-cli eval "() => { const d=$d; if(!d) return 'NONE'; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const b=btns.find(x=>new RegExp('^(' + '$alts' + ')\$','i').test((x.innerText||'').trim())); if(b){ b.click(); return 'ADVANCED'; } return 'BLOCKED:'+(d.innerText||'').replace(/\\s+/g,' ').slice(0,140); }" 2>/dev/null | _tt_eval_str)
     case "$r" in
       NONE) return 0 ;;
       BLOCKED:*) TT_DIALOG_BLOCKED="${r#BLOCKED:}"; return 1 ;;
@@ -179,7 +188,7 @@ tt_wait_for() {
 tt_click_text() {
   local txt="$1" label="${2:-$1}"
   local r
-  r=$(playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$txt' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | grep -iw ok || true)
+  r=$(playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$txt' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -iw ok || true)
   [ -n "$r" ] || tt_fail "clickable element with text '$txt' not found ($label)"
   sleep 2
 }
@@ -463,7 +472,7 @@ tt_hr_remind_e2e_entry() {
     [ -n "$lbl" ] || continue
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 4
-    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(el && (el.innerText||'').indexOf('$who')>=0){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | grep -qiw true; then
+    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(el && (el.innerText||'').indexOf('$who')>=0){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
       echo "$lbl"
       return 0
     fi
@@ -474,94 +483,117 @@ tt_hr_remind_e2e_entry() {
 # ---------------------------------------------------------------------------
 # Mail access
 #
-# The suite reads mail from a CATCHER: a fake SMTP server that accepts every
-# message, delivers none of them, and exposes what it caught over an HTTP API.
-# The app under test is pointed at it as if it were an ordinary mail server.
+# The suite reads mail from the app's OWN ADMIN PAGE, not from an external mail
+# catcher. Core.EmailsSent_Overview lists every Email_Connector.EmailMessage the
+# app has produced, with its recipient, subject, status, error and body.
 #
-# Two consequences worth knowing:
+# Why this rather than a catcher:
 #
-#   * Because the catcher accepts ANY recipient, the addresses in the app's own
-#     data do not have to be rewritten to something special. Whatever the app
-#     believes it is emailing, the message lands here — so a test can assert
-#     that mail went to the consultant's REAL address, which is a stronger
-#     claim than asserting it reached a shared test inbox.
-#   * Because the inbox can be emptied, freshness is guaranteed rather than
-#     inferred. tt_mail_prepare clears it before the triggering action, so a
-#     read can never be satisfied by a message from an earlier run.
+#   * No infrastructure. Nothing to run, no host to expose, no secret to
+#     configure, so the same test works unchanged on a laptop and against a
+#     deployed environment. The mail tests were the only reason CI needed
+#     anything beyond the app itself.
+#   * The recipient is a column, so "sent to the wrong address" is DETECTABLE.
+#     The catcher-based reader fell back to "the newest message, whoever it was
+#     addressed to", which meant no test could ever catch a misdirected mail.
+#   * Rows exist at QUEUED, before the ~2-minute send event runs, so a test can
+#     assert that a mail was RAISED without waiting for it to be delivered.
+#
+# What it costs: the page is Core.Administrator-only, so reading mail means
+# logging in as the administrator and losing whatever role session the test was
+# using. Read mail at the END of a step, or log back in afterwards.
+#
+# Freshness is a HIGH-WATER MARK, not an emptied inbox. tt_mail_prepare records
+# the rows that already exist; later reads consider only rows that were not there
+# before. Nothing is deleted, so this is safe on a shared environment. Two limits
+# follow, stated rather than hidden: two byte-identical mails collapse into one,
+# and only rows the grid renders are visible - hence the newest-first sort below,
+# which keeps fresh mail on the first page.
 #
 # Env:
-#   TT_MAILPIT_URL   base URL of the catcher's API — required, no default, so a
-#                    misconfigured run fails instead of silently testing nothing
-#   TT_MAILPIT_USER  basic-auth user for that API, if it is protected
-#   TT_MAILPIT_PASS  basic-auth password
-#   TT_MAIL_DOMAIN   domain used by tt_mail_address (default e2e.local)
+#   TT_ADMIN_USER / TT_ADMIN_PASS  administrator account (already required)
+#   TT_MAIL_DOMAIN                 domain for tt_mail_address (default e2e.local)
+#   TT_MAIL_CUSTAPPROVAL_TAG       default recipient filter (default custapproval)
 # ---------------------------------------------------------------------------
 
-# _tt_mail_curl <method> <path> — one call against the catcher's API.
-_tt_mail_curl() {
-  local method="$1" path="$2"
-  [ -n "${TT_MAILPIT_URL:-}" ] || return 1
-  if [ -n "${TT_MAILPIT_USER:-}" ]; then
-    curl -fsS -X "$method" --max-time 10 \
-      -u "${TT_MAILPIT_USER}:${TT_MAILPIT_PASS:-}" "${TT_MAILPIT_URL}${path}" 2>/dev/null
-  else
-    curl -fsS -X "$method" --max-time 10 "${TT_MAILPIT_URL}${path}" 2>/dev/null
-  fi
-}
+TT_MAIL_SEEN_FILE=""
 
-# _tt_mail_tag [explicit] — the inbox tag a read should filter on.
 _tt_mail_tag() {
   echo "${1:-${TT_MAIL_CUSTAPPROVAL_TAG:-custapproval}}"
 }
 
-# _tt_mail_pick <tag> — ID of the newest mail whose recipient matches <tag>,
-# or 1 if there is none yet.
-#
-# <tag> matches either a generated address (tag@domain) or any recipient
-# containing the tag, so a test can filter on a real address just as well as on
-# a synthetic one.
-#
-# Falls back to the newest message of any recipient, loudly. That is safe only
-# because tt_mail_prepare empties the inbox before the triggering action, so
-# anything present arrived from the step under test — but it is announced,
-# since it would otherwise hide a "sent to the wrong address" bug.
-_tt_mail_pick() {
-  local tag="$1" list id
-  list=$(_tt_mail_curl GET "/api/v1/messages?limit=200") || return 1
-  id=$(printf '%s' "$list" | jq -r --arg t "$tag" \
-        'first(.messages[]? | select([.To[]?.Address // ""] | any(startswith($t + "@") or contains($t))) | .ID) // ""' 2>/dev/null)
-  if [ -z "$id" ] || [ "$id" = "null" ]; then
-    id=$(printf '%s' "$list" | jq -r 'first(.messages[]?.ID) // ""' 2>/dev/null)
-    if [ -n "$id" ] && [ "$id" != "null" ]; then
-      echo "note: no mail matching '${tag}' — using the newest message instead (inbox was emptied before the trigger)" >&2
+_tt_mail_grid_up() {
+  playwright-cli eval "() => String(!!document.querySelector('.mx-name-gridEmailsSent'))" 2>/dev/null | _tt_eval_str
+}
+
+# _tt_mail_open - as the administrator, land on the Emails Sent grid.
+_tt_mail_open() {
+  local i
+  [ "$(_tt_mail_grid_up)" = "true" ] && return 0
+  tt_login "${TT_ADMIN_USER:-MxAdmin}" "Welcome to your homepage" "${TT_ADMIN_PASS:-${TT_PASS:-}}" || return 1
+  playwright-cli click ".mx-name-cardEmailsSent" >/dev/null 2>&1
+  for i in $(seq 1 20); do
+    [ "$(_tt_mail_grid_up)" = "true" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# _tt_mail_sort_newest - sort by Sent Date descending so new mail is on page one.
+# Best effort: the grid paginates at 20, and without this a busy environment can
+# push a fresh message onto a later page where no read would ever see it.
+_tt_mail_sort_newest() {
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return 'nogrid'; const hs=[...g.querySelectorAll('[role=columnheader], th')]; const h=hs.find(e=>/sent\\s*date/i.test((e.innerText||'').trim())); if(!h) return 'nocol'; for(let i=0;i<3;i++){ const s=(h.getAttribute('aria-sort')||'').toLowerCase(); if(s.indexOf('desc')===0) return 'desc'; (h.querySelector('[role=button],button')||h).click(); } return (h.getAttribute('aria-sort')||'unsorted'); }" 2>/dev/null | _tt_eval_str
+}
+
+# _tt_mail_rows - one line per rendered row, cells joined by " ~ ".
+_tt_mail_rows() {
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return ''; return [...g.querySelectorAll('[role=row], tr')].map(r=>[...r.querySelectorAll('[role=gridcell], td')].map(c=>(c.innerText||'').replace(/\\s+/g,' ').trim()).join(' ~ ')).filter(s=>s.replace(/[ ~]/g,'').length>0).join('\\n'); }" 2>/dev/null | _tt_eval_str
+}
+
+# _tt_mail_refresh - re-read the grid without paying for a fresh login.
+_tt_mail_refresh() {
+  local i
+  playwright-cli reload >/dev/null 2>&1
+  for i in $(seq 1 15); do
+    if [ "$(_tt_mail_grid_up)" = "true" ]; then
+      _tt_mail_sort_newest >/dev/null 2>&1 || true
+      return 0
     fi
+    sleep 1
+  done
+  _tt_mail_open
+}
+
+# _tt_mail_new_rows - rows that were not present at tt_mail_prepare time.
+_tt_mail_new_rows() {
+  local cur
+  cur="$(_tt_mail_rows)"
+  if [ -s "${TT_MAIL_SEEN_FILE:-/dev/null}" ]; then
+    printf '%s\n' "$cur" | grep -Fxv -f "$TT_MAIL_SEEN_FILE" 2>/dev/null || true
+  else
+    printf '%s\n' "$cur"
   fi
-  [ -n "$id" ] && [ "$id" != "null" ] || return 1
-  echo "$id"
 }
 
 # --- the API the tests use -------------------------------------------------
 
-# tt_mail_prepare — make sure mail can be read, and start from a known-empty
-# inbox. Call it BEFORE the action that triggers the send.
+# tt_mail_prepare - make sure mail is readable, and mark what is already there.
+# Call it BEFORE the action that triggers the send.
 tt_mail_prepare() {
-  [ -n "${TT_MAILPIT_URL:-}" ] \
-    || tt_fail "TT_MAILPIT_URL is not set — the suite has nowhere to read mail from"
-  _tt_mail_curl GET "/api/v1/info" >/dev/null \
-    || tt_fail "the mail catcher at ${TT_MAILPIT_URL} is not answering (check the host is up, and TT_MAILPIT_USER/PASS if it is protected)"
-  tt_mail_reset
+  _tt_mail_open \
+    || tt_fail "could not open the Emails Sent page as ${TT_ADMIN_USER:-MxAdmin} - the suite has nowhere to read mail from (is that account an Administrator?)"
+  _tt_mail_sort_newest >/dev/null 2>&1 || true
+  [ -n "$TT_MAIL_SEEN_FILE" ] || TT_MAIL_SEEN_FILE="$(mktemp)"
+  _tt_mail_rows > "$TT_MAIL_SEEN_FILE"
 }
 
-# tt_mail_reset — empty the inbox, so no earlier mail can satisfy a later read.
-tt_mail_reset() {
-  _tt_mail_curl DELETE "/api/v1/messages" >/dev/null || true
-}
+# tt_mail_reset - kept so existing call sites read unchanged; re-marks the page.
+tt_mail_reset() { tt_mail_prepare; }
 
-# tt_mail_address <tag>
-# A synthetic address the app can be told to send to and that this suite can
-# then read back. Only needed where a test CHOOSES the recipient (the Email
-# Tester, for instance); mail sent to the app's real addresses is caught too,
-# and is filtered by passing that address as the tag.
+# tt_mail_address <tag> - a synthetic address for the cases where a test CHOOSES
+# the recipient (the Email Tester). Mail to the app's real addresses is listed
+# too, and is filtered by passing that address as the tag.
 tt_mail_address() {
   local tag="${1:-e2e}"
   echo "${tag}@${TT_MAIL_DOMAIN:-e2e.local}"
@@ -569,49 +601,61 @@ tt_mail_address() {
 
 # tt_mail_token <ts-ms> [link-regex] [recipient] [timeout-seconds]
 # Print the first link matching <link-regex> (default: customer-approval) from
-# the mail the app just sent.
+# mail that appeared since tt_mail_prepare.
 #
-# <ts-ms> is accepted and ignored: freshness comes from the empty inbox that
-# tt_mail_prepare guarantees, which is stronger than a timestamp fence. The
-# argument is kept so existing call sites read unchanged.
+# <ts-ms> is accepted and ignored: freshness comes from the high-water mark,
+# which is stronger than a timestamp fence. The argument is kept so existing
+# call sites read unchanged.
 tt_mail_token() {
-  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" budget="${4:-60}"
-  local tag waited=0 id full link
+  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" budget="${4:-120}"
+  local tag waited=0 rows link scoped
   tag="$(_tt_mail_tag "$want")"
   while [ "$waited" -lt "$budget" ]; do
-    if id=$(_tt_mail_pick "$tag"); then
-      full=$(_tt_mail_curl GET "/api/v1/message/${id}")
-      link=$(printf '%s' "$full" | jq -r '((.HTML // "") + " " + (.Text // ""))' 2>/dev/null \
-             | grep -oE "https?://[^ \"<>()]+${rx}[^ \"<>()]*" | head -1)
-      if [ -n "$link" ]; then echo "$link"; return 0; fi
+    rows="$(_tt_mail_new_rows)"
+    scoped="$(printf '%s\n' "$rows" | grep -i -- "$tag" 2>/dev/null || true)"
+    if [ -n "$scoped" ]; then
+      rows="$scoped"
+    elif [ -n "$want" ]; then
+      rows=""     # an explicit recipient was demanded: do not settle for another
     fi
-    sleep 2; waited=$((waited + 2))
+    link="$(printf '%s' "$rows" | grep -oE "https?://[^ \"'<>()~]+${rx}[^ \"'<>()~]*" | head -1)"
+    if [ -n "$link" ]; then echo "$link"; return 0; fi
+    sleep 5; waited=$((waited + 5))
+    _tt_mail_refresh >/dev/null 2>&1 || true
   done
   return 1
 }
 
 # tt_mail_message <ts-ms> [recipient] [timeout-seconds]
-# Print the mail the app just sent as "Subject: <s>", a blank line, then the
-# body (plain text where present, else HTML with tags stripped) — the primitive
-# for a test that wants to LOOK at the email rather than pull a link out of it.
-# <ts-ms> is accepted and ignored, as in tt_mail_token.
+# Print the mail that just appeared as "Subject: <s>", a blank line, then the row
+# as rendered (recipient, status and body included) - the primitive for a test
+# that wants to LOOK at the mail rather than pull a link out of it.
 tt_mail_message() {
-  local ts="$1" want="${2:-}" budget="${3:-60}"
-  local tag waited=0 id full subj body
+  local ts="$1" want="${2:-}" budget="${3:-120}"
+  local tag waited=0 rows row subj
   tag="$(_tt_mail_tag "$want")"
   while [ "$waited" -lt "$budget" ]; do
-    if id=$(_tt_mail_pick "$tag"); then
-      full=$(_tt_mail_curl GET "/api/v1/message/${id}")
-      subj=$(printf '%s' "$full" | jq -r '.Subject // ""' 2>/dev/null)
-      body=$(printf '%s' "$full" \
-             | jq -r 'if (.Text // "") != "" then .Text else (.HTML // "") end' 2>/dev/null \
-             | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' -e 's/&amp;/\&/g')
-      printf 'Subject: %s\n\n%s\n' "$subj" "$body"
+    rows="$(_tt_mail_new_rows)"
+    row="$(printf '%s\n' "$rows" | grep -i -- "$tag" 2>/dev/null | head -1 || true)"
+    if [ -z "$row" ] && [ -z "$want" ]; then
+      row="$(printf '%s\n' "$rows" | head -1)"
+    fi
+    if [ -n "$row" ]; then
+      subj="$(printf '%s' "$row" | awk -F' ~ ' '{print $3}')"
+      printf 'Subject: %s\n\n%s\n' "$subj" "$row"
       return 0
     fi
-    sleep 2; waited=$((waited + 2))
+    sleep 5; waited=$((waited + 5))
+    _tt_mail_refresh >/dev/null 2>&1 || true
   done
   return 1
+}
+
+# tt_mail_to <substring> - the recipient of the new mail matching <substring>.
+# This is what the catcher could never answer: it exists so a test can assert
+# that mail went to the RIGHT address.
+tt_mail_to() {
+  _tt_mail_new_rows | grep -i -- "$1" | head -1 | awk -F' ~ ' '{print $2}'
 }
 
 

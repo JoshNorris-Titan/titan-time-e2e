@@ -96,7 +96,7 @@ done
 #   3. The JSON is passed by path, not on stdin - redirecting a file into a native
 #      Windows binary from git-bash delivered empty stdin here.
 cat > "$WORK/report.py" <<'PY'
-import json, sys
+import json, os, sys
 
 with open(sys.argv[1]) as fh:
     d = json.load(fh)
@@ -113,6 +113,19 @@ for f in (d.get("failed_tests") or []):
     print("          error: {}".format(f.get("error")))
     print("          step : {}".format(f.get("step")))
     print("")
+
+# Discovery floor. `failures == 0` is indistinguishable from "nothing ran": the
+# remote API happily reports 0 tests, 0 failures when discovery breaks — most often
+# UnitTesting.FindJUnitTests reverting to True, which is its default and which only
+# the configuration named "Configuration" currently overrides. Without this floor the
+# single guard over the whole unit-test layer passes while running nothing at all.
+minimum = int(os.environ.get("TT_UNITTEST_MIN", "40"))
+if tests < minimum:
+    print("FAIL: only {} test(s) discovered; expected at least {}.".format(tests, minimum))
+    print("      This is a DISCOVERY failure, not a pass. Check that")
+    print("      UnitTesting.FindJUnitTests is False in the ACTIVE configuration.")
+    print("      Override the floor with TT_UNITTEST_MIN if the suite legitimately shrank.")
+    sys.exit(1)
 
 sys.exit(1 if failures else 0)
 PY

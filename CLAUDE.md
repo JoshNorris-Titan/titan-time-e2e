@@ -81,6 +81,11 @@ local convenience only and must never be relied on against a deployed environmen
 1. **The eval/grep false pass.** `playwright-cli eval "…return 'ok'" | grep -qiw ok` matches the
    *echoed source line*, not the result — so the assertion passes no matter what the page does.
    Decode with the `_tt_eval_str` helper in `lib/_login.sh` instead of grepping raw output.
-2. **Assertions that cannot fail.** An audit found roughly 16 of them, and the suite has never
-   had a recorded green run. Treat an unexpected PASS as suspicious until the assertion has been
-   proven able to fail — break it deliberately and confirm the test goes red.
+   Guarded by `suites/80-platform/verify-no-echo-trap.test.sh`, which fails the run on any new
+   occurrence and needs no browser.
+2. **Assertions that cannot fail.** The suite has never had a recorded green run. Treat an
+   unexpected PASS as suspicious until the assertion has been proven able to fail — break it
+   deliberately and confirm the test goes red.
+   `suites/10-smoke/verify-helper-selftest.test.sh` asserts that property for the shared helpers
+   on every run, and `run-tests.sh --expect-count N` keeps the *run itself* honest when tests
+   vanish from discovery. Neither substitutes for breaking a new assertion on purpose.

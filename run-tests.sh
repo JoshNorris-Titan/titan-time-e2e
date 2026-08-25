@@ -23,6 +23,7 @@
 #   ./run-tests.sh                              run every test in this directory
 #   ./run-tests.sh verify-smoke-login.test.sh   run one script
 #   ./run-tests.sh --list
+#   ./run-tests.sh --expect-count 52        fail unless exactly 52 tests are found
 #   ./run-tests.sh --junit results.xml --skip-file ci-skip.txt
 #
 # Env:
@@ -37,6 +38,7 @@ JUNIT=""
 SKIP_FILE=""
 TIMEOUT="2m"
 LIST_ONLY=0
+EXPECT_COUNT=""
 VERBOSE=0
 HEALTH_CHECK=1
 TARGETS=()
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
     --skip-file)        SKIP_FILE="$2"; shift 2 ;;
     --timeout|-t)       TIMEOUT="$2"; shift 2 ;;
     --list|-l)          LIST_ONLY=1; shift ;;
+    --expect-count)     EXPECT_COUNT="$2"; shift 2 ;;
     --verbose|-v)       VERBOSE=1; shift ;;
     --skip-health-check) HEALTH_CHECK=0; shift ;;
     --color)            shift ;;   # accepted for compatibility, no-op
@@ -84,6 +87,12 @@ collect() {
   done
 }
 
+if [ ${#TARGETS[@]} -gt 0 ]; then
+  for _t in "${TARGETS[@]}"; do
+    [ -e "$_t" ] || { echo "no such file or directory: $_t" >&2; exit 2; }
+  done
+fi
+
 mapfile -t SCRIPTS < <(collect)
 
 # --- skip list -------------------------------------------------------------
@@ -111,9 +120,31 @@ fi
 
 [ ${#SCRIPTS[@]} -gt 0 ] || { echo "no verify-*.test.sh scripts found" >&2; exit 2; }
 
+# Discovery gate. Without this the RUN ITSELF cannot fail: rename a test out of the
+# verify-*.test.sh glob, or drop a folder, and the runner happily reports
+# "3 tests: 3 passed" with exit 0. Same class of bug as an assertion that cannot
+# fail, one level up. CI should always pass --expect-count.
+if [ -n "$EXPECT_COUNT" ]; then
+  case "$EXPECT_COUNT" in
+    ''|*[!0-9]*) echo "--expect-count needs a number, got: $EXPECT_COUNT" >&2; exit 2 ;;
+  esac
+  if [ "${#SCRIPTS[@]}" -ne "$EXPECT_COUNT" ]; then
+    echo "FATAL: discovered ${#SCRIPTS[@]} test(s), expected $EXPECT_COUNT." >&2
+    echo "       A test was added, removed, or renamed out of the verify-*.test.sh glob." >&2
+    echo "       Run --list to see what was found, then update --expect-count deliberately." >&2
+    exit 2
+  fi
+fi
+
 # --- health check ----------------------------------------------------------
 if [ "$HEALTH_CHECK" -eq 1 ]; then
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE_URL/" 2>/dev/null || echo 000)"
+  # `|| echo 000` used to APPEND to curl's own "000" on a connection failure, so
+  # $code ended up as two lines of zeros, never equalled "000", and an unreachable
+  # app passed the check and started a full run against nothing. Let the
+  # assignment's exit status decide instead, and treat any non-numeric or empty
+  # result as unreachable.
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE_URL/" 2>/dev/null)" || code=""
+  case "$code" in ''|*[!0-9]*) code="000" ;; esac
   if [ "$code" = "000" ]; then
     echo "FATAL: app not reachable at $BASE_URL (use --skip-health-check to override)" >&2
     exit 2
@@ -138,7 +169,15 @@ command -v playwright-cli >/dev/null 2>&1 || {
   echo "FATAL: playwright-cli not found — run 'npm ci' in $HERE" >&2; exit 2; }
 
 cleanup() { playwright-cli close >/dev/null 2>&1 || true; }
-trap cleanup EXIT INT TERM
+on_signal() {
+  echo >&2
+  echo "interrupted — closing the shared browser session and stopping." >&2
+  cleanup
+  trap - EXIT
+  exit 130
+}
+trap cleanup EXIT
+trap on_signal INT TERM
 
 playwright-cli open "$BASE_URL/" >/dev/null 2>&1 \
   || { echo "FATAL: could not open browser session" >&2; exit 2; }
