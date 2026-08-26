@@ -148,10 +148,9 @@ fill_rows() {
   for ord in $ords; do
     IFS="$OLD"
     for d in Mon Tues Wed Thurs Fri; do
-      playwright-cli fill ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "$hrs" >/dev/null 2>&1
+      tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "$hrs"
     done
-    playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDaySat input, ${ord})" >/dev/null 2>&1
-    playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDayMon input, ${ord})" >/dev/null 2>&1
+    tt_commit_focused
     IFS=','
   done
   IFS="$OLD"

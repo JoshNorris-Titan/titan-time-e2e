@@ -163,7 +163,121 @@ tt_fill() {
     *"### Error"*)
       tt_fail "fill('$sel') failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)" ;;
   esac
+  tt_commit_focused
 }
+
+# ---------------------------------------------------------------------------
+# Committing a filled field
+#
+# `playwright-cli fill` writes the DOM value directly. A Mendix text box only
+# hands that value to the model when the field BLURS, so the LAST field of any
+# fill sequence is never committed. Earlier fields look fine only because
+# filling the next one blurred them.
+#
+# The symptom is a total short by exactly one cell. Measured against dev on
+# 2026-08-26: filling Mon..Fri with 5 left Fri reading "5" while Mon..Thu read
+# "5.00" - the reformat is the widget's commit signature - and the row total sat
+# at 20.00. It was STILL 20.00 two seconds later, so this is not a debounce and
+# no amount of sleeping fixes it. The instant the field blurred, Fri became
+# "5.00" and the total became 25.00.
+#
+# That is what verify-hours-validation and verify-timesheet-clear were both
+# failing on: one submitted 45 hours the app only ever saw as 40, so no over-40
+# warning could fire; the other had its uncommitted Friday written back by the
+# very click that was meant to clear the week.
+#
+# Blur is dispatched on the element itself rather than by clicking something
+# else, so no row is selected and no button pressed as a side effect. It is
+# synchronous - the value is committed by the time the next read runs - so this
+# adds no sleeps.
+
+# tt_commit_focused - make the focused input hand its value to Mendix.
+tt_commit_focused() {
+  playwright-cli eval "() => { const a=document.activeElement; if (a && a.blur) a.blur(); return 'ok'; }" >/dev/null 2>&1
+}
+
+# tt_fill_commit <selector> <value> - fill and commit, without tt_fill's fatal
+# error checking. For a SINGLE cell, or the last of a short sequence.
+tt_fill_commit() {
+  playwright-cli fill "$1" "$2" >/dev/null 2>&1
+  tt_commit_focused
+}
+
+# tt_fill_cell <selector> <value> - fill WITHOUT committing. For loops.
+#
+# WHY THIS EXISTS SEPARATELY. Every playwright-cli call is a fresh node process,
+# so the cost of committing is process startup, not the blur. Inside a sequence
+# the blur is also redundant: `fill` focuses its target, and focusing cell N+1
+# blurs cell N, which is what commits it. Only the LAST cell is ever left
+# uncommitted.
+#
+# Blurring per cell therefore paid ~1s of process startup five times per row to
+# do once what the next fill does for free. Measured on 2026-08-26 it took the
+# tt654 suite from 1000s/9-of-10 to 1652s/7-of-10, the three new failures all
+# being TIMEOUTs rather than assertions - a test harness slow enough to fail
+# tests that work.
+#
+# Loops use this and call tt_commit_focused ONCE afterwards. That single blur is
+# still mandatory: it is the last cell that the old code lost, and a submit or
+# clear click races it rather than committing it.
+tt_fill_cell() {
+  playwright-cli fill "$1" "$2" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
+# Re-reading the week under test
+#
+# `playwright-cli reload` re-fetches, but the timesheet page OPENS ON TODAY'S
+# WEEK. A test that reloads to prove something persisted therefore reads a
+# different week than the one it wrote to, and reports whatever happens to be
+# sitting in the current week as its own result.
+#
+# That is not hypothetical. verify-timesheet-clear reloaded to re-read an
+# explicit 0 and got back 9.00 - the 9 hours verify-hours-validation had written
+# minutes earlier into the week containing today's date. The number was stable
+# across runs, which made it look like a product bug rather than a test reading
+# the wrong row.
+#
+# Stepping one week back and forward re-runs the week's data source without
+# leaving the week. tt654_refetch_week has done this since TT-654; it is here so
+# every test can, and so the reason is written down once.
+
+# tt_current_week — the week range the grid is showing right now, or ''.
+tt_current_week() {
+  playwright-cli eval "() => { const t=((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim(); const m=t.match(/[A-Z][a-z]{2}\s+\d{1,2}\s*-\s*[A-Z][a-z]{2}\s+\d{1,2}/); return m ? m[0] : ''; }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_refetch_week — re-query the week the grid is showing, staying on it.
+tt_refetch_week() {
+  playwright-cli click ".mx-name-btnWeekPrev" >/dev/null 2>&1
+  sleep 2
+  playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
+  sleep 3
+}
+
+# tt_draft_count <project> <consultant> - how many of <consultant>'s entries on
+# <project> are still Draft, asked of the DATA LAYER rather than of the screen.
+#
+# WHY NOT READ THE ROW. The gallery does not reliably re-render a row as
+# read-only the moment its entry is submitted: a probe watched one row for 30
+# seconds after a submit that had already reached the server and the DOM never
+# changed, while a second probe on the next week showed read-only within
+# seconds. Submitting is a property of the ENTRY, not of how quickly a bound
+# widget repaints.
+#
+# The asymmetry matters. "Still editable" is safe to read off the screen - a
+# lagging DOM stays editable, which is what an unsubmitted week looks like
+# anyway. "Became read-only" is NOT: a slow repaint is indistinguishable from a
+# refused submit, and asserting it produces a confident, wrong failure. Prove
+# the positive direction here.
+#
+# Echoes a count, or ERR:<why>. A caller that cannot get a number must not treat
+# that as a pass.
+tt_draft_count() {
+  local xp="//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Project/Main.Project/Name = '$1'][Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Account/Administration.Account/Name = '$2'][Status = 'Draft']"
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"$xp\", filter:{amount:500}, callback: function(objs){ clearTimeout(t); res(String((objs||[]).length)); }, error: function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
 
 # ---------------------------------------------------------------------------
 # Line-item name guards
@@ -808,11 +922,10 @@ tt_consultant_submit_project_row() {
   export TT_SUBMITTED_WEEK
 
   for d in Mon Tues Wed Thurs Fri; do
-    playwright-cli fill ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "8" >/dev/null 2>&1
+    tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "8"
   done
-  # commit the last cell via real focus changes within the same row
-  playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDaySat input, ${ord})" >/dev/null 2>&1
-  playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDayMon input, ${ord})" >/dev/null 2>&1
+  # commit the last cell - the four before it were committed by the next fill
+  tt_commit_focused
   sleep 1
 
   # Save Draft BEFORE submitting, then confirm the hours actually persisted.
