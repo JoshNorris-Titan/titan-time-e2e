@@ -118,143 +118,6 @@ tt683_zip_button_caption() {
   echo ""
 }
 
-# ------------------------------------------------------- download inspection
-# tt683_arm_download_capture — record the URL the Download action navigates to.
-#
-# WHAT WAS MISSING. The original hooked window.open, delegated anchor clicks at
-# document level, and newly-added iframes. It never saw the download, and a1/a2
-# failed with "no download URL was captured".
-#
-# The gap is the DETACHED ANCHOR, which is how most download helpers work:
-#     const a=document.createElement('a'); a.href=url; a.download=n; a.click();
-# That anchor is never in the document, so its click event does not reach the
-# document-level listener. Patching HTMLAnchorElement.prototype.click catches it
-# wherever it lives. URL.createObjectURL is hooked for the same reason - a blob
-# download has no /file URL at all - and the recogniser now accepts blob: as well
-# as /file.
-tt683_arm_download_capture() {
-  playwright-cli eval "() => {
-    window.__ttDlUrl = null; window.__ttZip = null; window.__ttZipErr = null;
-    const rec = u => { try { const s = String(u||''); if (s && (/\/file/.test(s) || /^blob:/.test(s) || /\.zip(\?|$)/i.test(s))) window.__ttDlUrl = s; } catch(e){} return u; };
-    window.__ttRec = rec;
-    if (!window.__ttPatched) {
-      const _open = window.open;
-      window.open = function(u){ rec(u); try { return _open.apply(window, arguments); } catch(e){ return null; } };
-      document.addEventListener('click', e => { const a = e.target && e.target.closest && e.target.closest('a[href]'); if (a) rec(a.href); }, true);
-      const _aclick = HTMLAnchorElement.prototype.click;
-      HTMLAnchorElement.prototype.click = function(){ try { rec(this.href); } catch(e){} return _aclick.apply(this, arguments); };
-      const _cou = URL.createObjectURL;
-      if (_cou) URL.createObjectURL = function(){ const u = _cou.apply(URL, arguments); rec(u); return u; };
-      new MutationObserver(ms => { for (const m of ms) { for (const n of m.addedNodes||[]) { if (n && n.tagName === 'IFRAME') { rec(n.src); setTimeout(()=>rec(n.src), 300); } if (n && n.tagName === 'A' && n.href) rec(n.href); } } })
-        .observe(document.documentElement, { subtree:true, childList:true });
-      window.__ttPatched = true;
-    }
-    return 'armed';
-  }" 2>/dev/null | grep -qiw armed || tt_fail "could not arm the download capture"
-}
-
-# tt683_fetch_zip_entries — fetch the captured URL and parse the ZIP central
-# directory. Kicks the fetch off and stores the result on window, then polls;
-# done this way so it does not depend on playwright-cli eval awaiting promises.
-# Prints one entry name per line. Prints nothing and returns 1 on failure,
-# leaving the reason in tt683_zip_error.
-tt683_fetch_zip_entries() {
-  local i url
-  for i in $(seq 1 20); do
-    url=$(playwright-cli eval "() => window.__ttDlUrl || ''" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//')
-    [ -n "$url" ] && break
-    sleep 1
-  done
-  [ -n "$url" ] || { TT683_ZIP_ERR="no download URL was captured — the Download file action did not go through window.open, an anchor or an iframe"; echo "  zip read failed: $TT683_ZIP_ERR" >&2; return 1; }
-
-  playwright-cli eval "() => {
-    fetch(window.__ttDlUrl, { credentials: 'include' })
-      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-      .then(buf => {
-        const b = new Uint8Array(buf);
-        if (b.length < 4) throw new Error('empty response');
-        if (!(b[0]===0x50 && b[1]===0x4b)) throw new Error('not a ZIP (magic ' + b[0] + ',' + b[1] + ')');
-        // End of Central Directory: scan back for 0x06054b50.
-        let eo = -1;
-        for (let i = b.length - 22; i >= 0 && i > b.length - 66000; i--) {
-          if (b[i]===0x50 && b[i+1]===0x4b && b[i+2]===0x05 && b[i+3]===0x06) { eo = i; break; }
-        }
-        if (eo < 0) throw new Error('no end-of-central-directory record');
-        const dv = new DataView(buf);
-        const total = dv.getUint16(eo + 10, true);
-        let off = dv.getUint32(eo + 16, true);
-        const names = [], recs = [];
-        for (let n = 0; n < total; n++) {
-          if (dv.getUint32(off, true) !== 0x02014b50) break;
-          const crc      = dv.getUint32(off + 16, true);
-          const rawSize  = dv.getUint32(off + 24, true);
-          const nameLen  = dv.getUint16(off + 28, true);
-          const extraLen = dv.getUint16(off + 30, true);
-          const cmtLen   = dv.getUint16(off + 32, true);
-          const nm = new TextDecoder().decode(b.subarray(off + 46, off + 46 + nameLen));
-          names.push(nm);
-          // CRC-32 and uncompressed size come straight out of the central
-          // directory, so the CONTENT of each PDF is identifiable without
-          // inflating anything. See tt683_zip_records for why that matters.
-          // '~~' rather than a tab: these come back through JSON encoding, and
-          // a real tab arrives as an escaped \t that the shell then has to
-          // un-escape. Same reason lib/_tt647.sh joins its two lines with '~~'.
-          recs.push(nm + '~~' + crc + '~~' + rawSize);
-          off += 46 + nameLen + extraLen + cmtLen;
-        }
-        window.__ttZip = names;
-        window.__ttZipRecs = recs;
-      })
-      .catch(e => { window.__ttZipErr = String(e && e.message || e); });
-    return 'started';
-  }" >/dev/null 2>&1
-
-  for i in $(seq 1 30); do
-    local err done_
-    err=$(playwright-cli eval "() => window.__ttZipErr || ''" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//')
-    if [ -n "$err" ]; then TT683_ZIP_ERR="$err"; echo "  zip read failed: $err" >&2; return 1; fi
-    done_=$(playwright-cli eval "() => window.__ttZip ? String(window.__ttZip.length) : ''" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//')
-    if [ -n "$done_" ]; then
-      playwright-cli eval "() => (window.__ttZip||[]).join('\\n')" 2>/dev/null | _tt_eval_str | grep .
-      return 0
-    fi
-    sleep 1
-  done
-  TT683_ZIP_ERR="timed out fetching/parsing the archive"
-  echo "  zip read failed: $TT683_ZIP_ERR" >&2
-  return 1
-}
-
-# tt683_download_zip_entries — arm, click the ZIP button, return entry names.
-# THE ERROR HAS TO GO TO STDERR, NOT JUST INTO TT683_ZIP_ERR.
-# verify-tt683-a1 calls this as ENTRIES="$(tt683_download_zip_entries)", i.e. in a
-# SUBSHELL, so every TT683_ZIP_ERR set below is discarded before the caller can
-# read it - which is why a1 reported the useless "could not read the downloaded
-# archive: unknown error". The variable is still set for same-shell callers; the
-# stderr copy is what actually reaches the report.
-tt683_download_zip_entries() {
-  tt683_arm_download_capture
-  playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
-    || tt_fail "could not click the ZIP download button"
-  tt683_fetch_zip_entries
-}
-
-# tt683_zip_records — one "<name>~~<crc32>~~<uncompressed-size>" line per archive
-# entry, from the archive most recently parsed into the page by
-# tt683_fetch_zip_entries. Prints nothing if no archive is in the session.
-#
-# WHY THIS EXISTS. Filenames alone cannot prove TT-683. Main.SUB_BuildMonthHelpers
-# sets PDFMonthHelper/FileName per helper, so the names come out right even if
-# every PDF holds the SAME data — which is exactly the pre-TT-683 defect:
-# Main.ACT_PDF_GoTo used to ignore its context object and retrieve the newest
-# PDFMonthHelper, so N generations rendered one consultant N times. Identical
-# renders produce identical bytes, hence an identical CRC-32. Comparing CRCs
-# catches that regression without inflating or parsing the PDFs.
-tt683_zip_records() {
-  playwright-cli eval "() => (window.__ttZipRecs||[]).join('\\n')" 2>/dev/null \
-    | _tt_eval_str | grep . || true
-}
-
 # ------------------------------------------------- AwaitingExport preconditions
 #
 # The export tests need entries in AwaitingExport, and NOTHING else in the suite
@@ -268,6 +131,126 @@ tt683_zip_records() {
 # can top up their own preconditions if they are ever run standalone.
 
 TT683_TAB_TOPROCESS="WEEKLY TO PROCESS"
+
+
+# ---------------------------------------------------------------------------
+# Reading the exported archive
+#
+# WHY THIS IS DONE THROUGH THE NETWORK LOG AND NOT THE DOM.
+# Main.ACT_PDF_ExportZip ends in a Download file action with
+# showFileInBrowser=false. Mendix 11.12.2 performs that by pointing a hidden
+# iframe at /file?guid=..., and because the response is an attachment the browser
+# turns the navigation into a DOWNLOAD: the iframe's location never changes, its
+# src attribute is never set, and it is discarded immediately afterwards. An
+# instrumented run proved it - every hook fired with an empty string:
+#     rec() saw: {"patched":true,"hits":3,"last":["","",""]}
+# One earlier run did capture the URL by reading contentWindow.location on a
+# one-second poll, but that was winning a sub-second race, and refetching the URL
+# afterwards returned HTTP 560 because the guid stops resolving once the flow
+# closes the form.
+#
+# The browser makes the request regardless, so the bytes are taken from
+# playwright's own network log and read off disk with tools/zipreport.py. No
+# race, no second request, and no hand-rolled ZIP parsing in the page.
+# ---------------------------------------------------------------------------
+
+# Where the downloaded archive path is parked. Callers invoke these helpers in a
+# command substitution, so a shell variable would not survive; a file does.
+TT683_ZIP_STATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.tt683-zip.path"
+TT683_ZIPREPORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/zipreport.py"
+
+# _tt683_zip_request_index — index of the /file request in the network log, or "".
+_tt683_zip_request_index() {
+  playwright-cli requests --static 2>/dev/null \
+    | grep -oE '^[0-9]+\. \[[A-Z]+\] [^ ]*/file\?[^ ]*' \
+    | tail -1 | cut -d. -f1
+}
+
+# _tt683_downloaded_path — the archive playwright saved, or "".
+#
+# THE BROWSER ALREADY WROTE THE FILE. The export response carries
+#     content-disposition: attachment; content-type: application/zip
+# so playwright treats it as a download and saves it, announcing the location in
+# the network log:
+#     - Downloaded file 2026-0831-Timesheets.zip to ".playwright-cli\...zip"
+# Everything else that was tried cannot work, and this is why:
+#   * `response-body <n>` returns rc=0 and ONE byte - a download's body is
+#     consumed by the download machinery and never retained;
+#   * refetching the URL returns 560 with content-type text/html - the guid is
+#     genuinely one-shot, so the second request gets a Mendix error page;
+#   * nothing is observable from the page at all: the iframe never gets a src and
+#     never navigates, because the attachment response is converted to a download.
+# Reading the file playwright already wrote sidesteps all three.
+_tt683_downloaded_path() {
+  local line raw path
+  line="$(playwright-cli requests --static 2>/dev/null | grep -oE 'Downloaded file .* to "[^"]+"' | tail -1)"
+  [ -n "$line" ] || return 1
+  raw="$(printf '%s' "$line" | sed -e 's/.* to "//' -e 's/"$//')"
+  path="$(printf '%s' "$raw" | tr '\' '/')"
+  [ -f "$path" ] || path="$PWD/$path"
+  [ -f "$path" ] || return 1
+  printf '%s\n' "$path"
+}
+
+# tt683_download_zip_entries — click Download, take the archive playwright saved,
+# print one entry name per line. Leaves the path in TT683_ZIP_STATE.
+tt683_download_zip_entries() {
+  local i path idx
+  rm -f "$TT683_ZIP_STATE"
+
+  playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
+    || tt_fail "could not click the ZIP download button"
+
+  for i in $(seq 1 30); do
+    path="$(_tt683_downloaded_path)" && break
+    path=""
+    sleep 1
+  done
+
+  if [ -z "$path" ]; then
+    idx="$(_tt683_zip_request_index)"
+    if [ -n "$idx" ]; then
+      TT683_ZIP_ERR="the browser requested /file? (#$idx) but no download was saved - check the response is still content-disposition: attachment"
+    else
+      TT683_ZIP_ERR="the browser never requested /file? after the download was clicked"
+    fi
+    echo "  zip read failed: $TT683_ZIP_ERR" >&2
+    echo "  network log tail: $(playwright-cli requests --static 2>/dev/null | tail -6 | tr '\n' ' ')" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$path" > "$TT683_ZIP_STATE"
+  echo "  archive: $path ($(wc -c < "$path" | tr -d ' ') bytes)" >&2
+
+  python "$TT683_ZIPREPORT" "$path" names 2>"$TT683_ZIP_STATE.err" || {
+    TT683_ZIP_ERR="$(head -1 "$TT683_ZIP_STATE.err" 2>/dev/null)"
+    echo "  zip read failed: $TT683_ZIP_ERR" >&2
+    return 1
+  }
+}
+
+# _tt683_zip_path — the archive captured by tt683_download_zip_entries.
+_tt683_zip_path() {
+  [ -f "$TT683_ZIP_STATE" ] || return 1
+  local p; p="$(cat "$TT683_ZIP_STATE")"
+  [ -n "$p" ] && [ -f "$p" ] || return 1
+  printf '%s\n' "$p"
+}
+
+# tt683_zip_records — "<name>~~<crc32>~~<bytes>" per entry. Distinct names are not
+# distinct documents; the CRC is what settles content identity.
+tt683_zip_records() {
+  local p; p="$(_tt683_zip_path)" || return 1
+  python "$TT683_ZIPREPORT" "$p" records 2>/dev/null
+}
+
+# tt683_zip_pdf_report — "<name>~~OK <bytes>" or "<name>~~BAD <reason>", opening
+# each entry. Correct names and distinct CRCs would still pass on an archive full
+# of error pages, so this checks the bytes really are PDFs.
+tt683_zip_pdf_report() {
+  local p; p="$(_tt683_zip_path)" || { echo "ERR no archive was captured"; return 1; }
+  python "$TT683_ZIPREPORT" "$p" pdf 2>/dev/null
+}
 
 # tt683_toprocess_weeks — the week labels offered on the currently-open tab.
 tt683_toprocess_weeks() {
@@ -310,84 +293,91 @@ _tt683_owned_js() {
   echo "(false${out})"
 }
 
-# tt683_process_one — process the first card on the currently-selected week that
-# belongs to an e2e consultant. Prints "<consultant>|<project>" for the card it
-# processed; returns 1 when the week has no owned, processable card left.
+# tt683_close_process_popup — dismiss the Process Consultant Timesheet popup.
+# Needed when a card turns out not to be processable: leaving its popup open
+# blocks every subsequent card on the tab.
+tt683_close_process_popup() {
+  playwright-cli eval "() => { const v=[...document.querySelectorAll('$TT_DIALOG_SEL')].filter(d=>d.offsetParent!==null); const d=v[v.length-1]; if(!d) return 'none'; const btns=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null); const b=btns.find(x=>/^(close|cancel)\$/i.test((x.innerText||'').trim())) || [...d.querySelectorAll('.modal-header button, button.close')].filter(x=>x.offsetParent!==null)[0]; if(b){ b.click(); return 'closed'; } return 'nobutton'; }" >/dev/null 2>&1
+  sleep 2
+}
+
+# tt683_process_one [skip]
+# Process the (skip+1)-th eligible owned card on the week currently selected.
+# Prints "<consultant>|<project>".
 #
-# The card's consultant/project text is read BEFORE clicking, because the page
-# navigates away and the gallery is re-queried afterwards.
+# RETURN CODES MATTER HERE:
+#   0  processed, label printed
+#   1  no eligible owned card at this offset - the tab is exhausted
+#   2  the card opened but its Process page offers NO Process button, so this
+#      particular entry cannot be processed. The caller should move to the NEXT
+#      card. This used to be conflated with 1, and since the drain does
+#      `|| break`, ONE unprocessable card abandoned the whole tab - which is how
+#      verify-tt683-a0 came to report "nothing reached AwaitingExport" while
+#      sitting on a tab full of perfectly good cards. E2E Dual Approval is the
+#      usual culprit: it needs BOTH approvals, so a half-approved entry reaches
+#      To Process with no Process action on it.
+#
+# CARD SELECTION. Walking up from the Process button, the ancestor that IS the
+# card is the one that (a) carries the PROJECT section - the header block alone
+# stops short of it and yields "<consultant>|?" - and (b) contains exactly ONE
+# Process button, which is what stops the walk climbing into a container holding
+# several cards and reading the label off one while clicking another. The project
+# is the line after the PROJECT label; line 2 is "Submitted <date>".
 tt683_process_one() {
-  local label i owned
+  local skip="${1:-0}" label i owned
   owned="$(_tt683_owned_js)"
-  # KEEP WALKING UP. These used to stop at the first ancestor sized 10-400 chars,
-  # which on a To Process card is the BUTTON GROUP ("View & Process" / "Reject",
-  # ~21 chars) whose first line is a button caption, never a consultant name. So
-  # every owned card failed the ownership test and was skipped, and
-  # tt683_process_all_toprocess reported "pushed 0 entr(y/ies)" against a tab
-  # holding four processable cards - which then sent verify-tt683-a0 down its slow
-  # seeding path until it hit the timeout. The equivalent walk in verify-tt654-a3
-  # does not break early, which is why that one finds its cards.
-  # THE PAIRING IS consultant|project, AND THE PROJECT IS NOT LINE 2.
-  # A To Process card reads:
-  #     E2E Consultant / Submitted Aug 26 / View & Process / Reject /
-  #     PROJECT / E2E Manager Approval / WEEK / ... / TOTAL HOURS / ...
-  # so taking the first two lines yielded "E2E Consultant|Submitted Aug 26" for
-  # EVERY card. All entries then looked like the same pairing, the distinct-pairing
-  # counter never reached TT683_PROCESS_TARGET, and the seeder ground through
-  # entries before falling into its slow path and timing out. The project is the
-  # line after the PROJECT label.
-  #
-  # The walk must also keep climbing PAST the first owned ancestor: the card's
-  # header block ("E2E Consultant / Submitted ... / View & Process / Reject")
-  # already satisfies the name test but stops short of the project, which yielded
-  # "E2E Consultant|?" for every card - the same collapse by another route. So the
-  # ancestor has to carry the PROJECT section too before it counts as the card.
-  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && $owned && t.indexOf('PROJECT')>=0) { const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+
+  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   [ -n "$label" ] || return 1
 
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && $owned && t.indexOf('PROJECT')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 4
 
-  # Main.AssignmentEntry_Process opens with a footer 'Process' button. Its widget
-  # name is generated (actionButton3), so match the caption instead.
+  # Main.AssignmentEntry_Process opens with a footer 'Process' button whose widget
+  # name is generated (actionButton3), so it is matched on its caption. 20 x 2s
+  # because the page can be slow to paint on cloud dev.
   local clicked=""
-  for i in 1 2 3 4 5 6 7 8; do
-    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>(e.innerText||'').trim().toLowerCase()==='process'); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
+  for i in $(seq 1 20); do
+    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/^process/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
       clicked=1; break
     fi
     sleep 2
   done
-  [ -n "$clicked" ] || { echo "  (no 'Process' button on the Process Consultant Timesheet page for $label)" >&2; return 1; }
+  if [ -z "$clicked" ]; then
+    echo "  (skipping '$label' - its Process page offers no Process button)" >&2
+    tt683_close_process_popup
+    return 2
+  fi
   sleep 4
 
   # ACT_AssignmentEntry_Process ends by completing the workflow task; clear any
   # confirmation it leaves behind so the next card is reachable.
-  playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(ok|close|yes|confirm)$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" >/dev/null 2>&1
+  playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(ok|close|yes|confirm)\$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" >/dev/null 2>&1
   sleep 2
   echo "$label"
   return 0
 }
 
-# tt683_process_all_toprocess [max]
-# As HR: walk the To Process tab and process owned cards, stopping as soon as
-# TT683_PROCESS_TARGET distinct consultant/project pairings have been pushed to
-# AwaitingExport (or <max> entries have been processed). Prints one
-# "<consultant>|<project>" line per entry actually processed.
+# How many DISTINCT consultant/project pairings the drain aims for.
 #
-# The stop condition is DISTINCT PAIRINGS, not a raw count, because that is what
-# the export tests actually need: two pairings prove the split, and a third is
-# margin. The first version drained up to 12 entries at roughly 20-25s each and
-# blew verify-tt683-a0's 8-minute cap without ever reaching its assertions —
-# processing more than the tests need is pure wall-clock.
-# 2, not 3: two distinct pairings is exactly what verify-tt683-a1 needs to prove
-# the split, and each processed entry costs ~20-25s (open tab, pick week, open
-# the Process page, submit, return). At 3 the seeder overran the per-script
-# timeout and a1/a2 were left with no AwaitingExport data at all — so TT-683
-# went unverified. Raise this only if a1 starts reporting a single pairing.
+# Distinct pairings, not a raw count, because that is what the export tests need:
+# two prove the split, a third is margin. Each processed entry costs ~20-25s (open
+# tab, pick week, open the Process page, submit, return), and at 3 the seeder
+# overran its timeout and left a1/a2 with no AwaitingExport data at all. Raise it
+# only if a1 starts reporting a single pairing.
 TT683_PROCESS_TARGET="${TT683_PROCESS_TARGET:-2}"
 
+# tt683_process_all_toprocess [max]
+# As HR: walk the To Process tab and process owned cards, stopping once
+# TT683_PROCESS_TARGET distinct consultant/project pairings have been pushed to
+# AwaitingExport (or <max> entries processed). Prints one "<consultant>|<project>"
+# line per entry actually processed.
+#
+# An unprocessable card is SKIPPED rather than ending the walk - see the return
+# codes on tt683_process_one. Without that, a single half-approved entry took the
+# whole drain down with it.
 tt683_process_all_toprocess() {
-  local max="${1:-6}" done_=0 lbl labels one seen="" uniq=0
+  local max="${1:-6}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0
   tt_login "e2e_hr" "$TT683_TAB_TOPROCESS"
   tt_click_text "$TT683_TAB_TOPROCESS" "HR To Process tab"
   tt_wait_for ".mx-name-galTabAvailableWeeks" "To Process available-weeks list"
@@ -400,10 +390,20 @@ tt683_process_all_toprocess() {
     [ -n "$lbl" ] || continue
     unset IFS
     tt683_select_week "$lbl" || { IFS='|'; continue; }
-    # Each processed card leaves the tab, so re-read the first card each time
-    # rather than indexing — the gallery re-renders under us.
+    skip=0
     while [ "$done_" -lt "$max" ] && [ "$uniq" -lt "$TT683_PROCESS_TARGET" ]; do
-      one="$(tt683_process_one)" || break
+      one="$(tt683_process_one "$skip")"; rc=$?
+      if [ "$rc" -eq 2 ]; then
+        # Step over this card and try the next one on the same week.
+        skip=$((skip + 1)); skipped=$((skipped + 1))
+        [ "$skip" -le 8 ] || break
+        tt683_open_toprocess_tab >/dev/null 2>&1 || true
+        tt683_select_week "$lbl" || break
+        continue
+      fi
+      [ "$rc" -eq 0 ] || break
+      # A processed card leaves the tab, so the offset has to start over.
+      skip=0
       done_=$((done_ + 1))
       echo "$one"
       case "$seen" in
@@ -419,6 +419,7 @@ tt683_process_all_toprocess() {
     IFS='|'
   done
   unset IFS
+  [ "$skipped" -gt 0 ] && echo "  ($skipped card(s) skipped as unprocessable)" >&2
   return 0
 }
 
@@ -433,81 +434,4 @@ tt683_is_month_end() {
   local y="$1" m="$2" d="$3" nextmonth
   nextmonth=$(date -d "${y}-${m}-${d} +1 day" +%m 2>/dev/null) || return 2
   [ "$nextmonth" != "$m" ]
-}
-
-# tt683_zip_pdf_report — one line per archive entry: "<name>~~OK <bytes>" or
-# "<name>~~BAD <reason>".
-#
-# WHY THIS EXISTS SEPARATELY FROM tt683_download_zip_entries. That reader stops at
-# the central directory: it can see every entry's name, size and CRC without
-# inflating a byte, which is enough to prove the archive holds one distinct file
-# per consultant/project. What it cannot see is whether those files are PDFs. An
-# export that produced an error page, an empty stub or an HTML login redirect would
-# still yield correctly-named entries with distinct CRCs, and every existing
-# assertion would pass.
-#
-# So this one actually opens them: it locates each entry's data, inflates it when
-# the entry is deflated, and checks the first five bytes are "%PDF-". It also
-# rejects entries too small to be a real document, because a valid-but-empty PDF
-# shell is the other way this fails quietly.
-#
-# It does NOT read the text inside. PDF content sits in compressed streams, so
-# searching the bytes for a name would miss text that is genuinely rendered and
-# report a defect that is not there. Whether the approver appears on the page is a
-# question for the model, not for these bytes.
-tt683_zip_pdf_report() {
-  local min="${1:-512}"
-  playwright-cli eval "() => (async () => {
-    const url = window.__ttDlUrl || '';
-    if (!url) return 'ERR no download URL captured';
-    const r = await fetch(url, { credentials: 'include' });
-    if (!r.ok) return 'ERR HTTP ' + r.status;
-    const buf = await r.arrayBuffer();
-    const b = new Uint8Array(buf), dv = new DataView(buf);
-    if (!(b[0] === 0x50 && b[1] === 0x4b)) return 'ERR not a ZIP';
-    let eo = -1;
-    for (let i = b.length - 22; i >= 0 && i > b.length - 66000; i--) {
-      if (b[i] === 0x50 && b[i+1] === 0x4b && b[i+2] === 0x05 && b[i+3] === 0x06) { eo = i; break; }
-    }
-    if (eo < 0) return 'ERR no end-of-central-directory record';
-    const total = dv.getUint16(eo + 10, true);
-    let off = dv.getUint32(eo + 16, true);
-    const out = [];
-    for (let n = 0; n < total; n++) {
-      if (dv.getUint32(off, true) !== 0x02014b50) break;
-      const method   = dv.getUint16(off + 10, true);
-      const compSize = dv.getUint32(off + 20, true);
-      const rawSize  = dv.getUint32(off + 24, true);
-      const nameLen  = dv.getUint16(off + 28, true);
-      const extraLen = dv.getUint16(off + 30, true);
-      const cmtLen   = dv.getUint16(off + 32, true);
-      const lho      = dv.getUint32(off + 42, true);
-      const nm = new TextDecoder().decode(b.subarray(off + 46, off + 46 + nameLen));
-      off += 46 + nameLen + extraLen + cmtLen;
-      try {
-        if (dv.getUint32(lho, true) !== 0x04034b50) { out.push(nm + '~~BAD no local header'); continue; }
-        const lNameLen  = dv.getUint16(lho + 26, true);
-        const lExtraLen = dv.getUint16(lho + 28, true);
-        const start = lho + 30 + lNameLen + lExtraLen;
-        const comp = b.subarray(start, start + compSize);
-        let head;
-        if (method === 0) {
-          head = comp.subarray(0, 5);
-        } else if (method === 8) {
-          const ds = new DecompressionStream('deflate-raw');
-          const inflated = await new Response(new Blob([comp]).stream().pipeThrough(ds)).arrayBuffer();
-          head = new Uint8Array(inflated).subarray(0, 5);
-        } else {
-          out.push(nm + '~~BAD compression method ' + method); continue;
-        }
-        const magic = new TextDecoder().decode(head);
-        if (magic !== '%PDF-') { out.push(nm + '~~BAD starts with ' + JSON.stringify(magic)); continue; }
-        if (rawSize < $min) { out.push(nm + '~~BAD only ' + rawSize + ' bytes'); continue; }
-        out.push(nm + '~~OK ' + rawSize);
-      } catch (e) {
-        out.push(nm + '~~BAD ' + (e && e.message ? e.message : 'unreadable'));
-      }
-    }
-    return out.join('\\n');
-  })()" 2>/dev/null | _tt_eval_str
 }

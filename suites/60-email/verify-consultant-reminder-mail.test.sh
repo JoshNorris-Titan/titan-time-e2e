@@ -20,6 +20,12 @@
 #   TT_ADMIN_USER / TT_ADMIN_PASS   an account holding Main.Administrator
 #   TT_ADMIN_USER / TT_ADMIN_PASS   administrator, to read the Emails Sent page
 
+# tt-timeout: 8m
+#   Sending is not delivery: nothing leaves until the queue scheduled event runs,
+#   which is every two minutes, and this then polls the Emails Sent page for the
+#   message. Measured at 149s when the queue tick fell early in the wait and over
+#   4m when it fell late, so the 4m default decides this test by timing rather
+#   than by behaviour.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
