@@ -272,96 +272,91 @@ _tt683_owned_js() {
   echo "(false${out})"
 }
 
-# tt683_process_one — process the first card on the currently-selected week that
-# belongs to an e2e consultant. Prints "<consultant>|<project>" for the card it
-# processed; returns 1 when the week has no owned, processable card left.
+# tt683_close_process_popup — dismiss the Process Consultant Timesheet popup.
+# Needed when a card turns out not to be processable: leaving its popup open
+# blocks every subsequent card on the tab.
+tt683_close_process_popup() {
+  playwright-cli eval "() => { const v=[...document.querySelectorAll('$TT_DIALOG_SEL')].filter(d=>d.offsetParent!==null); const d=v[v.length-1]; if(!d) return 'none'; const btns=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null); const b=btns.find(x=>/^(close|cancel)\$/i.test((x.innerText||'').trim())) || [...d.querySelectorAll('.modal-header button, button.close')].filter(x=>x.offsetParent!==null)[0]; if(b){ b.click(); return 'closed'; } return 'nobutton'; }" >/dev/null 2>&1
+  sleep 2
+}
+
+# tt683_process_one [skip]
+# Process the (skip+1)-th eligible owned card on the week currently selected.
+# Prints "<consultant>|<project>".
 #
-# The card's consultant/project text is read BEFORE clicking, because the page
-# navigates away and the gallery is re-queried afterwards.
+# RETURN CODES MATTER HERE:
+#   0  processed, label printed
+#   1  no eligible owned card at this offset - the tab is exhausted
+#   2  the card opened but its Process page offers NO Process button, so this
+#      particular entry cannot be processed. The caller should move to the NEXT
+#      card. This used to be conflated with 1, and since the drain does
+#      `|| break`, ONE unprocessable card abandoned the whole tab - which is how
+#      verify-tt683-a0 came to report "nothing reached AwaitingExport" while
+#      sitting on a tab full of perfectly good cards. E2E Dual Approval is the
+#      usual culprit: it needs BOTH approvals, so a half-approved entry reaches
+#      To Process with no Process action on it.
+#
+# CARD SELECTION. Walking up from the Process button, the ancestor that IS the
+# card is the one that (a) carries the PROJECT section - the header block alone
+# stops short of it and yields "<consultant>|?" - and (b) contains exactly ONE
+# Process button, which is what stops the walk climbing into a container holding
+# several cards and reading the label off one while clicking another. The project
+# is the line after the PROJECT label; line 2 is "Submitted <date>".
 tt683_process_one() {
-  local label i owned
+  local skip="${1:-0}" label i owned
   owned="$(_tt683_owned_js)"
-  # KEEP WALKING UP. These used to stop at the first ancestor sized 10-400 chars,
-  # which on a To Process card is the BUTTON GROUP ("View & Process" / "Reject",
-  # ~21 chars) whose first line is a button caption, never a consultant name. So
-  # every owned card failed the ownership test and was skipped, and
-  # tt683_process_all_toprocess reported "pushed 0 entr(y/ies)" against a tab
-  # holding four processable cards - which then sent verify-tt683-a0 down its slow
-  # seeding path until it hit the timeout. The equivalent walk in verify-tt654-a3
-  # does not break early, which is why that one finds its cards.
-  # BOUND THE WALK TO ONE CARD. Requiring the ancestor to carry the PROJECT
-  # section makes the walk climb higher than the card header - and nothing stopped
-  # it climbing past the card entirely into a container holding SEVERAL cards,
-  # whose first line is still an owned consultant. The label was then read from one
-  # card while the click landed on another card's button, and the Process page that
-  # opened belonged to an entry the seeder was not tracking. An ancestor that holds
-  # exactly one Process button is exactly one card. Same guard tt654_row_ordinal
-  # uses to stop a row match leaking into its siblings.
-  # THE PAIRING IS consultant|project, AND THE PROJECT IS NOT LINE 2.
-  # A To Process card reads:
-  #     E2E Consultant / Submitted Aug 26 / View & Process / Reject /
-  #     PROJECT / E2E Manager Approval / WEEK / ... / TOTAL HOURS / ...
-  # so taking the first two lines yielded "E2E Consultant|Submitted Aug 26" for
-  # EVERY card. All entries then looked like the same pairing, the distinct-pairing
-  # counter never reached TT683_PROCESS_TARGET, and the seeder ground through
-  # entries before falling into its slow path and timing out. The project is the
-  # line after the PROJECT label.
-  #
-  # The walk must also keep climbing PAST the first owned ancestor: the card's
-  # header block ("E2E Consultant / Submitted ... / View & Process / Reject")
-  # already satisfies the name test but stops short of the project, which yielded
-  # "E2E Consultant|?" for every card - the same collapse by another route. So the
-  # ancestor has to carry the PROJECT section too before it counts as the card.
-  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0) { const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+
+  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   [ -n "$label" ] || return 1
 
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 4
 
-  # Main.AssignmentEntry_Process opens with a footer 'Process' button. Its widget
-  # name is generated (actionButton3), so match the caption instead.
+  # Main.AssignmentEntry_Process opens with a footer 'Process' button whose widget
+  # name is generated (actionButton3), so it is matched on its caption. 20 x 2s
+  # because the page can be slow to paint on cloud dev.
   local clicked=""
-  # The Process page can take a while to render on cloud dev; 8 x 2s was not
-  # always enough and the seeder then reported "no Process button" on a page that
-  # simply had not painted yet. Also accept a caption that merely STARTS with
-  # "Process" rather than equalling it exactly.
   for i in $(seq 1 20); do
-    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/^process/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
+    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/^process/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
       clicked=1; break
     fi
     sleep 2
   done
-  [ -n "$clicked" ] || { echo "  (no 'Process' button on the Process Consultant Timesheet page for $label)" >&2; return 1; }
+  if [ -z "$clicked" ]; then
+    echo "  (skipping '$label' - its Process page offers no Process button)" >&2
+    tt683_close_process_popup
+    return 2
+  fi
   sleep 4
 
   # ACT_AssignmentEntry_Process ends by completing the workflow task; clear any
   # confirmation it leaves behind so the next card is reachable.
-  playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(ok|close|yes|confirm)$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" >/dev/null 2>&1
+  playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(ok|close|yes|confirm)\$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" >/dev/null 2>&1
   sleep 2
   echo "$label"
   return 0
 }
 
-# tt683_process_all_toprocess [max]
-# As HR: walk the To Process tab and process owned cards, stopping as soon as
-# TT683_PROCESS_TARGET distinct consultant/project pairings have been pushed to
-# AwaitingExport (or <max> entries have been processed). Prints one
-# "<consultant>|<project>" line per entry actually processed.
+# How many DISTINCT consultant/project pairings the drain aims for.
 #
-# The stop condition is DISTINCT PAIRINGS, not a raw count, because that is what
-# the export tests actually need: two pairings prove the split, and a third is
-# margin. The first version drained up to 12 entries at roughly 20-25s each and
-# blew verify-tt683-a0's 8-minute cap without ever reaching its assertions —
-# processing more than the tests need is pure wall-clock.
-# 2, not 3: two distinct pairings is exactly what verify-tt683-a1 needs to prove
-# the split, and each processed entry costs ~20-25s (open tab, pick week, open
-# the Process page, submit, return). At 3 the seeder overran the per-script
-# timeout and a1/a2 were left with no AwaitingExport data at all — so TT-683
-# went unverified. Raise this only if a1 starts reporting a single pairing.
+# Distinct pairings, not a raw count, because that is what the export tests need:
+# two prove the split, a third is margin. Each processed entry costs ~20-25s (open
+# tab, pick week, open the Process page, submit, return), and at 3 the seeder
+# overran its timeout and left a1/a2 with no AwaitingExport data at all. Raise it
+# only if a1 starts reporting a single pairing.
 TT683_PROCESS_TARGET="${TT683_PROCESS_TARGET:-2}"
 
+# tt683_process_all_toprocess [max]
+# As HR: walk the To Process tab and process owned cards, stopping once
+# TT683_PROCESS_TARGET distinct consultant/project pairings have been pushed to
+# AwaitingExport (or <max> entries processed). Prints one "<consultant>|<project>"
+# line per entry actually processed.
+#
+# An unprocessable card is SKIPPED rather than ending the walk - see the return
+# codes on tt683_process_one. Without that, a single half-approved entry took the
+# whole drain down with it.
 tt683_process_all_toprocess() {
-  local max="${1:-6}" done_=0 lbl labels one seen="" uniq=0
+  local max="${1:-6}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0
   tt_login "e2e_hr" "$TT683_TAB_TOPROCESS"
   tt_click_text "$TT683_TAB_TOPROCESS" "HR To Process tab"
   tt_wait_for ".mx-name-galTabAvailableWeeks" "To Process available-weeks list"
@@ -374,10 +369,20 @@ tt683_process_all_toprocess() {
     [ -n "$lbl" ] || continue
     unset IFS
     tt683_select_week "$lbl" || { IFS='|'; continue; }
-    # Each processed card leaves the tab, so re-read the first card each time
-    # rather than indexing — the gallery re-renders under us.
+    skip=0
     while [ "$done_" -lt "$max" ] && [ "$uniq" -lt "$TT683_PROCESS_TARGET" ]; do
-      one="$(tt683_process_one)" || break
+      one="$(tt683_process_one "$skip")"; rc=$?
+      if [ "$rc" -eq 2 ]; then
+        # Step over this card and try the next one on the same week.
+        skip=$((skip + 1)); skipped=$((skipped + 1))
+        [ "$skip" -le 8 ] || break
+        tt683_open_toprocess_tab >/dev/null 2>&1 || true
+        tt683_select_week "$lbl" || break
+        continue
+      fi
+      [ "$rc" -eq 0 ] || break
+      # A processed card leaves the tab, so the offset has to start over.
+      skip=0
       done_=$((done_ + 1))
       echo "$one"
       case "$seen" in
@@ -393,6 +398,7 @@ tt683_process_all_toprocess() {
     IFS='|'
   done
   unset IFS
+  [ "$skipped" -gt 0 ] && echo "  ($skipped card(s) skipped as unprocessable)" >&2
   return 0
 }
 

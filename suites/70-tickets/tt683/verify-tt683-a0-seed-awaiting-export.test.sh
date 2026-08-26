@@ -33,11 +33,12 @@
 # flips those to Exported. Point the suite at an environment you can consume.
 #
 # Env: TT_BASE_URL, TT_ROLE_PASS
-# tt-timeout: 10m
+# tt-timeout: 14m
 #   Two paths, and the slow one decides the budget. When To Process already holds
-#   owned cards this drains them in ~1m. When it does not, it submits a fresh
-#   week as the consultant, approves it across the HR tabs and processes again -
-#   five logins and a tab walk, which does not fit the 4m default.
+#   owned cards this drains them in ~1m. When it does not, it submits a fresh week
+#   as the consultant, approves it on BOTH HR tabs for each of three projects
+#   (dual approval needs two sign-offs) and processes again - five logins and six
+#   tab walks. Measured at 400-570s on the fast path; the fallback needs more.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
@@ -47,7 +48,11 @@ source "$TT_ROOT/lib/_tt647.sh"
 source "$TT_ROOT/lib/_tt683.sh"
 
 CONSULTANT="${TT683_CONSULTANT:-e2e_consultant}"
-SEED_PROJECTS="${TT683_SEED_PROJECTS:-E2E Customer Approval|E2E Manager Approval}"
+# One weekly Submit submits EVERY assignment row on the week, so E2E Dual Approval
+# is submitted here whether or not it is listed. Listing it means it gets approved
+# on both tabs and becomes a usable pairing, instead of arriving at To Process
+# half-approved and being skipped as unprocessable.
+SEED_PROJECTS="${TT683_SEED_PROJECTS:-E2E Customer Approval|E2E Manager Approval|E2E Dual Approval}"
 
 # pairings <lines> — distinct "<consultant>|<project>" count.
 pairings() { printf '%s\n' "$1" | grep . | sort -u | grep -c . ; }
@@ -76,12 +81,17 @@ if [ "$N" -lt 2 ]; then
   for PROJ in $SEED_PROJECTS; do
     IFS="$OLDIFS"
     [ -n "$PROJ" ] || continue
+    # TRY BOTH TABS, DO NOT STOP AT THE FIRST. A dual-approval project needs a
+    # manager AND a client sign-off; breaking after one leaves the entry half
+    # approved, and it then turns up on To Process with no Process action on it.
+    # That is what took the whole drain down before tt683_process_one learned to
+    # skip such a card. For a single-approval project the second tab simply finds
+    # nothing to approve, which costs one tab check.
     for TAB in "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT"; do
       tt647_hr_open_tab "$TAB"
       if tt647_select_week_with "$PROJ" >/dev/null 2>&1; then
         if tt647_hr_approve_card "$PROJ"; then
           echo "  approved '$PROJ' on the $TAB tab"
-          break
         fi
       fi
     done
