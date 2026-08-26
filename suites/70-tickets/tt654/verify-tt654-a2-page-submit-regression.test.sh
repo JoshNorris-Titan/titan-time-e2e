@@ -55,16 +55,26 @@ tt654_save_draft
 ORD="$(tt654_row_ordinal "$PROJ")"
 [ -n "$ORD" ] && [ "$ORD" != "0" ] || tt_fail "'$PROJ' row is no longer editable after Save Draft — nothing to submit"
 
-if tt654_submit_row "$ORD"; then
-  echo "row became non-editable after Submit"
+if tt654_submit_row "$ORD" "$PROJ"; then
+  echo "submit confirmed — $TT654_SUBMIT_DIAG"
 else
-  tt_fail "row for '$PROJ' is still editable after Submit — the page submit path did not complete (check for a validation error dialog)"
+  tt_fail "the page submit path did not complete for '$PROJ' — $TT654_SUBMIT_DIAG"
 fi
 
-# The entry is now submitted, so the row should have dropped out of the editable
-# set entirely.
-AGAIN="$(tt654_row_ordinal "$PROJ")"
+# The entry is now submitted, so the row should also stop being offered for
+# editing. That is a genuinely separate property from the transition above — the
+# entry can be out of Draft while the grid still renders a live input — but the
+# grid does not repaint on its own, so the week has to be re-queried before the
+# question can be asked fairly. Without that this assertion fails on a submit
+# that demonstrably worked, which is exactly what it did before.
+AGAIN=""
+for _ in 1 2 3; do
+  tt654_refetch_week
+  AGAIN="$(tt654_row_ordinal "$PROJ")"
+  [ "$AGAIN" = "0" ] && break
+  sleep 4
+done
 [ "$AGAIN" = "0" ] \
-  || tt_fail "'$PROJ' still has an editable row after submitting — the entry did not transition out of Draft"
+  || tt_fail "'$PROJ' still offers an editable row on '$WEEK' after a submit that DID move the entry out of Draft ($TT654_SUBMIT_DIAG) — the grid is still letting a submitted week be edited"
 
 echo "PASS: the weekly timesheet Submit path (Main.ACT_Timesheet_Submit) still works ($WEEK)"

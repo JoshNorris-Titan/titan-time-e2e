@@ -49,8 +49,15 @@ tt683_tab_labels() {
   playwright-cli eval "() => { const s=new Set([...document.querySelectorAll('h4,h5,div,span,a,li')].filter(e=>e.childElementCount===0 && getComputedStyle(e).cursor==='pointer').map(e=>(e.innerText||'').trim()).filter(t=>t.length>2 && t.length<40 && t===t.toUpperCase())); return [...s].join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//'
 }
 
+# MATCH THE WIDGET NAME, NOT THE CAPTION. The control on MONTHLY TO BE INVOICED
+# is .mx-name-btnExportAll but it READS "Export" - so the old /export\s*all/i test
+# against the button caption never matched, tt683_open_export_tab walked every tab
+# and gave up, and a1/a2 reported "no HR dashboard tab exposes an 'Export All'
+# button" against a dashboard that has one. Widget names are what this suite is
+# supposed to select on precisely because captions drift; the caption match stays
+# only as a loose fallback.
 tt683_has_export_button() {
-  playwright-cli eval "() => String([...document.querySelectorAll('button,a')].some(e=>/export\\s*all/i.test((e.innerText||'').trim())))" 2>/dev/null | grep -qiw true
+  playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnExportAll') || [...document.querySelectorAll('button,a')].some(e=>/^export/i.test((e.innerText||'').trim())))" 2>/dev/null | grep -qiw true
 }
 
 # tt683_open_export_tab — log in as HR and land on whichever tab owns the
@@ -75,7 +82,7 @@ tt683_open_export_tab() {
 
 # tt683_click_export_all — click Export All, wait for Main.ExportAll_Waiting.
 tt683_click_export_all() {
-  playwright-cli eval "() => { const b=[...document.querySelectorAll('button,a')].find(e=>/export\\s*all/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
+  playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnExportAll') || [...document.querySelectorAll('button,a')].find(e=>/^export/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "could not click the 'Export All' button"
   local i
   for i in $(seq 1 30); do
@@ -85,8 +92,16 @@ tt683_click_export_all() {
   tt_fail "the 'Exporting Timesheets' popup (Main.ExportAll_Waiting) never appeared after Export All"
 }
 
+# THE POPUP IS TITLED "Exporting PDF", NOT "Exporting Timesheets".
+# This matched the literal string "Exporting Timesheets" anywhere in the body, so
+# it never fired and a1/a2 failed with "the 'Exporting Timesheets' popup
+# (Main.ExportAll_Waiting) never appeared" - against a popup that appears within
+# three seconds and reads:
+#     x  Exporting PDF   Your export is ready.   Download Timesheets (ZIP)
+# Keyed on the dialog container plus the download button instead, so a further
+# wording change cannot silently break it again.
 tt683_popup_open() {
-  playwright-cli eval "() => String(/Exporting Timesheets/i.test(document.body.innerText||''))" 2>/dev/null | grep -qiw true
+  playwright-cli eval "() => { const vis=[...document.querySelectorAll('$TT_DIALOG_SEL')].filter(d=>d.offsetParent!==null); const hasDlg=vis.some(d=>/exporting/i.test(d.innerText||'')); const hasZip=[...document.querySelectorAll('button')].some(e=>e.offsetParent!==null && /download.*zip|zip\)/i.test((e.innerText||'').trim())); return String(hasDlg || hasZip); }" 2>/dev/null | grep -qiw true
 }
 
 # tt683_zip_button_caption — caption of the visible download button in the popup.
@@ -104,21 +119,33 @@ tt683_zip_button_caption() {
 }
 
 # ------------------------------------------------------- download inspection
-
-# tt683_arm_download_capture — patch every route Mendix might use to hand the
-# browser a file, before the download button is clicked. Mendix's Download File
-# action has used window.open, a hidden anchor and a hidden iframe across
-# versions, so all three are covered; the MutationObserver also catches an
-# iframe whose src is assigned after insertion.
+# tt683_arm_download_capture — record the URL the Download action navigates to.
+#
+# WHAT WAS MISSING. The original hooked window.open, delegated anchor clicks at
+# document level, and newly-added iframes. It never saw the download, and a1/a2
+# failed with "no download URL was captured".
+#
+# The gap is the DETACHED ANCHOR, which is how most download helpers work:
+#     const a=document.createElement('a'); a.href=url; a.download=n; a.click();
+# That anchor is never in the document, so its click event does not reach the
+# document-level listener. Patching HTMLAnchorElement.prototype.click catches it
+# wherever it lives. URL.createObjectURL is hooked for the same reason - a blob
+# download has no /file URL at all - and the recogniser now accepts blob: as well
+# as /file.
 tt683_arm_download_capture() {
   playwright-cli eval "() => {
     window.__ttDlUrl = null; window.__ttZip = null; window.__ttZipErr = null;
-    const rec = u => { try { if (u && /\\/file/.test(String(u))) window.__ttDlUrl = String(u); } catch(e){} return u; };
+    const rec = u => { try { const s = String(u||''); if (s && (/\/file/.test(s) || /^blob:/.test(s) || /\.zip(\?|$)/i.test(s))) window.__ttDlUrl = s; } catch(e){} return u; };
+    window.__ttRec = rec;
     if (!window.__ttPatched) {
       const _open = window.open;
       window.open = function(u){ rec(u); try { return _open.apply(window, arguments); } catch(e){ return null; } };
       document.addEventListener('click', e => { const a = e.target && e.target.closest && e.target.closest('a[href]'); if (a) rec(a.href); }, true);
-      new MutationObserver(ms => { for (const m of ms) { for (const n of m.addedNodes||[]) { if (n && n.tagName === 'IFRAME') { rec(n.src); setTimeout(()=>rec(n.src), 300); } } } })
+      const _aclick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function(){ try { rec(this.href); } catch(e){} return _aclick.apply(this, arguments); };
+      const _cou = URL.createObjectURL;
+      if (_cou) URL.createObjectURL = function(){ const u = _cou.apply(URL, arguments); rec(u); return u; };
+      new MutationObserver(ms => { for (const m of ms) { for (const n of m.addedNodes||[]) { if (n && n.tagName === 'IFRAME') { rec(n.src); setTimeout(()=>rec(n.src), 300); } if (n && n.tagName === 'A' && n.href) rec(n.href); } } })
         .observe(document.documentElement, { subtree:true, childList:true });
       window.__ttPatched = true;
     }
@@ -138,7 +165,7 @@ tt683_fetch_zip_entries() {
     [ -n "$url" ] && break
     sleep 1
   done
-  [ -n "$url" ] || { TT683_ZIP_ERR="no download URL was captured — the Download file action did not go through window.open, an anchor or an iframe"; return 1; }
+  [ -n "$url" ] || { TT683_ZIP_ERR="no download URL was captured — the Download file action did not go through window.open, an anchor or an iframe"; echo "  zip read failed: $TT683_ZIP_ERR" >&2; return 1; }
 
   playwright-cli eval "() => {
     fetch(window.__ttDlUrl, { credentials: 'include' })
@@ -185,7 +212,7 @@ tt683_fetch_zip_entries() {
   for i in $(seq 1 30); do
     local err done_
     err=$(playwright-cli eval "() => window.__ttZipErr || ''" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//')
-    if [ -n "$err" ]; then TT683_ZIP_ERR="$err"; return 1; fi
+    if [ -n "$err" ]; then TT683_ZIP_ERR="$err"; echo "  zip read failed: $err" >&2; return 1; fi
     done_=$(playwright-cli eval "() => window.__ttZip ? String(window.__ttZip.length) : ''" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//')
     if [ -n "$done_" ]; then
       playwright-cli eval "() => (window.__ttZip||[]).join('\\n')" 2>/dev/null | _tt_eval_str | grep .
@@ -194,10 +221,17 @@ tt683_fetch_zip_entries() {
     sleep 1
   done
   TT683_ZIP_ERR="timed out fetching/parsing the archive"
+  echo "  zip read failed: $TT683_ZIP_ERR" >&2
   return 1
 }
 
 # tt683_download_zip_entries — arm, click the ZIP button, return entry names.
+# THE ERROR HAS TO GO TO STDERR, NOT JUST INTO TT683_ZIP_ERR.
+# verify-tt683-a1 calls this as ENTRIES="$(tt683_download_zip_entries)", i.e. in a
+# SUBSHELL, so every TT683_ZIP_ERR set below is discarded before the caller can
+# read it - which is why a1 reported the useless "could not read the downloaded
+# archive: unknown error". The variable is still set for same-shell callers; the
+# stderr copy is what actually reaches the report.
 tt683_download_zip_entries() {
   tt683_arm_download_capture
   playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
@@ -285,10 +319,33 @@ _tt683_owned_js() {
 tt683_process_one() {
   local label i owned
   owned="$(_tt683_owned_js)"
-  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400){ if($owned) return t.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,2).join('|'); break; } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+  # KEEP WALKING UP. These used to stop at the first ancestor sized 10-400 chars,
+  # which on a To Process card is the BUTTON GROUP ("View & Process" / "Reject",
+  # ~21 chars) whose first line is a button caption, never a consultant name. So
+  # every owned card failed the ownership test and was skipped, and
+  # tt683_process_all_toprocess reported "pushed 0 entr(y/ies)" against a tab
+  # holding four processable cards - which then sent verify-tt683-a0 down its slow
+  # seeding path until it hit the timeout. The equivalent walk in verify-tt654-a3
+  # does not break early, which is why that one finds its cards.
+  # THE PAIRING IS consultant|project, AND THE PROJECT IS NOT LINE 2.
+  # A To Process card reads:
+  #     E2E Consultant / Submitted Aug 26 / View & Process / Reject /
+  #     PROJECT / E2E Manager Approval / WEEK / ... / TOTAL HOURS / ...
+  # so taking the first two lines yielded "E2E Consultant|Submitted Aug 26" for
+  # EVERY card. All entries then looked like the same pairing, the distinct-pairing
+  # counter never reached TT683_PROCESS_TARGET, and the seeder ground through
+  # entries before falling into its slow path and timing out. The project is the
+  # line after the PROJECT label.
+  #
+  # The walk must also keep climbing PAST the first owned ancestor: the card's
+  # header block ("E2E Consultant / Submitted ... / View & Process / Reject")
+  # already satisfies the name test but stops short of the project, which yielded
+  # "E2E Consultant|?" for every card - the same collapse by another route. So the
+  # ancestor has to carry the PROJECT section too before it counts as the card.
+  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && $owned && t.indexOf('PROJECT')>=0) { const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   [ -n "$label" ] || return 1
 
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400){ if($owned){ b.click(); return 'ok'; } break; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && $owned && t.indexOf('PROJECT')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 4
 
   # Main.AssignmentEntry_Process opens with a footer 'Process' button. Its widget

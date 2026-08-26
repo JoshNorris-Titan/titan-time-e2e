@@ -41,6 +41,9 @@ SKIP_FILE=""
 # which were merely slow rather than stuck. A longer cap costs nothing on a passing
 # step and only spends time on one that was going to fail anyway.
 TIMEOUT="4m"
+# Set when --timeout is passed, so a per-test "# tt-timeout:" declaration does not
+# silently override what the caller explicitly asked for.
+TIMEOUT_EXPLICIT=""
 LIST_ONLY=0
 EXPECT_COUNT=""
 VERBOSE=0
@@ -54,7 +57,7 @@ while [ $# -gt 0 ]; do
     --base-url)         BASE_URL="$2"; shift 2 ;;
     --junit|-j)         JUNIT="$2"; shift 2 ;;
     --skip-file)        SKIP_FILE="$2"; shift 2 ;;
-    --timeout|-t)       TIMEOUT="$2"; shift 2 ;;
+    --timeout|-t)       TIMEOUT="$2"; TIMEOUT_EXPLICIT=1; shift 2 ;;
     --list|-l)          LIST_ONLY=1; shift ;;
     --expect-count)     EXPECT_COUNT="$2"; shift 2 ;;
     --verbose|-v)       VERBOSE=1; shift ;;
@@ -190,9 +193,28 @@ playwright-cli open "$BASE_URL/" >/dev/null 2>&1 \
 TIMEOUT_BIN=""
 command -v timeout >/dev/null 2>&1 && TIMEOUT_BIN="timeout"
 
+# script_timeout <script> — the budget for ONE script.
+#
+# A test may declare its own with a line of the form
+#     # tt-timeout: 8m
+# in its first 40 lines. A handful of steps are legitimately long — verify-tt654-a3
+# drives five logins, a rejection hunt across HR tabs and a resubmit, and takes
+# ~280s on cloud dev — and raising the GLOBAL cap to suit them would mean every
+# genuinely stuck test burns that budget before the suite moves on. Declaring it
+# per test keeps the default tight and puts the cost where it is understood.
+#
+# An explicit --timeout on the command line always wins, so a run can still be
+# capped uniformly when that is what is wanted.
+script_timeout() {
+  local declared
+  [ -n "$TIMEOUT_EXPLICIT" ] && { printf '%s' "$TIMEOUT"; return; }
+  declared="$(sed -n '1,40p' "$1" | grep -m1 -oE '^#[[:space:]]*tt-timeout:[[:space:]]*[0-9]+[smh]?' | grep -oE '[0-9]+[smh]?$')"
+  printf '%s' "${declared:-$TIMEOUT}"
+}
+
 run_one() {   # run_one <script> ; echoes output, returns exit code
   if [ -n "$TIMEOUT_BIN" ]; then
-    $TIMEOUT_BIN "$TIMEOUT" bash "$1" 2>&1
+    $TIMEOUT_BIN "$(script_timeout "$1")" bash "$1" 2>&1
   else
     bash "$1" 2>&1
   fi
@@ -232,7 +254,7 @@ for script in "${SCRIPTS[@]}"; do
     { echo "    <testcase name=\"$(printf '%s' "$name" | xml_escape)\" time=\"$dur\"/>"; } >> "$CASES_FILE"
   else
     if [ "$rc" -eq 124 ]; then
-      echo "FAIL  $name  (TIMEOUT after $TIMEOUT)"
+      echo "FAIL  $name  (TIMEOUT after $(script_timeout "$script"))"
     else
       echo "FAIL  $name  (exit $rc, ${dur}s)"
     fi

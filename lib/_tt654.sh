@@ -249,27 +249,111 @@ tt654_assert_no_unnamed_tasks() {
   tt_assert_no_unnamed_tasks "$TT654_ROWS"
 }
 
-# tt654_submit_row <ordinal>
+# _tt654_row_readonly <ordinal> — true when that row's Monday cell is no longer editable.
+_tt654_row_readonly() {
+  playwright-cli eval "() => { const i=document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon input')[$1 - 1]; return String(i ? (i.disabled||i.readOnly) : false); }" 2>/dev/null | grep -qiw true
+}
+
+# _tt654_draft_count <project> — how many of this consultant's entries on <project>
+# are still Draft, asked of the data layer rather than of the screen.
+#
+# WHY THE DATA LAYER. The gallery does not reliably re-render a row as read-only
+# the moment its entry is submitted: a probe watched one row for 30 seconds after
+# a submit that had already reached the server and the DOM never changed, while a
+# second probe on the next week showed read-only within seconds. Submitting is a
+# property of the ENTRY, not of how quickly a bound widget happens to repaint, so
+# asking the objects is both the more truthful check and the stable one.
+#
+# Echoes a count, or ERR:<why>. Never guesses — a caller that cannot get a number
+# must not treat that as a pass.
+_tt654_draft_count() {
+  local xp="//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Project/Main.Project/Name = '$1'][Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Account/Administration.Account/Name = '$TT654_CONSULTANT'][Status = 'Draft']"
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"$xp\", filter:{amount:500}, callback: function(objs){ clearTimeout(t); res(String((objs||[]).length)); }, error: function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
+# tt654_refetch_week — make the grid re-query the CURRENT week from the server.
+#
+# Stepping one week back and forward again re-runs the week's data source, which
+# is the only reliable way to make the grid reflect a submit. A plain reload
+# would also re-fetch, but the page opens on today's week, so it would silently
+# move the assertion to a different week than the one under test.
+#
+# verify-tt654-a0 has always done this by hand to prove its draft persisted; the
+# same need turned up in a2, so it lives here now.
+tt654_refetch_week() {
+  playwright-cli click ".mx-name-btnWeekPrev" >/dev/null 2>&1
+  sleep 2
+  playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
+  sleep 3
+}
+
+# tt654_submit_row <ordinal> [project]
 # Submits the week via the page's Submit button and clicks through the confirm
 # chain ("Are you sure? yes", then possibly "Submit Anyway" for a current/future
-# week or under 40h). Returns 0 if the row became non-editable.
+# week or under 40h). Returns 0 if the entry was actually submitted.
 #
 # This is the Gate-3 regression for the TT-654 refactor: the button now calls
 # Main.SUB_AssignmentEntry_Submit rather than holding the logic inline, so this
 # proves the page path still submits end to end.
+#
+# Pass <project> whenever the caller knows it. Without it the only available
+# check is the row's editability in the DOM, which is racy (see
+# _tt654_draft_count); with it the submit is confirmed by the entry leaving
+# Draft, which is what "submitted" actually means.
+#
+# Sets TT654_SUBMIT_DIAG to a one-line account of what was observed, so a caller
+# reporting a failure can say WHY rather than guessing at a validation dialog.
 tt654_submit_row() {
-  local ord="$1"
+  local ord="$1" proj="${2:-}" i blocked="" before="" now=""
+  TT654_SUBMIT_DIAG=""
+
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnSubmit'))" 2>/dev/null | grep -qiw true \
     || tt_fail "no Submit button on this week"
   # Check BEFORE clicking: an unnamed line item anywhere on this week blocks the
   # save silently, and the resulting "row is still editable after Submit" reads as
   # a submit-path bug rather than as leftover debris.
   tt654_assert_no_unnamed_tasks
+
+  if [ -n "$proj" ]; then
+    before="$(_tt654_draft_count "$proj")"
+    case "$before" in ''|*[!0-9]*) before="" ;; esac
+  fi
+
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  tt654_dismiss_dialog
+  # The chain is two dialogs deep on a future or under-40 week ("Are you Sure?"
+  # then "Submit Anyway"). A dialog whose buttons match neither leaves the submit
+  # parked, and tt_clear_dialogs reports that through TT_DIALOG_BLOCKED — which
+  # this used to discard, turning a nameable blocker into a silent timeout.
+  tt654_dismiss_dialog || blocked="${TT_DIALOG_BLOCKED:-}"
   sleep 2
-  playwright-cli eval "() => { const i=document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon input')[$ord - 1]; return String(i ? (i.disabled||i.readOnly) : false); }" 2>/dev/null | grep -qiw true
+  tt654_dismiss_dialog || blocked="${blocked:-${TT_DIALOG_BLOCKED:-}}"
+
+  for i in 1 2 3 4 5 6 7 8; do
+    if _tt654_row_readonly "$ord"; then
+      TT654_SUBMIT_DIAG="row went read-only"
+      return 0
+    fi
+    if [ -n "$before" ]; then
+      now="$(_tt654_draft_count "$proj")"
+      case "$now" in
+        ''|*[!0-9]*) ;;
+        *) if [ "$now" -lt "$before" ]; then
+             TT654_SUBMIT_DIAG="entry left Draft ($proj: $before -> $now) while the row still rendered as editable"
+             return 0
+           fi ;;
+      esac
+    fi
+    sleep 4
+  done
+
+  if [ -n "$before" ]; then
+    TT654_SUBMIT_DIAG="'$proj' Draft entries unchanged at $before"
+  else
+    TT654_SUBMIT_DIAG="row still editable (no project given, so the data layer was not consulted)"
+  fi
+  [ -n "$blocked" ] && TT654_SUBMIT_DIAG="$TT654_SUBMIT_DIAG; a dialog was left standing: $blocked"
+  return 1
 }
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,18 @@
 TT_BASE="${TT_BASE_URL:-http://localhost:8080}"
 TT_PASS="${TT_ROLE_PASS:-E2ETest123!}"
 
-tt_fail() { echo "FAIL: $*"; exit 1; }
+# tt_fail — report and stop. Writes to STDERR, deliberately.
+#
+# It used to write to stdout, which meant any helper that failed inside a command
+# substitution had its diagnosis captured into the caller's variable instead of
+# printed. verify-tt683-a1 does
+#     TAB="$(tt683_open_export_tab)" || exit 1
+# and tt683_open_export_tab ends in tt_fail; the whole "no HR dashboard tab
+# exposes an Export All button" message went into $TAB and the test exited 1
+# having printed NOTHING AT ALL. run-tests.sh merges stderr into the captured
+# output, so stderr still shows up in the report and in the JUnit XML - it just
+# also survives $( ).
+tt_fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # TT_DIALOG_SEL — the dialog CONTAINER, established by inspecting the live DOM:
 #

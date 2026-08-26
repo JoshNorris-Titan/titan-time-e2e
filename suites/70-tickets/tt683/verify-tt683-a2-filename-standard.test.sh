@@ -40,7 +40,7 @@ if [ -n "$ENTRIES" ]; then
   echo "reusing the archive captured by verify-tt683-a1"
 else
   echo "no archive in the session — driving a fresh export"
-  TAB="$(tt683_open_export_tab)" || exit 1
+  TAB="$(tt683_open_export_tab)" || tt_fail "could not reach the HR tab that owns Export All (its own message is above)"
   echo "export lives on tab: $TAB"
   tt683_click_export_all
   CAPTION="$(tt683_zip_button_caption)"

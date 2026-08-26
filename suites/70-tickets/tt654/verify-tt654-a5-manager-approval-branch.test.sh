@@ -49,10 +49,10 @@ tt654_save_draft
 ORD="$(tt654_row_ordinal "$PROJ")"
 [ -n "$ORD" ] && [ "$ORD" != "0" ] || tt_fail "'$PROJ' row is no longer editable after Save Draft — nothing to submit"
 
-if tt654_submit_row "$ORD"; then
-  echo "row became non-editable after Submit"
+if tt654_submit_row "$ORD" "$PROJ"; then
+  echo "submit confirmed — $TT654_SUBMIT_DIAG"
 else
-  tt_fail "row for '$PROJ' is still editable after Submit — the page submit path did not complete"
+  tt_fail "the page submit path did not complete for '$PROJ' — $TT654_SUBMIT_DIAG"
 fi
 
 # Read the resulting status back through MCP. Needs a parseable week start; if
