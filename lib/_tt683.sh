@@ -166,43 +166,64 @@ _tt683_zip_request_index() {
     | tail -1 | cut -d. -f1
 }
 
-# tt683_download_zip_entries — click Download, capture the archive, print one
-# entry name per line. Leaves the archive path in TT683_ZIP_STATE.
+# _tt683_downloaded_path — the archive playwright saved, or "".
+#
+# THE BROWSER ALREADY WROTE THE FILE. The export response carries
+#     content-disposition: attachment; content-type: application/zip
+# so playwright treats it as a download and saves it, announcing the location in
+# the network log:
+#     - Downloaded file 2026-0831-Timesheets.zip to ".playwright-cli\...zip"
+# Everything else that was tried cannot work, and this is why:
+#   * `response-body <n>` returns rc=0 and ONE byte - a download's body is
+#     consumed by the download machinery and never retained;
+#   * refetching the URL returns 560 with content-type text/html - the guid is
+#     genuinely one-shot, so the second request gets a Mendix error page;
+#   * nothing is observable from the page at all: the iframe never gets a src and
+#     never navigates, because the attachment response is converted to a download.
+# Reading the file playwright already wrote sidesteps all three.
+_tt683_downloaded_path() {
+  local line raw path
+  line="$(playwright-cli requests --static 2>/dev/null | grep -oE 'Downloaded file .* to "[^"]+"' | tail -1)"
+  [ -n "$line" ] || return 1
+  raw="$(printf '%s' "$line" | sed -e 's/.* to "//' -e 's/"$//')"
+  path="$(printf '%s' "$raw" | tr '\' '/')"
+  [ -f "$path" ] || path="$PWD/$path"
+  [ -f "$path" ] || return 1
+  printf '%s\n' "$path"
+}
+
+# tt683_download_zip_entries — click Download, take the archive playwright saved,
+# print one entry name per line. Leaves the path in TT683_ZIP_STATE.
 tt683_download_zip_entries() {
-  local i idx out path
+  local i path idx
   rm -f "$TT683_ZIP_STATE"
 
   playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "could not click the ZIP download button"
 
-  for i in $(seq 1 25); do
-    idx="$(_tt683_zip_request_index)"
-    [ -n "$idx" ] && break
+  for i in $(seq 1 30); do
+    path="$(_tt683_downloaded_path)" && break
+    path=""
     sleep 1
   done
-  if [ -z "$idx" ]; then
-    TT683_ZIP_ERR="the browser never requested /file? after the download was clicked"
-    echo "  zip read failed: $TT683_ZIP_ERR" >&2
-    echo "  network log tail: $(playwright-cli requests --static 2>/dev/null | tail -5 | tr '\n' ' ')" >&2
-    return 1
-  fi
 
-  # A binary body is written to disk and the path printed; a textual one is
-  # inlined, which for this request means an error page rather than an archive.
-  out="$(playwright-cli response-body "$idx" 2>&1)"
-  path="$(printf '%s\n' "$out" | grep -oE '[A-Za-z]:[\/][^ ]*|/[^ ]*\.(zip|bin|dat)' | tail -1)"
-  if [ -z "$path" ] || [ ! -f "$path" ]; then
-    TT683_ZIP_ERR="the /file response was not saved as a binary body (request #$idx)"
+  if [ -z "$path" ]; then
+    idx="$(_tt683_zip_request_index)"
+    if [ -n "$idx" ]; then
+      TT683_ZIP_ERR="the browser requested /file? (#$idx) but no download was saved - check the response is still content-disposition: attachment"
+    else
+      TT683_ZIP_ERR="the browser never requested /file? after the download was clicked"
+    fi
     echo "  zip read failed: $TT683_ZIP_ERR" >&2
-    echo "  response-body said: $(printf '%s' "$out" | head -3 | tr '\n' ' ')" >&2
+    echo "  network log tail: $(playwright-cli requests --static 2>/dev/null | tail -6 | tr '\n' ' ')" >&2
     return 1
   fi
 
   printf '%s\n' "$path" > "$TT683_ZIP_STATE"
-  echo "  archive saved: $path ($(wc -c < "$path" | tr -d ' ') bytes)" >&2
+  echo "  archive: $path ($(wc -c < "$path" | tr -d ' ') bytes)" >&2
 
-  python "$TT683_ZIPREPORT" "$path" names 2>/tmp/ttzip.err || {
-    TT683_ZIP_ERR="$(cat /tmp/ttzip.err 2>/dev/null | head -1)"
+  python "$TT683_ZIPREPORT" "$path" names 2>"$TT683_ZIP_STATE.err" || {
+    TT683_ZIP_ERR="$(head -1 "$TT683_ZIP_STATE.err" 2>/dev/null)"
     echo "  zip read failed: $TT683_ZIP_ERR" >&2
     return 1
   }

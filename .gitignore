@@ -31,3 +31,4 @@ Thumbs.db
 __pycache__/
 *.pyc
 .tt683-zip.path
+.tt683-zip.path.err

@@ -15,6 +15,18 @@ Modes
 """
 import sys, zipfile
 
+# Emit UNIX line endings even on Windows. Python opens stdout in text mode
+# there and rewrites every newline as carriage-return + newline, so each name
+# reached the shell with a trailing carriage return -- and verify-tt683-a2 then
+# rejected a perfectly correct
+#     2026-0831-Consultant E2E-E2E Manager Approval.pdf
+# for not matching *.pdf, because the string really did end in a control
+# character. The archive and the app were both fine; only the transport was not.
+try:
+    sys.stdout.reconfigure(newline=chr(10))
+except AttributeError:  # Python < 3.7
+    pass
+
 def main():
     if len(sys.argv) < 3:
         print("usage: zipreport.py <zipfile> <names|pdf|records>", file=sys.stderr)

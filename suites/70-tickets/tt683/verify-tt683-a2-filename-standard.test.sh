@@ -33,8 +33,18 @@ source "$TT_ROOT/lib/_tt683.sh"
 
 TT683_ZIP_ERR=""
 
-# Prefer the archive a1 already parsed.
-ENTRIES="$(playwright-cli eval "() => (window.__ttZip||[]).join('\\n')" 2>/dev/null | _tt_eval_str | grep . || true)"
+# Prefer the archive verify-tt683-a1 already captured.
+#
+# This used to read window.__ttZip, left behind by an in-page ZIP parser that no
+# longer exists - the archive is now the file playwright saved to disk, and its
+# path is parked in TT683_ZIP_STATE. Reading a variable that is always empty meant
+# a2 ALWAYS drove a fresh export, and since a1 consumes the AwaitingExport data
+# there was nothing left to export - reported as "the popup never appeared" on an
+# export that had correctly produced nothing.
+ENTRIES=""
+if ZIPPATH="$(_tt683_zip_path 2>/dev/null)"; then
+  ENTRIES="$(python "$TT683_ZIPREPORT" "$ZIPPATH" names 2>/dev/null || true)"
+fi
 
 if [ -n "$ENTRIES" ]; then
   echo "reusing the archive captured by verify-tt683-a1"
