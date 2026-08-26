@@ -121,10 +121,18 @@ tt_click_card() {
 # names are accepted here so the suite works either side of that reaching an
 # environment, and says which one it found rather than leaving it a mystery.
 # Prints "old" or "new" so a caller can pick its selectors.
+#
+# ALL THREE WIDGETS ARE REQUIRED BEFORE A NAMING IS DECLARED. This used to accept
+# a naming on the strength of ONE widget, and it ran that check against whatever
+# page happened to be showing BEFORE navigating anywhere. ".mx-name-textBox2" is a
+# generic auto-generated name that exists on other pages, so the helper would
+# report a naming for a page that is not the Email Tester at all, hand the caller
+# selectors that match nothing, and tt_fill would then abort the whole script.
+# Matching the full triple means the answer can only come from the tester itself.
 tt_open_email_tester() {
   local i variant
   for i in $(seq 1 3); do
-    variant="$(playwright-cli eval "() => { if (document.querySelector('.mx-name-btnTesterSend')) return 'new'; if (document.querySelector('.mx-name-textBox2')) return 'old'; return ''; }" 2>/dev/null | _tt_eval_str)"
+    variant="$(playwright-cli eval "() => { const has=s=>!!document.querySelector(s); if (has('.mx-name-btnTesterSend') && has('.mx-name-txtTesterEmail') && has('.mx-name-cbTesterEmailType')) return 'new'; if (has('.mx-name-actionButton3') && has('.mx-name-textBox2') && has('.mx-name-comboBox1')) return 'old'; return ''; }" 2>/dev/null | _tt_eval_str)"
     [ -n "$variant" ] && { echo "$variant"; return 0; }
     tt_login "${TT_ADMIN_USER:-MxAdmin}" "Admin Hub" "${TT_ADMIN_PASS:-${TT_PASS:-}}" >/dev/null 2>&1 || true
     tt_click_card "Email Tester" "email tester card" 2>/dev/null || true

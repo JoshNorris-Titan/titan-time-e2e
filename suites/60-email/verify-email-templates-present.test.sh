@@ -31,6 +31,11 @@
 #
 # Sends eleven emails. They are queued rather than delivered, and the environment
 # guard on the send event decides whether they ever leave.
+# tt-timeout: 14m
+#   Eleven sends, each with a combobox pick and a popup to dismiss, take ~210s on
+#   their own; then the two-minute mail queue has to run before any of them can be
+#   read back, and each poll round re-opens the Emails Sent page. Measured over 10m
+#   at 20 rounds, so the loop is 8 and the budget has room around it.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
@@ -82,8 +87,17 @@ sent=""
 notoffered=""
 for t in $TYPES; do
   addr="$(et_addr "$t")"
-  tt_fill "$SEL_EMAIL input, $SEL_EMAIL" "$addr" >/dev/null 2>&1 \
-    || { notoffered="$notoffered $t(no-email-field)"; continue; }
+  # tt_fill is FATAL by design - a silent no-write is worse than a stop - so the
+  # "|| continue" that used to be here was dead code, and redirecting its stderr
+  # to /dev/null sent the explanation there too. That is how this test came to
+  # exit 1 having printed NOTHING AT ALL: the first fill hit a selector matching
+  # no elements, tt_fill called tt_fail, and the message went to /dev/null.
+  # Check the field is present first, then fill and let a real failure speak.
+  if ! playwright-cli eval "() => String(!!document.querySelector('$SEL_EMAIL input'))" 2>/dev/null | grep -qiw true; then
+    notoffered="$notoffered $t(no-email-field)"
+    continue
+  fi
+  tt_fill "$SEL_EMAIL input" "$addr" >/dev/null
   r="$(et_pick_type "$t")"
   case "$r" in
     picked) ;;
@@ -97,6 +111,31 @@ for t in $TYPES; do
   playwright-cli click "$SEL_SEND" >/dev/null 2>&1
   sleep 2
   tt_clear_dialogs 6 >/dev/null 2>&1 || true
+  # COMPLETE THE DETAIL POPUP WITH ITS OWN CONTROLS.
+  # Some types open a page popup for what the template interpolates. Probed live,
+  # it is "Remind Consultant Email" with
+  #     mx-name-textBox1 (recipient name) / textBox10 (week range) / textBox2 (days)
+  #     mx-name-actionButton1 = Send, actionButton2 = Cancel
+  # Two earlier attempts got this wrong in opposite directions: leaving the popup
+  # open blocked the combobox for every LATER type (one sent, ten "not offered"),
+  # and CLOSING it cancelled the send (zero of eleven raised, which read as eleven
+  # missing template rows). verify-consultant-reminder-mail passes because it
+  # fills these exact fields and presses Send, so do that.
+  #
+  # playwright-cli directly, not tt_fill: tt_fill is fatal by design and a popup
+  # that does not happen to have these fields must not end the run.
+  if playwright-cli eval "() => String(!!document.querySelector('.modal-content .mx-name-actionButton1'))" 2>/dev/null | sed -n '2p' | grep -qi true; then
+    playwright-cli fill ".modal-content .mx-name-textBox1 input" "E2E Consultant" >/dev/null 2>&1 || true
+    playwright-cli fill ".modal-content .mx-name-textBox10 input" "Mon 01 - Sun 07" >/dev/null 2>&1 || true
+    playwright-cli fill ".modal-content .mx-name-textBox2 input" "3" >/dev/null 2>&1 || true
+    playwright-cli click ".modal-content .mx-name-actionButton1" >/dev/null 2>&1
+    sleep 3
+    tt_clear_dialogs 6 >/dev/null 2>&1 || true
+  fi
+  # Whatever happened, do not carry a popup into the next type - that is what
+  # produced the "not offered" cascade.
+  playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'none'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^cancel\$/i.test((x.innerText||'').trim())) || [...d.querySelectorAll('.modal-header button, button.close')].filter(x=>x.offsetParent!==null)[0]; if(b){ b.click(); return 'closed'; } return 'nobutton'; }" >/dev/null 2>&1
+  sleep 2
   sent="$sent $t"
   et_open_tester >/dev/null 2>&1 || true
 done
@@ -108,14 +147,33 @@ if [ -n "$notoffered" ]; then
   exit 1
 fi
 
-# ------------------------------------------------------- 3. one read, eleven answers
-rows="$(_tt_mail_new_rows)"
-missing=""
+# ------------------------------------------------- 3. read them back, patiently
+# SENDING IS NOT DELIVERY. Nothing leaves until the queue scheduled event runs,
+# which is every two minutes - verify-consultant-reminder-mail needs ~162s for a
+# SINGLE message to appear. Reading the page once, immediately after sending
+# eleven, reported "raised 0 of 11" and pointed at eleven missing templates when
+# the only thing wrong was that none of them had been queued out yet.
+#
+# So poll until every type is accounted for, or the budget runs out, and only
+# then decide. Re-opening the page each round is what re-queries it.
+rows=""
 found=0
+for round in $(seq 1 8); do
+  _tt_mail_open >/dev/null 2>&1 || true
+  _tt_mail_sort_newest >/dev/null 2>&1 || true
+  rows="$(_tt_mail_new_rows)"
+  found=0
+  for t in $TYPES; do
+    printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")" && found=$((found+1))
+  done
+  [ "$found" -ge 11 ] && break
+  echo "  round $round: $found of 11 accounted for"
+  [ "$round" -lt 8 ] && sleep 20
+done
+
+missing=""
 for t in $TYPES; do
-  if printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")"; then
-    found=$((found+1))
-  else
+  if ! printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")"; then
     missing="$missing $t"
   fi
 done
