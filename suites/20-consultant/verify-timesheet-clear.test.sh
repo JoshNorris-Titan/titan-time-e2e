@@ -65,7 +65,7 @@ hc_day() {
 }
 
 hc_set() {  # hc_set <ordinal> <Day> <value>
-  playwright-cli fill ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay$2 input, $1)" "$3" >/dev/null 2>&1
+  tt_fill_commit ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay$2 input, $1)" "$3"
 }
 
 hc_report() {  # hc_report <ordinal> — all seven cells, for a failure message
@@ -125,11 +125,18 @@ sleep 1
 hc_click btnSaveDraft
 tt_clear_dialogs 6 >/dev/null 2>&1 || true
 sleep 2
-playwright-cli reload >/dev/null 2>&1
-sleep 4
+# Re-query the week WITHOUT reloading. The page opens on today's week, so a
+# reload here silently moved the read to whatever week contains today's date -
+# which is how this case came to report an explicit 0 "coming back as 9.00":
+# the 9 was verify-hours-validation's, written into the current week minutes
+# earlier. See tt_refetch_week in lib/_login.sh.
+tt_refetch_week
 
 ORD="$(hc_row_any)"
-if [ "$ORD" = "0" ]; then
+shown="$(tt_current_week)"
+if [ -n "$shown" ] && [ "${WEEK#*"$shown"}" = "$WEEK" ]; then
+  bad "B the grid moved to week '$shown' while case B was written against '$WEEK', so the re-read would have been of the wrong week"
+elif [ "$ORD" = "0" ]; then
   bad "B the '$PROJECT' row vanished after saving a draft, so the zero could not be re-read"
 else
   v="$(hc_day "$ORD" Mon)"

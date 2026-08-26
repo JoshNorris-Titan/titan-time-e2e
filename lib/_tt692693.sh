@@ -195,9 +195,9 @@ tt_make_rejected_entry() {
   [ "$ord" != "0" ] || { echo "  no editable '$proj' row for $cuser"; return 1; }
   wk="$(tt_week_label)"
   for d in Mon Tues Wed Thurs Fri; do
-    playwright-cli fill ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "5" >/dev/null 2>&1
+    tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "5"
   done
-  playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDaySat input, ${ord})" >/dev/null 2>&1
+  tt_commit_focused
   sleep 1
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2

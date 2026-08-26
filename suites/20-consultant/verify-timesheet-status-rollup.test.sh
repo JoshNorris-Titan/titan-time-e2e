@@ -86,8 +86,9 @@ ord="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('.m
 [ "$ord" != "0" ] || tt_fail "no editable '$PROJECT' row on week '$WEEK'"
 
 for d in Mon Tues Wed Thurs Fri; do
-  playwright-cli fill ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "8" >/dev/null 2>&1
+  tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "8"
 done
+tt_commit_focused
 sleep 1
 playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
 sleep 3

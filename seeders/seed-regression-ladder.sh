@@ -103,10 +103,9 @@ fill_row() {
   local days="Sun Mon Tues Wed Thurs Fri Sat" d v i=0
   for d in $days; do
     i=$((i + 1)); v="$(eval echo \${$i})"; [ -n "$v" ] || v=0
-    playwright-cli fill ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "$v" >/dev/null 2>&1
+    tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "$v"
   done
-  playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDaySat input, ${ord})" >/dev/null 2>&1
-  playwright-cli click ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDayMon input, ${ord})" >/dev/null 2>&1
+  tt_commit_focused
   sleep 1
 }
 

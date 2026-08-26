@@ -167,10 +167,9 @@ tt654_find_editable_row() {
 tt654_fill_row() {
   local ord="$1" hrs="${2:-$TT654_HOURS}" d
   for d in Mon Tues Wed Thurs Fri; do
-    playwright-cli fill ":nth-match($TT654_ROWS .mx-name-txtDay${d} input, ${ord})" "$hrs" >/dev/null 2>&1
+    tt_fill_cell ":nth-match($TT654_ROWS .mx-name-txtDay${d} input, ${ord})" "$hrs"
   done
-  playwright-cli click ":nth-match($TT654_ROWS .mx-name-txtDaySat input, ${ord})" >/dev/null 2>&1
-  playwright-cli click ":nth-match($TT654_ROWS .mx-name-txtDayMon input, ${ord})" >/dev/null 2>&1
+  tt_commit_focused
   sleep 1
 }
 
@@ -266,10 +265,7 @@ _tt654_row_readonly() {
 #
 # Echoes a count, or ERR:<why>. Never guesses — a caller that cannot get a number
 # must not treat that as a pass.
-_tt654_draft_count() {
-  local xp="//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Project/Main.Project/Name = '$1'][Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Account/Administration.Account/Name = '$TT654_CONSULTANT'][Status = 'Draft']"
-  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"$xp\", filter:{amount:500}, callback: function(objs){ clearTimeout(t); res(String((objs||[]).length)); }, error: function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
-}
+_tt654_draft_count() { tt_draft_count "$1" "$TT654_CONSULTANT"; }
 
 # tt654_refetch_week — make the grid re-query the CURRENT week from the server.
 #
@@ -280,12 +276,9 @@ _tt654_draft_count() {
 #
 # verify-tt654-a0 has always done this by hand to prove its draft persisted; the
 # same need turned up in a2, so it lives here now.
-tt654_refetch_week() {
-  playwright-cli click ".mx-name-btnWeekPrev" >/dev/null 2>&1
-  sleep 2
-  playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
-  sleep 3
-}
+# Kept as a name the tt654 steps already call; the implementation now lives in
+# lib/_login.sh so every suite shares it.
+tt654_refetch_week() { tt_refetch_week; }
 
 # tt654_submit_row <ordinal> [project]
 # Submits the week via the page's Submit button and clicks through the confirm
