@@ -1,8 +1,16 @@
 name: E2E
 
-# Manual trigger only for now. The suite has never had a recorded green run, and a
-# recurring red build trains everyone to ignore it — switch the weekly schedule on
-# once there is one clean baseline (uncomment the `schedule:` block below).
+# Runs nightly at 02:00 America/Chicago, and on demand.
+#
+# GitHub cron is UTC-only and knows nothing about DST, so "2am Central" takes two
+# entries — 07:00 UTC is 02:00 CDT, 08:00 UTC is 02:00 CST — and the `gate` job
+# below lets exactly one of them through by asking what time it actually is in
+# Chicago. Without the gate the suite would run twice every night, half the year
+# an hour off.
+#
+# Note the suite had no recorded green run when the schedule was switched on, so
+# expect red until the baseline is clean. A nightly nobody reads is worse than no
+# nightly: if it stays red, fix it or turn the `schedule:` block back off.
 on:
   workflow_dispatch:
     inputs:
@@ -10,8 +18,9 @@ on:
         description: "App origin to test against (blank = the TT_BASE_URL secret)"
         required: false
         type: string
-  # schedule:
-  #   - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  schedule:
+    - cron: "0 7 * * *"   # 02:00 CDT (roughly Mar-Nov)
+    - cron: "0 8 * * *"   # 02:00 CST (roughly Nov-Mar)
 
 concurrency:
   # One run at a time: the suite mutates shared test data on the target environment.
@@ -19,7 +28,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # An `if:` expression cannot evaluate a timezone, so the DST decision is made
+  # here in a shell and handed to the real job as an output. The cron that lands
+  # on the wrong hour costs about ten seconds and leaves a grey skipped job
+  # rather than a red one.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        shell: bash
+        run: |
+          # If tzdata were missing, TZ would be ignored and `date` would hand back
+          # the UTC hour - which never equals 02, so the nightly would skip every
+          # night and never go red. Fail loudly instead of disappearing quietly.
+          zone=$(TZ=America/Chicago date +%Z)
+          case "$zone" in
+            CST|CDT) ;;
+            *) echo "::error::America/Chicago is unavailable on this runner (date reported '$zone'). Cannot tell whether it is 2am CT."; exit 1 ;;
+          esac
+
+          # Resolved on every trigger, not just the cron, so a manual run also
+          # proves the zone still works here.
+          hour=$(TZ=America/Chicago date +%H)
+          prev=$(TZ=America/Chicago date -d '1 hour ago' +%H)
+          echo "Chicago local time is ${hour}:00 ${zone} (the hour before was ${prev}:00)."
+
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "Triggered by ${{ github.event_name }}, not the nightly cron - running."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # On spring-forward Sunday there is no 02:00 in Chicago at all - the
+          # clock goes 01:59 CST straight to 03:00 CDT - so neither cron would
+          # match and the nightly would silently skip. Catch that one night by
+          # also accepting 03:00 when the hour before it was 01:00, which only
+          # happens across that jump.
+          if [ "$hour" = "02" ] || { [ "$hour" = "03" ] && [ "$prev" = "01" ]; }; then
+            echo "This is the 2am CT nightly."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not the 2am CT slot - this is the other DST cron. Skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   e2e:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # 45 was not enough for a first full run against cloud dev; raised so the
     # baseline can actually finish rather than being guillotined mid-suite.
