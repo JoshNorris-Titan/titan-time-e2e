@@ -30,3 +30,4 @@ Thumbs.db
 # Python bytecode from tools/mxunit.py
 __pycache__/
 *.pyc
+.tt683-zip.path
