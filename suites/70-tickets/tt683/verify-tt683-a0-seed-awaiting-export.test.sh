@@ -33,6 +33,11 @@
 # flips those to Exported. Point the suite at an environment you can consume.
 #
 # Env: TT_BASE_URL, TT_ROLE_PASS
+# tt-timeout: 10m
+#   Two paths, and the slow one decides the budget. When To Process already holds
+#   owned cards this drains them in ~1m. When it does not, it submits a fresh
+#   week as the consultant, approves it across the HR tabs and processes again -
+#   five logins and a tab walk, which does not fit the 4m default.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.

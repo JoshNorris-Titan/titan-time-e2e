@@ -45,7 +45,7 @@ source "$TT_ROOT/lib/_tt683.sh"
 
 TT683_ZIP_ERR=""
 
-TAB="$(tt683_open_export_tab)" || exit 1
+TAB="$(tt683_open_export_tab)" || tt_fail "could not reach the HR tab that owns Export All (its own message is above)"
 echo "export lives on tab: $TAB"
 tt683_click_export_all
 

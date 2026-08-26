@@ -35,6 +35,10 @@
 # Does NOT assert ChangeLog.LineItems content — that is not on screen. Check it
 # on a local F5 with tests/oql-changelog-attribution.sh.
 
+# tt-timeout: 8m
+#   Measured at 277s against Mendix Cloud dev: five logins, a rejection hunt over
+#   the HR tabs, a resubmit through the Review & Edit popup and two re-reads. It
+#   is the longest step in the suite and does not fit the 4m default.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
@@ -73,8 +77,16 @@ hr_reject_card_for_project() {
     unset IFS
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 3
-    if playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); for(const v of vs){ let el=v; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who'){ v.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
-      opened=1; echo "  (rejecting '$proj' in week $lbl)"; break
+    # WHICH CONTROL TO PRESS. The approval tabs put Reject behind "View", in a
+    # popup. WEEKLY TO PROCESS does not: its cards carry "View & Process" AND a
+    # "Reject" button side by side, and View & Process navigates to the process
+    # page, which has no reject at all. Pressing View there opened the right card
+    # and then found nothing to click - which is why this reported "could not
+    # find a card" three times in a row while the log showed it had found one.
+    # So: press the card's own Reject when it has one, and fall back to View.
+    CARD="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, .mx-name-btnView')].filter(b=>b.offsetParent!==null); const card=(b)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who') return el; } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
+    if [ "$CARD" != "nf" ]; then
+      opened=1; echo "  (rejecting '$proj' in week $lbl via $CARD)"; break
     fi
     IFS='|'
   done
@@ -112,17 +124,29 @@ tt654_save_draft
 
 ORD="$(tt654_row_ordinal "$PROJ")"
 [ -n "$ORD" ] && [ "$ORD" != "0" ] || tt_fail "'$PROJ' row is no longer editable after Save Draft — nothing to submit"
-tt654_submit_row "$ORD" >/dev/null 2>&1 || true
+tt654_submit_row "$ORD" "$PROJ" >/dev/null 2>&1 || true
 
-# Reject it so the resubmit path becomes reachable. The project may sit in
-# either approval queue depending on its flags, so try both.
+# Reject it so the resubmit path becomes reachable.
+#
+# WHICH TAB. The fixture declares 'E2E Line Items' as No|No|Yes - needs line
+# items, requires NO approval - so a submitted entry on it goes straight to
+# ToProcess and never enters either approval queue. This used to search only
+# MANAGER APPROVAL and CLIENT APPROVAL, so it spent six attempts and ~7 minutes
+# looking in two tabs the entry cannot reach, then failed as though HR were
+# broken. WEEKLY TO PROCESS is where this project's entries actually land; the
+# approval tabs stay in the list so the same test still works if the fixture is
+# ever given an approval step.
+# This phase is the slowest in the suite and used to run silently, so a run that
+# died here reported only "added task #1" and gave no clue which tab it was on.
+echo "seeded and submitted; now hunting a '$PROJ' card to reject"
 REJECTED=""
-for TAB in "MANAGER APPROVAL" "CLIENT APPROVAL"; do
-  for _ in 1 2 3; do
+for TAB in "WEEKLY TO PROCESS" "MANAGER APPROVAL" "CLIENT APPROVAL"; do
+  for ATTEMPT in 1 2 3; do
+    echo "  reject attempt $ATTEMPT on the $TAB tab"
     if hr_reject_card_for_project "$CNAME" "$PROJ" "$TAB"; then REJECTED=1; break; fi
     sleep 6
   done
-  [ -n "$REJECTED" ] && break
+  [ -n "$REJECTED" ] && { echo "  rejected on the $TAB tab"; break; }
 done
 [ -n "$REJECTED" ] \
   || tt_fail "HR could not find a '$PROJ' card for '$CNAME' to reject in either approval queue — without a rejected entry the resubmit path (the only caller of Main.ACT_AssignmentEntry_Submit) cannot be reached"
@@ -166,10 +190,15 @@ RELOADED="$(tt_rejected_count)"
   || tt_fail "the entry reappeared in the Rejected list after reload (=$RELOADED) — the commit inside the line-items branch rolled back"
 
 # ------------------------------------------------ 4) the status expression ran
+# Where it should land is decided by the project's approval flags, not by a fixed
+# tab: 'E2E Line Items' requires no approval, so the status expression routes a
+# resubmit straight back to ToProcess. Asserting MANAGER APPROVAL here was
+# asserting a queue this project never uses.
 tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
-INQ="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
-echo "'$CNAME' cards in MANAGER APPROVAL: $INQ"
+LANDED="WEEKLY TO PROCESS"
+INQ="$(tt_hr_count_cards_for "$CNAME" "$LANDED")"
+echo "'$CNAME' cards in $LANDED: $INQ"
 [ "${INQ:-0}" -ge 1 ] \
-  || tt_fail "the resubmitted line-items entry did not reach an approval queue — SUB_AssignmentEntry_Submit's status expression did not route it"
+  || tt_fail "the resubmitted line-items entry did not reach $LANDED — SUB_AssignmentEntry_Submit's status expression did not route it"
 
 echo "PASS: verify-tt654-a3-lineitems-submit — the NeedsLineItems branch of SUB_AssignmentEntry_Submit ran end to end via the resubmit path"
