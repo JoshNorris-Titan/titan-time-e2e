@@ -10,14 +10,14 @@
 # way email silently stops working on a fresh or restored environment, and nothing
 # tested it.
 #
-# HOW IT PROVES IT. Main.ENUM_EmailType has eleven values, and Main.EmailTester
-# can send any one of them on demand. So the step sends all eleven, giving each a
+# HOW IT PROVES IT. Main.ENUM_EmailType has twelve values, and Main.EmailTester
+# can send any one of them on demand. So the step sends all twelve, giving each a
 # DISTINCT recipient address derived from the type name, and then reads the Emails
 # Sent admin page once. A type whose template is missing produces no row, and the
 # per-type address is what says which one.
 #
-# That indirection is deliberate. Counting eleven rows would prove only that
-# eleven arrived; addressing each one by type is what turns "some emails are
+# That indirection is deliberate. Counting twelve rows would prove only that
+# twelve arrived; addressing each one by type is what turns "some emails are
 # broken" into "ToManager_HoursNotice has no template".
 #
 # WHAT IT DOES NOT PROVE. That the wording is right, or that anything was
@@ -29,10 +29,10 @@
 # it does not, every type will look missing at once — which is a distinctive
 # enough failure to recognise, and the message below says so.
 #
-# Sends eleven emails. They are queued rather than delivered, and the environment
+# Sends twelve emails. They are queued rather than delivered, and the environment
 # guard on the send event decides whether they ever leave.
-# tt-timeout: 14m
-#   Eleven sends, each with a combobox pick and a popup to dismiss, take ~210s on
+# tt-timeout: 15m
+#   Twelve sends, each with a combobox pick and a popup to dismiss, take ~230s on
 #   their own; then the two-minute mail queue has to run before any of them can be
 #   read back, and each poll round re-opens the Emails Sent page. Measured over 10m
 #   at 20 rounds, so the loop is 8 and the budget has room around it.
@@ -42,12 +42,18 @@ set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 
-# The eleven values of Main.ENUM_EmailType, read from the model on 2026-08-25.
-# If someone adds a twelfth, this list is what makes the step notice.
+# The twelve values of Main.ENUM_EmailType, read from the model on 2026-08-26.
+# If someone adds a thirteenth, this list is what makes the step notice.
+#
+# ForgotPassword was the twelfth, added 2026-08-26 with the self-service password
+# reset. It is the type most likely to be missing on an environment restored from
+# before that date, and the one whose absence is worst: ACT_Password_Forgot has
+# already replaced the user's password by the time the send is skipped, so a
+# missing row locks them out with no way back in.
 TYPES="ToConsultant_SubmissionReminder ToConsultant_RejectionNotice \
 ToManager_ApprovalRequest ToManager_ApprovalReminder ToManager_HoursNotice \
 ToCustomer_ApprovalRequest ToCustomer_ApprovalReminder NewAccount \
-ChangePassword ToConsultantApprovedRequest ToManager_ForApproval"
+ChangePassword ToConsultantApprovedRequest ToManager_ForApproval ForgotPassword"
 
 # ---------------------------------------------------------------------- helpers
 
@@ -80,7 +86,7 @@ et_pick_type() {
 # Done first: everything sent after this point is what the step is allowed to see.
 tt_mail_prepare
 
-# ------------------------------------------------------------ 2. send all eleven
+# ------------------------------------------------------------ 2. send all twelve
 et_open_tester || tt_fail "could not open the Email Tester as ${TT_ADMIN_USER:-MxAdmin} (Admin Hub -> Email Tester)"
 
 sent=""
@@ -166,8 +172,8 @@ for round in $(seq 1 8); do
   for t in $TYPES; do
     printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")" && found=$((found+1))
   done
-  [ "$found" -ge 11 ] && break
-  echo "  round $round: $found of 11 accounted for"
+  [ "$found" -ge 12 ] && break
+  echo "  round $round: $found of 12 accounted for"
   [ "$round" -lt 8 ] && sleep 20
 done
 
@@ -178,12 +184,12 @@ for t in $TYPES; do
   fi
 done
 
-echo "  raised $found of 11 email types"
+echo "  raised $found of 12 email types"
 
 if [ -n "$missing" ]; then
   echo "FAIL: verify-email-templates-present - no message was raised for:$missing"
   if [ "$found" -eq 0 ]; then
-    echo "      NOTHING was raised for any type. Before hunting eleven missing templates,"
+    echo "      NOTHING was raised for any type. Before hunting twelve missing templates,"
     echo "      check the assumption in this file's header: that ACT_SendTemplate1 sends to"
     echo "      the tester's own email field. If it sends somewhere else, every type looks"
     echo "      missing even when all the templates are fine."
@@ -195,4 +201,4 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-echo "PASS: verify-email-templates-present - all 11 ENUM_EmailType values raised a message, so each has a template row"
+echo "PASS: verify-email-templates-present - all 12 ENUM_EmailType values raised a message, so each has a template row"
