@@ -34,6 +34,13 @@
 #              verify + create. Consultant→project assignment is what actually makes a
 #              project visible to a consultant in a given week — a project with no
 #              assignment is invisible, which is exactly how verify-tt647-a5 failed.
+#   Entries    verify + create, but NOT from fx_ensure_all — see fx_ensure_entries
+#              near the bottom of this file. Everything above is structural and
+#              survives the clear; AssignmentEntries are exactly what the clear
+#              deletes, so they must be seeded by a step that sorts AFTER it
+#              (suites/00-setup/verify-001-seed-isolation-control.test.sh).
+#              Do not move that call into fx_ensure_all: this file runs BEFORE the
+#              clear, so it would seed rows the very next step throws away.
 #
 # Every selector below was verified against the live dev environment rather than read
 # from the model, because the model is only true after a deploy.
@@ -479,6 +486,178 @@ fx_reconcile_collect() {
         echo "    assignment '$f2' -> '$f3' ends $f5, within the ~12 weeks the tests step through (today+12w = $horizon) - tests walking forward for an editable week will run out of runway"
       fi
     fi
+  done
+}
+
+# ------------------------------------------------------- transactional entries
+#
+# WHY THIS IS SEPARATE FROM fx_ensure_all
+# ---------------------------------------
+# Everything above is STRUCTURAL and deliberately runs BEFORE the clear:
+# verify-00-fixtures sorts ahead of verify-000-testdata-clear-before under the
+# runner's `LC_ALL=C sort`, because '-' (0x2D) precedes '0' (0x30). The clear
+# preserves projects, assignments, customers and accounts, so structure created
+# ahead of it survives.
+#
+# AssignmentEntries do NOT survive it. The per-consultant clear deletes exactly
+# these rows for every name in TT_E2E_CONSULTANTS. So fx_ensure_entries must be
+# called from a step that sorts AFTER the clear -- it is NOT part of
+# fx_ensure_all, and putting it there would seed rows the very next step deletes.
+# Its caller is suites/00-setup/verify-001-seed-isolation-control.test.sh.
+#
+# WHAT NEEDS THIS
+# ---------------
+# verify-consultant-data-isolation asks, as one consultant, for another
+# consultant's entries and requires the answer to be none. A zero only means
+# something if the other consultant HAS entries, so that test first proves as
+# administrator that the same XPath returns rows, and ABORTS when it does not:
+#   "no other consultant has entries the administrator can see ... Seed one and
+#    run again - passing here would mean nothing."
+# That abort is the control working. Nothing was seeding the control's data: the
+# entries for 'E2E Consultant Two' are created by verify-hours-validation,
+# verify-timesheet-clear and verify-timesheet-status-rollup, all of which sort
+# AFTER the isolation test. On a full run the control could never find a row.
+#
+# HOURS ARE NOT NEEDED, ONLY ROWS
+# -------------------------------
+# The control's XPath filters on ConsultantName alone -- no Status, no hours.
+# Visiting a week is enough to produce rows: DS_Timesheet_Get finds no Timesheet
+# for the week, calls SUB_Timesheet_Create, and that builds one AssignmentEntry
+# per active assignment (see seed_materialise_weeks in lib/_seed.sh). So this
+# fills nothing and saves nothing -- it walks the week arrows and lets the app
+# create the rows, which is also why it cannot leave a half-written timesheet.
+#
+# WHY IT WALKS BACKWARD
+# ---------------------
+# tt_goto_fresh_week (lib/_tt692693.sh) claims a week by stepping FORWARD from
+# the current one and taking the first blank, actionable week carrying the
+# project row. Five steps draw from that pool on this same consultant/project
+# pair -- verify-hours-validation, verify-timesheet-clear (which takes TWO),
+# verify-timesheet-status-rollup, verify-tt692693-a1 and -b1 -- and exhausting
+# it is a failure mode this suite has already hit. A PAST week is invisible to a
+# forward-only allocator, so seeding backward costs that pool nothing.
+#
+# The current week was the other candidate and is worse: it is where a reload
+# silently lands (see tt_refetch_week), and the hc_save_and_refetch comment in
+# verify-timesheet-clear records a real incident where a re-read picked up
+# verify-hours-validation's data because both had written to the week
+# containing today.
+#
+# consultantName|loginUser|project|weeksBack
+#
+# weeksBack must keep the target week inside the assignment window
+# (FX_START_DATE, Jul 01 2026). Main.SUB_Assignment_FilterActive only creates
+# entries for assignments whose window spans the week, so a week before the
+# start renders zero rows and seeds nothing.
+FX_ENTRIES=(
+  "E2E Consultant Two|e2e_consultant2|E2E Sandbox|3"
+)
+
+# fx_entry_count <consultantName> - AssignmentEntries visible to the CURRENT
+# session for that consultant. Echoes a number, or ERR:<reason>.
+#
+# Deliberately the same XPath verify-consultant-data-isolation uses as its
+# control, so this measures the exact thing that test requires. Run inside the
+# consultant's own session: they can always read their own rows, which keeps this
+# free of any assumption about what the Titan Manager role may retrieve.
+fx_entry_count() {
+  local xp="//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName = '$1']"
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"$xp\", filter:{amount:500}, callback: function(objs){ clearTimeout(t); res(String((objs||[]).length)); }, error: function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'retrieve-refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
+# fx_rows_text - the assignment-row gallery text for the week on screen.
+fx_rows_text() {
+  playwright-cli eval "() => ((document.querySelector('.mx-name-galAssignmentRows')||{}).innerText||'').replace(/\\s+/g,' ')" 2>/dev/null | _tt_eval_str
+}
+
+# fx_step_back <n> - step back n weeks, VERIFYING each step, and echo how many
+# steps actually landed.
+#
+# Every step is confirmed against the week caption because a click issued while
+# the page is still rendering is swallowed silently -- lib/_seed.sh records an
+# unverified loop of 34 prev-clicks that advanced the week only 4 times. A loop
+# that cannot tell a swallowed click from a completed one seeds the wrong week
+# and reports success anyway.
+fx_step_back() {
+  local n="$1" made=0 i j before after
+  for i in $(seq 1 "$n"); do
+    before="$(tt_current_week)"
+    playwright-cli click ".mx-name-btnWeekPrev" >/dev/null 2>&1
+    after="$before"
+    for j in 1 2 3 4 5 6 7 8; do
+      sleep 2
+      after="$(tt_current_week)"
+      [ -n "$after" ] && [ "$after" != "$before" ] && break
+    done
+    [ "$after" = "$before" ] && break
+    made=$((made + 1))
+  done
+  echo "$made"
+}
+
+# fx_ensure_entries - give every consultant in FX_ENTRIES at least one
+# AssignmentEntry, so the isolation control has something real to find.
+#
+# Idempotent: a consultant who already has rows is left alone, which matters
+# because this may be run by hand against an environment that was never cleared.
+#
+# Leaves the session logged in as the LAST consultant it touched, not as e2e_tm.
+# Every test does its own tt_login, so that is safe -- but do not append
+# tm-scoped work after a call to this.
+fx_ensure_entries() {
+  local row who user project back count landed rows
+
+  for row in "${FX_ENTRIES[@]}"; do
+    IFS='|' read -r who user project back <<< "$row"
+
+    tt_login "$user" "My Timesheets"
+
+    count="$(fx_entry_count "$who")"
+    case "$count" in
+      ERR:*)
+        FX_MISSING="$FX_MISSING\n    entries: $who (could not read them back: $count)"
+        fx_log "MISSING entries for '$who' - the data layer could not be asked ($count)"
+        continue ;;
+      ''|*[!0-9]*)
+        FX_MISSING="$FX_MISSING\n    entries: $who (entry count was not a number: [$count])"
+        fx_log "MISSING entries for '$who' - unreadable count [$count]"
+        continue ;;
+    esac
+
+    if [ "$count" -gt 0 ]; then
+      FX_PRESENT=$((FX_PRESENT+1))
+      fx_log "ok      entries for '$who' ($count already present)"
+      continue
+    fi
+
+    if [ "${TT_FIXTURES_READONLY:-0}" = "1" ]; then
+      FX_MISSING="$FX_MISSING\n    entries: $who on '$project' (${back} weeks back)"
+      fx_log "MISSING entries for '$who' (read-only mode, not seeding)"
+      continue
+    fi
+
+    landed="$(fx_step_back "$back")"
+    if [ "$landed" -lt "$back" ]; then
+      fx_log "note    '$who' reached only $landed of $back weeks back (stopped at $(tt_current_week))"
+    fi
+
+    # A week that renders no row for the project produced no entry for it, and
+    # the likeliest reason is an assignment window that does not span the week.
+    rows="$(fx_rows_text)"
+    case "$rows" in
+      *"$project"*) : ;;
+      *) fx_log "note    week $(tt_current_week) shows no '$project' row for '$who' - check the assignment window covers it" ;;
+    esac
+
+    count="$(fx_entry_count "$who")"
+    case "$count" in
+      ''|*[!0-9]*|ERR:*|0)
+        FX_MISSING="$FX_MISSING\n    entries: $who on '$project' (walked $landed weeks back, still no rows: [$count])"
+        fx_log "MISSING entries for '$who' - walked $landed week(s) back and none were created [$count]" ;;
+      *)
+        FX_CREATED=$((FX_CREATED+1))
+        fx_log "made    entries for '$who' - $count row(s) after walking $landed week(s) back to $(tt_current_week)" ;;
+    esac
   done
 }
 

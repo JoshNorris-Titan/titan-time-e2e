@@ -3,6 +3,15 @@
 #
 # One consultant must not be able to read another consultant's timesheet entries.
 #
+# THE RULE, PRECISELY. A consultant may never read another consultant's hours —
+# unless that same person also holds the Titan Manager role, who is entitled to.
+# So this step is only meaningful while its subject ($MINE_USER) holds Consultant
+# and NOT Titan Manager. If it ever reports a FAIL, confirm that first: a subject
+# who has since been granted Titan Manager would produce the same red result and
+# would be correct behaviour, not a breach. There is no assertion on the subject's
+# roles here because the suite has no role-reading helper yet; adding one is the
+# obvious next improvement to this step.
+#
 # WHY THIS EXISTS. A read of the security model found that Main.AssignmentEntry
 # has no XPath constraint for the Main.Consultant role: the rule grants read (and
 # member write, including Status) over the whole entity, and what actually keeps a
@@ -40,7 +49,18 @@ MINE_NAME="${TT_ISO_NAME:-E2E Consultant}"
 # which consultant happened to have data: the first CI run aborted because
 # "E2E Consultant Two" had none. That was the control doing its job, but it told us
 # nothing about isolation. Set TT_ISO_OTHER to pin a specific name.
-OTHER_CANDIDATES="${TT_ISO_OTHER:-E2E Consultant Two|E2E Consultant Three}"
+#
+# "E2E Consultant Three" USED TO BE the second candidate and was removed: it has no
+# row in FX_ASSIGNMENTS, so on any environment built by the fixtures it has no
+# assignment, can never hold an entry, and only padded the abort message with a
+# second guaranteed zero. Adding it was the previous attempt at this same failure —
+# a second name does not help when the first one's data was never seeded.
+#
+# 'E2E Consultant Two' is now seeded deliberately, before this runs, by
+# suites/00-setup/verify-001-seed-isolation-control.test.sh (FX_ENTRIES in
+# lib/_fixtures.sh). If the control aborts here again, that step is the place to
+# look — not this list.
+OTHER_CANDIDATES="${TT_ISO_OTHER:-E2E Consultant Two}"
 
 iso_xpath() {
   printf "%s" "//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName = '$1']"
