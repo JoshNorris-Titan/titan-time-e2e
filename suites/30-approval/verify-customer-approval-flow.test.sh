@@ -82,10 +82,11 @@ playwright-cli cookie-clear >/dev/null 2>&1
 playwright-cli goto "$LINK" >/dev/null 2>&1
 tt_wait_for ".mx-name-galPendingEntries" "customer-approval pending list"
 
-# Log every row the token page is offering. One token page covers a whole
-# CUSTOMER, so it can list several projects; when a match fails, this shows
-# exactly what was on offer instead of leaving "none for week X" unexplained.
-playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=[...g.querySelectorAll('.mx-name-btnView')].map(v=>{ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||'').replace(/\\s+/g,' ').trim(); if(t.length>25) return t.slice(0,120); } return '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
+# Log every row the token page is offering, whole — consultant, hours and period.
+# The token page is scoped to ONE PROJECT (the token resolves to a single Project
+# and the gallery is constrained to it), so what distinguishes rows here is the
+# consultant and the week, and this is the evidence for a failed match.
+tt_token_log_rows "$CONSULTANT_NAME"
 
 
 tt_assert_all "customer-approval page" "$CONSULTANT_NAME" "$CUSTOMER" "$PROJECT"

@@ -96,13 +96,13 @@ playwright-cli cookie-clear >/dev/null 2>&1
 playwright-cli goto "$LINK" >/dev/null 2>&1
 tt_wait_for ".mx-name-galPendingEntries" "customer-approval pending list"
 
-# Log every row the token page is offering. One token page covers a whole
-# CUSTOMER, so it can list several projects; when a match fails, this shows
-# exactly what was on offer instead of leaving "none for week X" unexplained.
-playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=[...g.querySelectorAll('.mx-name-btnView')].map(v=>{ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||'').replace(/\\s+/g,' ').trim(); if(t.length>25) return t.slice(0,120); } return '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
+# Log every row the token page is offering, whole — consultant, hours and period.
+# The token page is scoped to ONE PROJECT (the token resolves to a single Project
+# and the gallery is constrained to it), so what distinguishes rows here is the
+# consultant and the week, and this is the evidence for a failed match.
+tt_token_log_rows "$CONSULTANT_NAME"
 
-
-opened="$(playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView')]; for(const v of vs){ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=p.innerText||''; if(t.indexOf('$WEEKFRAG')>=0 && t.indexOf('$PROJECT')>=0){ v.click(); return 'hit'; } } } return vs.length ? 'nomatch' : 'empty'; }" 2>/dev/null | _tt_eval_str)"
+opened="$(tt_token_open_row "$CONSULTANT_NAME" "$WEEKFRAG")"
 case "$opened" in
   hit)     ;;
   nomatch) tt_fail "the token page lists entries but none for week '$WEEK'" ;;
@@ -134,6 +134,13 @@ tt_fill ".mx-name-txtRejectionComment textarea, .mx-name-txtRejectionComment inp
   || tt_fail "could not type a rejection comment"
 sleep 1
 
+# Assert the row is PRESENT before the real reject. The step below proves the entry
+# left the queue, and a disappearance check never seen in its true state proves
+# nothing — an unsatisfiable predicate reads exactly like a fast success.
+[ "$(tt_token_row_present "$CONSULTANT_NAME" "$WEEKFRAG")" = "true" ] \
+  || tt_fail "week '$WEEK' is not pending on the token page before Reject — the disappearance check below could not mean anything"
+echo "entry for '$WEEKFRAG' confirmed pending before Reject"
+
 rc="$(playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnCustomerReject'); if(!b) return 'missing'; if(b.disabled) return 'disabled'; b.click(); return 'clicked'; }" 2>/dev/null | _tt_eval_str)"
 [ "$rc" = "clicked" ] || tt_fail "could not click the client Reject button (state: $rc)"
 tt_clear_dialogs 8 "Reject" \
@@ -142,16 +149,15 @@ sleep 3
 
 # The entry must leave the client's queue. Poll — the workflow commits asynchronously.
 #
-# MATCH ON WEEK **AND** PROJECT, never the week alone. One token page covers a whole
-# CUSTOMER, and a customer can own several client-approval projects the same
-# consultant works on — on dev, Costco owns both 'E2E Customer Approval' and
-# 'E2E Dual Approval'. With a week-only check, rejecting our entry left the OTHER
-# project's entry for the same week sitting in the list, and this step reported
-# "still pending after Reject" for a rejection that had in fact succeeded.
-# WEEKFRAG is only "Mon DD", so it collides readily.
+# MATCH ON WEEK + CONSULTANT, which is all a row carries. Do NOT add the project:
+# the row does not render it (it is a heading above the gallery, out of reach of
+# the row walk), so requiring it makes this poll false on its first iteration and
+# the step passes instantly whether or not anything was rejected. Scoping is not
+# lost by leaving it out — the token resolves to one project and the gallery is
+# constrained to that project, so no other project's entry can appear here.
 gone=""
 for _ in $(seq 1 10); do
-  still="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return 'false'; const rows=[...g.querySelectorAll('.mx-name-btnView')].map(v=>{ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=p.innerText||''; if(t.indexOf('$WEEKFRAG')>=0 || t.indexOf('$PROJECT')>=0) return t; } return ''; }); return String(rows.some(t => t.indexOf('$WEEKFRAG')>=0 && t.indexOf('$PROJECT')>=0)); }" 2>/dev/null | _tt_eval_str)"
+  still="$(tt_token_row_present "$CONSULTANT_NAME" "$WEEKFRAG")"
   [ "$still" = "false" ] && { gone=1; break; }
   sleep 3
 done

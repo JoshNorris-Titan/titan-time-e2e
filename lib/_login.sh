@@ -814,6 +814,73 @@ tt_hr_remind_e2e_entry() {
 }
 
 # ---------------------------------------------------------------------------
+# Anonymous customer-approval (token) page helpers
+#
+# WHAT A ROW IS, AND WHAT IDENTIFIES IT. Main.Customer_Approval renders one
+# gallery row per pending entry, and that row contains exactly three readable
+# things: the consultant name, "<n> hours", and the period. It does NOT contain
+# the project name — that is a single heading above the gallery, in the page's
+# project data view, far more than ten DOM levels away from the row's buttons.
+#
+# So a row is identified by CONSULTANT + WEEK, and nothing else is available.
+# That is sufficient, because the token page is scoped to ONE PROJECT already:
+# Main.DS_Project_ByToken turns the token into a single Project, and the
+# gallery's Main.DS_ApprovalHelper_Customer retrieves
+#   [...Main.Assignment_Project = $Project][Status = 'AwaitingCustomerApproval']
+# There is nothing on the page belonging to another project to disambiguate.
+#
+# Do NOT reintroduce a project-name match here. A predicate requiring the
+# project inside a row can never be true, and when one was added it made the
+# row-open step fail every run ("the token page lists entries but none for week
+# X") while simultaneously making the did-it-leave-the-queue poll pass instantly
+# without ever observing the entry present. Both failure modes are silent.
+#
+# The walk is defined ONCE, below, so the logger and the matchers cannot drift
+# apart about which ancestor the row is.
+# ---------------------------------------------------------------------------
+
+# _tt_token_row_js <consultantName> — emits the shared JS prelude.
+#
+# rowOf(btnView) walks up at most ten parents and returns the first ancestor
+# whose text holds both the consultant and "hours" — i.e. the ancestor spanning
+# BOTH lines of the row, which is the one carrying the period. (Deliberately not
+# a text-length heuristic: the first line alone, "E2E Consultant ViewApprove",
+# is 26 characters, so a >25 rule stops one level short and hides the week.)
+#
+# Emitted as ONE line on purpose. playwright-cli echoes the snippet source
+# before its result and _tt_eval_str reads line 2, so a multi-line snippet would
+# shift the result off the line every caller reads.
+_tt_token_row_js() {
+  printf '%s' "const who='$1';const rowOf=v=>{let p=v;for(let k=0;k<10;k++){if(!p.parentElement)break;p=p.parentElement;const t=p.innerText||'';if(t.indexOf(who)>=0&&t.indexOf('hours')>=0)return p;}return null;};const views=()=>[...document.querySelectorAll('.mx-name-btnView')];const txt=p=>((p&&p.innerText)||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();"
+}
+
+# tt_token_log_rows <consultantName> — print every row the token page is
+# offering, whole. When a match fails this is the evidence for why, so it must
+# show the period; a partial row is what turned one bad predicate into days of
+# looking for a product bug.
+tt_token_log_rows() {
+  local js; js="$(_tt_token_row_js "$1")"
+  playwright-cli eval "() => { $js const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=views().map(v=>{ const r=rowOf(v); return r ? txt(r).slice(0,160) : '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
+}
+
+# tt_token_open_row <consultantName> <weekFragment>
+# Clicks View on the matching row. Echoes hit | nomatch | empty so the caller
+# can tell "no rows at all" from "rows, but not ours" — different causes.
+tt_token_open_row() {
+  local js; js="$(_tt_token_row_js "$1")"
+  playwright-cli eval "() => { $js const vs=views(); for(const v of vs){ const r=rowOf(v); if(r && txt(r).indexOf('$2')>=0){ v.click(); return 'hit'; } } return vs.length ? 'nomatch' : 'empty'; }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_token_row_present <consultantName> <weekFragment> — true | false.
+# Used on BOTH sides of the approve/reject click: asserted true before, polled
+# to false after. A disappearance check that is never seen in its true state
+# proves nothing.
+tt_token_row_present() {
+  local js; js="$(_tt_token_row_js "$1")"
+  playwright-cli eval "() => { $js const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return 'false'; return String(views().some(v=>{ const r=rowOf(v); return !!r && txt(r).indexOf('$2')>=0; })); }" 2>/dev/null | _tt_eval_str
+}
+
+# ---------------------------------------------------------------------------
 # Mail access
 #
 # The suite reads mail from the app's OWN ADMIN PAGE, not from an external mail
