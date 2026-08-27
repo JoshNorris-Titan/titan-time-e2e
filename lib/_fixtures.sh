@@ -75,9 +75,19 @@ FX_PROJECTS=(
 )
 
 # Consultant/user display names the suite depends on.
+#
+# 'E2E Consultant Three' is here for the CLEAR, not for any test. The seeders
+# (seed-regression-ladder.sh, seed-shakedown.sh, seed-toprocess-entries.sh) all
+# write timesheets for e2e_consultant3, and TT_E2E_CONSULTANTS in
+# lib/_testdata.sh now clears it so those rows stop surviving both bookends.
+# The clear fails when an account in that list has no Clear control, so this
+# entry makes a missing account surface HERE -- named, at the preflight -- rather
+# than as a confusing failure of the setup and teardown steps. No test drives
+# this consultant directly, which is why it has no FX_ASSIGNMENTS row.
 FX_CONSULTANTS=(
   "E2E Consultant"
   "E2E Consultant Two"
+  "E2E Consultant Three"
   "E2E ProjectManger"
 )
 

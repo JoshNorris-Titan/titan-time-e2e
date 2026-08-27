@@ -22,11 +22,26 @@
 #   TT_ADMIN_USER        admin login with the Core.Administrator role (default MxAdmin)
 #   TT_ADMIN_PASS        password for it (default AdminPassword1!)
 #   TT_E2E_CONSULTANTS   pipe-separated consultant FullNames to clear
-#                        (default "E2E Consultant|E2E Consultant Two")
+#                        (default "E2E Consultant|E2E Consultant Two|E2E Consultant Three")
 #
 # Only Consultant-role accounts appear in the list — Core.DS_TestData_Consultants
 # filters on UserRoles/Name = 'Consultant'. The e2e PM/HR/TM accounts own no
 # timesheets, so clearing the consultants clears all e2e timesheet data.
+#
+# 'E2E Consultant Three' is in the default because all three seeders --
+# seed-regression-ladder.sh, seed-shakedown.sh and seed-toprocess-entries.sh --
+# write timesheets for e2e_consultant3. It was absent until 2026-08-27, so that
+# consultant's rows survived BOTH bookends indefinitely: seeded data was never
+# cleared by the run that followed it, and the leak was invisible because no
+# assertion counts that consultant.
+#
+# The list is a promise that these accounts EXIST as Consultant-role users:
+# tt_clear_consultant_testdata fails when it cannot find a consultant's Clear
+# control, and both bookends run it. That is deliberate -- an environment
+# missing an account the seeders write to should say so loudly, once, rather
+# than leak rows quietly forever -- but it does mean adding a name here without
+# also adding it to FX_CONSULTANTS in lib/_fixtures.sh moves the complaint to
+# the wrong step. Keep the two lists in step.
 #
 # KNOWN UNCOVERED, both deliberate:
 #
@@ -47,7 +62,7 @@
 
 TT_ADMIN_U="${TT_ADMIN_USER:-MxAdmin}"
 TT_ADMIN_P="${TT_ADMIN_PASS:-AdminPassword1!}"
-TT_E2E_CONSULTANTS="${TT_E2E_CONSULTANTS:-E2E Consultant|E2E Consultant Two}"
+TT_E2E_CONSULTANTS="${TT_E2E_CONSULTANTS:-E2E Consultant|E2E Consultant Two|E2E Consultant Three}"
 
 # tt_dismiss_dialog — click the affirmative/OK button on any open Mendix dialog.
 # Mendix renders show-message popups as .mx-dialog / .mx-window, not [role=dialog].
