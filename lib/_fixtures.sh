@@ -280,11 +280,25 @@ fx_ensure_consultants() {
 # because Assignment_NewEdit constrains cbProject to
 #   [Main.Project_Customer = $currentObject/Main.Assignment_Customer]
 # so the customer must be selected FIRST and must be the right one.
+#
+# Returns the customer name, or one of these DISCRIMINATED failures:
+#   NOPROJECT          the name is not in the gallery at all
+#   NOCUSTOMER         the card shows the project but nothing before Active/Archived
+#   NOSTATUS           neither Active nor Archived found — the card layout changed
+#   ARCHIVED:<cust>    found, but the project is archived
+#   ""                 the gallery could not be read
+#
+# It used to return a bare "" for every one of those, and the caller turned that into
+# tt_fail — so a preflight whose whole job is to LIST what is missing aborted on its
+# first unreadable row. On 2026-08-27 that printed one cryptic line
+# ("could not determine which customer owns project 'E2E Manager Approval'") and hid
+# the rest of the picture. The anchor was also 'Active' alone, which cannot tell an
+# archived project apart from an unreadable one.
 fx_project_customer() {
   local name="$1"
   fx_view "cardProjects" "galProjects" >/dev/null
   fx_search "txtProjectSearch" "galProjects" "$name" >/dev/null
-  playwright-cli eval "() => { const t=((document.querySelector('.mx-name-galProjects')||{}).innerText||'').replace(/\\s+/g,' '); const i=t.indexOf('$name'); if(i<0) return ''; const rest=t.slice(i+'$name'.length); const m=rest.match(/^\\s*(.+?)\\s+Active\\b/); return m ? m[1].trim() : ''; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const t=((document.querySelector('.mx-name-galProjects')||{}).innerText||'').replace(/\\s+/g,' '); const i=t.indexOf('$name'); if(i<0) return 'NOPROJECT'; const rest=t.slice(i+'$name'.length); const m=rest.match(/^\\s*(.*?)\\s*\\b(Active|Archived)\\b/); if(!m) return 'NOSTATUS'; const c=m[1].trim(); if(!c) return 'NOCUSTOMER'; return (m[2]==='Archived'?'ARCHIVED:':'')+c; }" 2>/dev/null | _tt_eval_str
 }
 
 # fx_consultant_assignments <consultantName> — the assignment list text from the
@@ -365,7 +379,7 @@ fx_create_assignment() {
 }
 
 fx_ensure_assignments() {
-  local row consultant project hours have customer last=""
+  local row consultant project hours have customer why last=""
   for row in "${FX_ASSIGNMENTS[@]}"; do
     IFS='|' read -r consultant project hours <<< "$row"
 
@@ -392,8 +406,24 @@ fx_ensure_assignments() {
       continue
     fi
 
+    # A customer we cannot read is a REPORTED gap, not a reason to abort the run:
+    # the remaining rows still have something useful to say, and the STILL MISSING
+    # list is the artefact this step exists to produce.
     customer="$(fx_project_customer "$project")"
-    [ -n "$customer" ] || tt_fail "fixtures: could not determine which customer owns project '$project'"
+    why=""
+    case "$customer" in
+      NOPROJECT)  why="project '$project' is not in the projects list" ;;
+      NOCUSTOMER) why="project '$project' has no customer — Assignment_NewEdit only offers a project once its customer is picked, so this assignment cannot be created until one is set" ;;
+      NOSTATUS)   why="could not parse the card for project '$project' (no Active/Archived marker) — the projects gallery layout may have changed" ;;
+      ARCHIVED:*) why="project '$project' is ARCHIVED (customer '${customer#ARCHIVED:}') — an archived project renders no row for the consultant" ;;
+      "")         why="could not read the projects gallery while looking up the owner of '$project'" ;;
+    esac
+    if [ -n "$why" ]; then
+      FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project ($why)"
+      fx_log "MISSING assignment '$consultant' -> '$project' — $why"
+      continue
+    fi
+
     fx_create_assignment "$consultant" "$project" "$hours" "$customer"
     FX_CREATED=$((FX_CREATED+1))
     have="$(fx_consultant_assignments "$consultant")"   # refresh for later rows

@@ -22,12 +22,23 @@ commit` from the project root — that targets the Mendix model and is blocked f
 ## Running
 
 ```bash
-./run-tests.sh                                          # whole suite, localhost
+./run-tests.sh --base-url http://localhost:8080          # whole suite, local F5
 ./run-tests.sh suites/10-smoke/verify-smoke-login.test.sh   # one script
 ./run-tests.sh suites/30-approval                        # one suite folder
-./run-tests.sh --list
+./run-tests.sh --list                                    # no target needed
+./run-tests.sh --no-fail-fast                            # don't stop at the first failure
 TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh --skip-file ci-skip.txt
 ```
+
+**The target is never implied.** With neither `TT_BASE_URL` nor `--base-url`, the runner exits 2
+rather than guessing — this suite writes data, and a wrong guess is indistinguishable from
+environment drift in the output.
+
+**Fail-fast is on by default.** The first `FAIL` stops the run; only `suites/99-teardown/`
+still executes, so the environment is cleaned and the browser session closed. Remaining steps
+report as `NOTRUN` and the summary says what never ran — a downstream step running against the
+state a failed step left behind produces noise that reads like signal, and it keeps *writing*.
+Use `--no-fail-fast` when you deliberately want the full picture.
 
 `run-tests.sh` replaced `mxcli playwright verify` (a Windows-only binary that could never run in
 CI). It opens **one shared `playwright-cli` session** for the whole run and closes it at the end
@@ -68,7 +79,7 @@ F5 first — tests written against unsaved model changes test the previous build
 
 | Variable | Purpose |
 |---|---|
-| `TT_BASE_URL` | App origin, no trailing slash (default `http://localhost:8080`) |
+| `TT_BASE_URL` | App origin, no trailing slash. **Required — no default.** `run-tests.sh` used to fall back to `http://localhost:8080` and export it, which silently satisfied the explicit-target guard in `lib/_fixtures.sh`; a run meant for dev went to a local F5 app and its fixture report was read as dev drift. Pass `--base-url` or set this. |
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Admin account |
 | `TT_ROLE_PASS` | Password for the `e2e_*` role accounts |
 | `TT_E2E_CONSULTANTS` | Which consultants the clear scripts reset |
