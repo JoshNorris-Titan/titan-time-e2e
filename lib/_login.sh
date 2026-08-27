@@ -677,6 +677,27 @@ tt_combobox_select_text() {
 # Prints the matched week label and returns 0 on success; returns 1 if no
 # matching entry is found in any listed week. (Reminding does NOT consume the
 # entry, so the flow stays idempotent.)
+# _tt_hr_tab_state <label> — print what the HR dashboard tab is ACTUALLY showing.
+#
+# Mirrors tt647_log_tab_state, but lives here: lib/_tt647.sh is sourced AFTER this
+# file, so tt_hr_remind_e2e_entry below cannot call into it.
+#
+# Writes to STDERR on purpose. tt_hr_remind_e2e_entry's STDOUT is its return value
+# — every caller does WEEK=$(tt_hr_remind_e2e_entry ...) — so a diagnostic printed
+# to stdout would be captured as the week label and corrupt every assertion
+# downstream of it. run-tests.sh captures both streams, so this still shows up in
+# the run output.
+#
+# The distinction it exists to draw: "weekPicker=ABSENT" means the tab pane had not
+# rendered and the queue was never actually inspected; "weekPicker=present" with
+# weeks listed and no matching card means the entry genuinely is not in this queue.
+# Those point at completely different causes and were indistinguishable before.
+_tt_hr_tab_state() {
+  local label="${1:-tab state}" s
+  s="$(playwright-cli eval "() => { const val=n=>{ const w=document.querySelector('.mx-name-'+n); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('.mx-name-galTabAvailableWeeks'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('.mx-name-galTabEntries'); return 'weekPicker=' + (wk?'present':'ABSENT') + ' | entriesGallery=' + (g?'present':'ABSENT') + ' | consultantFilter=' + val('cbTabWeekConsultant') + ' | projectFilter=' + val('cbTabWeekProject') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | remindCards=' + document.querySelectorAll('.mx-name-btnRemind').length; }" 2>/dev/null | _tt_eval_str)"
+  echo "  [hr-tab] $label: $s" >&2
+}
+
 # tt_hr_remind_e2e_entry <consultantName> [projectName]
 #
 # Clicks Remind on a pending card for <consultantName>, walking the week list until
@@ -690,7 +711,25 @@ tt_combobox_select_text() {
 # a token for some other customer, and a caller asserting a fixed customer name on
 # the token page fails on data selection rather than on anything the product did.
 tt_hr_remind_e2e_entry() {
-  local who="$1" proj="${2:-}" labels lbl
+  local who="$1" proj="${2:-}" labels lbl i
+  # WAIT FOR THE PANE, don't assume it is up. Selecting a tab flips
+  # HRDashboardHelper/DashboardSelected, which UNRENDERS the previous pane and
+  # builds this one from scratch — it must then run DS_TabForStatus, DS_WeeksForTab
+  # and DS_EntriesForTab before the week picker exists. Callers allow about four
+  # seconds (tt_click_text sleeps 2, then the test sleeps 2), which is not enough
+  # against Mendix Cloud dev. When the picker is not in the DOM yet the label query
+  # below returns nothing, the loop never executes, and this returns 1 — which is
+  # indistinguishable from "no pending entry" and is why three tests reported a
+  # missing entry that was sitting in the queue the whole time.
+  #
+  # Deliberately NOT tt_wait_for: that calls tt_fail, and an EMPTY Client Approval
+  # queue is a legitimate outcome the caller handles by creating an entry. A hard
+  # failure here would break the "is there a standing entry?" probe.
+  for i in $(seq 1 20); do
+    playwright-cli eval "() => String(!!document.querySelector('.mx-name-galTabAvailableWeeks'))" 2>/dev/null | grep -qiw true && break
+    sleep 1
+  done
+
   # playwright-cli wraps eval results in a JSON string, so a returned array would
   # arrive double-encoded; return a pipe-joined line instead and split in bash.
   labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const set=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - [A-Z][a-z]{2} \\d{2}/.test(t)))]; return set.join('|'); }" 2>/dev/null | sed -n '2p')
@@ -698,13 +737,27 @@ tt_hr_remind_e2e_entry() {
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
+    # $(seq ...) splits on IFS, and IFS is '|' here — without this the counter
+    # below collapses into a single token and the poll runs exactly once.
+    unset IFS
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
-    sleep 4
-    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
-      echo "$lbl"
-      return 0
-    fi
+    # POLL, rather than looking once four seconds after the click. Selecting a week
+    # reloads the entries gallery, and an entry submitted moments ago reaches the
+    # queue ASYNCHRONOUSLY — tt647_wait_for_card polls up to 60s for that same
+    # reason. Looking once is what made a slow reload read as an absent entry.
+    for i in $(seq 1 8); do
+      if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
+        echo "$lbl"
+        return 0
+      fi
+      sleep 1
+    done
+    IFS='|'
   done
+  unset IFS
+  # Say what the tab was actually showing. Without this the caller can only report
+  # "no pending entry", which asserts a cause this function never checked.
+  _tt_hr_tab_state "no pending '$who'${proj:+ / '$proj'} card in any listed week"
   return 1
 }
 
