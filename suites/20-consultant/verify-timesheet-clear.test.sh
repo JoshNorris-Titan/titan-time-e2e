@@ -18,9 +18,13 @@
 #
 # WHAT IT ASSERTS
 #   A. After Clear, every day cell is EXACTLY empty — not "0", not "0.00".
-#   B. An explicit 0 survives a save and reload as a zero, not as a blank. Taken
-#      with A, that is what proves the two states are genuinely distinct rather
-#      than one being a rendering of the other.
+#   B. An explicit 0 survives a save and re-read as a zero, not as a blank. It
+#      round-trips a 7 first, because Main.SUB_Timesheet_Zero turns every empty
+#      day value into 0 on save: a 0.00 read off a week that has ever been saved
+#      is not evidence of anything this test wrote. Only a zero that provably
+#      replaced the 7 proves the point. Taken with A, that is what shows the two
+#      states are genuinely distinct rather than one being a rendering of the
+#      other.
 #   C. Clear is refused once the week is no longer editable. ACT_Timesheet_Clear
 #      opens on "Is timesheet draft, empty, or rejected" and shows a message
 #      otherwise; a Clear that worked on a submitted week would silently destroy
@@ -74,7 +78,17 @@ hc_report() {  # hc_report <ordinal> — all seven cells, for a failure message
   echo "$out"
 }
 
-hc_click() { playwright-cli click ".mx-name-$1" >/dev/null 2>&1; sleep 3; }
+# hc_click <widget> — click it, and SAY whether the click landed.
+#
+# A conditionally hidden Mendix button is absent from the DOM, so the click FAILS
+# rather than quietly doing nothing. Discarding that exit code is what let "the
+# Clear button was not on the page" be reported as "Clear did not empty the week".
+hc_click() {
+  local ok=0
+  playwright-cli click ".mx-name-$1" >/dev/null 2>&1 || ok=1
+  sleep 3
+  return $ok
+}
 
 # hc_is_zero — a value that means "explicitly none": non-empty and numerically 0.
 hc_is_zero() {
@@ -99,7 +113,17 @@ filled="$(hc_day "$ORD" Mon)"
 [ -n "$filled" ] || tt_fail "could not enter hours before clearing (Mon read back empty)"
 
 # ------------------------------------------------------- A. Clear leaves BLANK
-hc_click btnClear
+# The app hides Clear, Save and Submit together the moment the week's status
+# leaves Draft/Rejected/(empty). tt_goto_fresh_week now refuses such a week, so
+# arriving here without a Clear button means the week changed underneath us —
+# report THAT, rather than a clear that was never exercised.
+if [ "$(tt_week_actionable)" != "true" ]; then
+  tt_fail "week '$WEEK' has no Clear button (week status: $(tt_week_status "$CUSER" "$WEEK")) — the app hides Clear, Save and Submit together once a week leaves Draft/Rejected/empty, so Clear was never exercised. The day cells stay editable in that state, which is why the week looked usable."
+fi
+
+if ! hc_click btnClear; then
+  tt_fail "the Clear button could not be clicked on week '$WEEK' (week status: $(tt_week_status "$CUSER" "$WEEK"))"
+fi
 tt_clear_dialogs 8 "Clear" >/dev/null 2>&1 || true
 sleep 2
 
@@ -120,32 +144,67 @@ else
 fi
 
 # ----------------------------------------- B. an explicit 0 survives as a zero
-hc_set "$ORD" "Mon" "0"
-sleep 1
-hc_click btnSaveDraft
-tt_clear_dialogs 6 >/dev/null 2>&1 || true
-sleep 2
-# Re-query the week WITHOUT reloading. The page opens on today's week, so a
-# reload here silently moved the read to whatever week contains today's date -
-# which is how this case came to report an explicit 0 "coming back as 9.00":
-# the 9 was verify-hours-validation's, written into the current week minutes
-# earlier. See tt_refetch_week in lib/_login.sh.
-tt_refetch_week
+#
+# WHY A SENTINEL FIRST. Main.SUB_Timesheet_Zero converts every empty day value to
+# 0 whenever a week is saved, so any week that has ever been saved reads 0.00 in
+# all seven cells from then on. Writing a 0 and reading 0.00 back therefore
+# proves nothing by itself — it is indistinguishable from the residue of some
+# earlier run, and a case that cannot fail is not a test. Round-tripping a 7
+# first makes the following 0.00 provably ours: it had to replace a non-zero.
 
-ORD="$(hc_row_any)"
-shown="$(tt_current_week)"
-if [ -n "$shown" ] && [ "${WEEK#*"$shown"}" = "$WEEK" ]; then
-  bad "B the grid moved to week '$shown' while case B was written against '$WEEK', so the re-read would have been of the wrong week"
-elif [ "$ORD" = "0" ]; then
-  bad "B the '$PROJECT' row vanished after saving a draft, so the zero could not be re-read"
+# hc_save_and_refetch — save the draft, then re-read the SAME week.
+#
+# Re-query WITHOUT reloading. The page opens on today's week, so a reload here
+# silently moves the read to whatever week contains today's date — which is how
+# this case came to report an explicit 0 "coming back as 9.00": the 9 was
+# verify-hours-validation's, written into the current week minutes earlier. See
+# tt_refetch_week in lib/_login.sh.
+hc_save_and_refetch() {
+  hc_click btnSaveDraft || return 1
+  tt_clear_dialogs 6 >/dev/null 2>&1 || true
+  sleep 2
+  tt_refetch_week
+  return 0
+}
+
+sentinel_ok=1
+hc_set "$ORD" "Mon" "7"
+sleep 1
+if ! hc_save_and_refetch; then
+  bad "B the week could not be saved — no Save button (week status: $(tt_week_status "$CUSER" "$WEEK")). Save is hidden by the same rule as Clear, so nothing about zeros could be proven"
+  sentinel_ok=0
 else
-  v="$(hc_day "$ORD" Mon)"
-  if hc_is_zero "$v"; then
-    note "B an explicit 0 came back as [$v], distinct from blank"
-  elif [ "$v" = "" ]; then
-    bad "B an explicit 0 came back BLANK — the app cannot tell 'worked none' from 'nothing recorded', which is the distinction Clear depends on"
+  ORD="$(hc_row_any)"
+  sv="$(hc_day "$ORD" Mon)"
+  case "$sv" in
+    7|7.0|7.00) : ;;
+    *) bad "B the save path is not carrying values through — a 7 written to Mon came back as [$sv], so a 0 reading back as 0.00 would prove nothing about the app"
+       sentinel_ok=0 ;;
+  esac
+fi
+
+if [ "$sentinel_ok" = "1" ]; then
+  hc_set "$ORD" "Mon" "0"
+  sleep 1
+  hc_save_and_refetch || true
+
+  ORD="$(hc_row_any)"
+  shown="$(tt_current_week)"
+  if [ -n "$shown" ] && [ "${WEEK#*"$shown"}" = "$WEEK" ]; then
+    bad "B the grid moved to week '$shown' while case B was written against '$WEEK', so the re-read would have been of the wrong week"
+  elif [ "$ORD" = "0" ]; then
+    bad "B the '$PROJECT' row vanished after saving a draft, so the zero could not be re-read"
   else
-    bad "B an explicit 0 came back as [$v], which is neither zero nor blank"
+    v="$(hc_day "$ORD" Mon)"
+    if hc_is_zero "$v"; then
+      note "B an explicit 0 replaced the 7 and came back as [$v], distinct from blank"
+    elif [ "$v" = "" ]; then
+      bad "B an explicit 0 came back BLANK — the app cannot tell 'worked none' from 'nothing recorded', which is the distinction Clear depends on"
+    elif [ "$v" = "7" ] || [ "$v" = "7.0" ] || [ "$v" = "7.00" ]; then
+      bad "B the 0 never reached the app — Mon still reads the sentinel [$v], so the save after writing the zero did not take"
+    else
+      bad "B an explicit 0 came back as [$v], which is neither zero nor blank"
+    fi
   fi
 fi
 
@@ -169,14 +228,20 @@ else
       echo "  note: the week did not submit, so the guard could not be tested here"
     else
       before="$(hc_report "$ORD2")"
-      hc_click btnClear
-      tt_clear_dialogs 8 "Clear" >/dev/null 2>&1 || true
-      sleep 2
-      after="$(hc_report "$ORD2")"
-      if [ "$before" = "$after" ]; then
-        note "C Clear left the submitted week untouched"
+      if [ "$(tt_week_actionable)" != "true" ]; then
+        # The guard in its strongest form: the app does not merely refuse the
+        # Clear, it removes the button. Nothing to press means nothing to destroy.
+        note "C Clear is not offered at all on the submitted week (week status: $(tt_week_status "$CUSER" "$WEEK2"))"
       else
-        bad "C Clear MODIFIED a submitted week. before:$before after:$after — ACT_Timesheet_Clear's draft/empty/rejected guard is not holding, so approved hours can be destroyed"
+        hc_click btnClear || true
+        tt_clear_dialogs 8 "Clear" >/dev/null 2>&1 || true
+        sleep 2
+        after="$(hc_report "$ORD2")"
+        if [ "$before" = "$after" ]; then
+          note "C Clear was offered on the submitted week but left it untouched"
+        else
+          bad "C Clear MODIFIED a submitted week. before:$before after:$after — ACT_Timesheet_Clear's draft/empty/rejected guard is not holding, so approved hours can be destroyed"
+        fi
       fi
     fi
   fi

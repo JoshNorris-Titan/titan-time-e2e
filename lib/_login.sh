@@ -255,6 +255,58 @@ tt_refetch_week() {
   sleep 3
 }
 
+# ---------------------------------------------------------------------------
+# Can this week still be acted on?
+#
+# btnClear, btnSaveDraft and btnSubmit share ONE conditional visibility rule, on
+# Main.Timesheet.Status: shown for Draft, Rejected and (empty); HIDDEN for
+# Awaiting_Approval, Approved and Awaiting_Export. A conditionally hidden Mendix
+# widget is not in the DOM at all, so `playwright-cli click` on it FAILS - and a
+# caller that discards the exit code cannot tell that from a successful press.
+#
+# That is how verify-timesheet-clear came to report "Clear did not empty the
+# week" about a Clear button that was never on the page. The week it had been
+# handed read 0.00 in every cell, which looked untouched, but its status had
+# moved past Draft.
+#
+# Day-cell editability is a DIFFERENT rule - $currentObject/_IsEditable, held per
+# ASSIGNMENT ENTRY - so a week can show editable day cells and no action buttons
+# at the same time. Never infer one from the other.
+
+# tt_week_actionable - 'true' when the week on screen still has its action buttons.
+tt_week_actionable() {
+  playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnClear'))" 2>/dev/null | _tt_eval_str
+}
+
+# tt_week_statuses <user> - that consultant's weeks as "<Mon> <D> <status>", one
+# per line, read from the objects rather than the screen: the timesheet page
+# never renders the week's OWN status anywhere.
+#
+# FAILURE MESSAGES ONLY. This is a data retrieve - far too slow for the
+# week-hunting loop, which uses tt_week_actionable instead. Echoes ERR:<why> when
+# it cannot read; a caller must not treat that as a status.
+tt_week_statuses() {
+  local xp="//Main.Timesheet[Main.Timesheet_Account/Administration.Account/Name = '$1']"
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"$xp\", filter:{amount:300}, callback: function(objs){ clearTimeout(t); try { var M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; res((objs||[]).map(function(o){ var d=o.get('StartDate'); var s=o.get('Status'); if(!d) return '? ? '+(s||'?'); var dt=new Date(d); return M[dt.getMonth()]+' '+dt.getDate()+' '+(s||'?'); }).join('\n')); } catch(e){ res('ERR:read-'+e.message); } }, error: function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'retrieve-refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
+# tt_week_status <user> <week-label> - the status of the single week whose start
+# matches <week-label>. Both "E2E Sep 13 - Sep 19" and "Sep 13 - Sep 19" work.
+# Echoes UNKNOWN rather than failing: this only ever decorates a message, and a
+# diagnostic that can itself abort the test is worse than no diagnostic.
+tt_week_status() {
+  local user="$1" label="$2" start mon day all
+  start="${label%% - *}"
+  mon="$(printf '%s\n' "$start" | awk '{print $(NF-1)}')"
+  day="$(printf '%s\n' "$start" | awk '{print $NF}')"
+  case "$day" in ''|*[!0-9]*) echo "UNKNOWN"; return 0 ;; esac
+  [ -n "$mon" ] || { echo "UNKNOWN"; return 0; }
+  day="$((10#$day))"
+  all="$(tt_week_statuses "$user")"
+  case "$all" in ERR:*|'') echo "UNKNOWN"; return 0 ;; esac
+  printf '%s\n' "$all" | awk -v m="$mon" -v d="$day" '$1==m && $2+0==d { print $3; f=1; exit } END { if(!f) print "UNKNOWN" }'
+}
+
 # tt_draft_count <project> <consultant> - how many of <consultant>'s entries on
 # <project> are still Draft, asked of the DATA LAYER rather than of the screen.
 #
