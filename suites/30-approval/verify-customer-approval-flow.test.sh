@@ -56,13 +56,19 @@ else
   # Must be an entry on THIS project: a generic submit can land on any assignment,
   # and only $PROJECT routes to $CUSTOMER's approval token.
   tt_consultant_submit_project_row "$PROJECT"
+  # ORDER IS LOAD-BEARING. Submitting may itself have sent mail, so the high-water
+  # mark has to be reset — but tt_mail_prepare reads the Emails Sent page, which is
+  # Administrator-only, so it LOGS IN AS THE ADMINISTRATOR and leaves the browser
+  # there. Doing that after opening the HR dashboard navigates away from it, and the
+  # remind below then hunts for the week picker on the admin's page and reports "no
+  # pending entry" — with every HR widget reading ABSENT — for a queue it never
+  # looked at. Reset the inbox FIRST, open the HR dashboard LAST. The primary path
+  # above already has this order.
+  tt_mail_prepare
+  TS=$(date +%s%3N)
   tt_login "e2e_hr" "WEEKLY TO PROCESS"
   tt_click_text "CLIENT APPROVAL"
   sleep 2
-  # Submitting the timesheet above may itself have sent mail, so reset the
-  # inbox again — otherwise the poll could latch onto that instead.
-  tt_mail_prepare
-  TS=$(date +%s%3N)
   WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
     || tt_fail "still no pending '$CONSULTANT_NAME' entry on '$PROJECT' after creating one"
   echo "reminded newly-created entry (week: $WEEK)"

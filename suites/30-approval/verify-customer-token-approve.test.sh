@@ -59,12 +59,19 @@ else
   # Must be an entry on THIS project: a generic submit can land on any assignment,
   # and only $PROJECT produces a token for $CUSTOMER.
   tt_consultant_submit_project_row "$PROJECT"
+  # ORDER IS LOAD-BEARING. Submitting may itself have sent mail, so the high-water
+  # mark has to be reset — but tt_mail_prepare reads the Emails Sent page, which is
+  # Administrator-only, so it LOGS IN AS THE ADMINISTRATOR and leaves the browser
+  # there. Doing that after opening the HR dashboard navigates away from it, and the
+  # remind below then hunts for the week picker on the admin's page and reports "no
+  # pending entry" — with every HR widget reading ABSENT — for a queue it never
+  # looked at. Reset the inbox FIRST, open the HR dashboard LAST. The primary path
+  # above already has this order.
+  tt_mail_prepare
+  TS=$(date +%s%3N)
   tt_login "e2e_hr" "WEEKLY TO PROCESS"
   tt_click_text "CLIENT APPROVAL"
   sleep 2
-  # Submitting may itself have sent mail; reset so the poll cannot latch onto it.
-  tt_mail_prepare
-  TS=$(date +%s%3N)
   WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
     || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
   echo "reminded newly-created entry (week: $WEEK)"
@@ -157,12 +164,40 @@ LINES="$(tt647_card_lines "$PROJECT" "$CONSULTANT_NAME")"
 [ -n "$LINES" ] \
   || tt_fail "no To Process card for '$PROJECT' / '$CONSULTANT_NAME' in week '$WEEK' after client approval"
 
-case "$LINES" in
-  *"(Client)"*) ;;
-  *"on behalf of"*)
-    tt_fail "approver reads as HR acting for the client, not the client: $LINES" ;;
-  *)
-    tt_fail "To Process card does not credit the client as approver: $LINES" ;;
+# WHAT THE CARD ACTUALLY SAYS. Main.SUB_ApprovalHelper_SetApprovalLines emits a BARE
+# NAME per stage, and the literal 'N/A' when a stage has no approval in this
+# submission cycle. Line 1 comes from the manager stage, line 2 from the client
+# stage. For a TOKEN approval there is no signed-in user, so line 2 resolves to
+# $Project/ContactName rather than an account name:
+#
+#   Line2 = if $ClientLog != empty
+#           then (if $ClientLog/ChangeMethod = Main.ENUM_ChangeMethod.Token
+#                 then $Project/ContactName else $ClientLog/ChangeBy)
+#           else 'N/A'
+#
+# So this project's contact ('E2E Approver' on dev) IS the pass condition, and
+# 'N/A~~E2E Approver' is a correct card. Do NOT assert "(Client)", "on behalf of",
+# or any other part of the TT-647/648/649 sentence form "Approved by <name> (<role>)
+# on <date>" — that design was abandoned and the tickets were never updated. See the
+# warning in lib/_tt647.sh; this assertion was the one call site 9a37978 missed, and
+# it failed every run afterwards against an app that was behaving correctly.
+LINE2="${LINES##*~~}"
+
+# Line 1 is deliberately not asserted: whether a manager stage exists is the fixture
+# table's business (ApprovalFromManager), and this test is about the client stage.
+case "$LINE2" in
+  ""|"N/A")
+    tt_fail "client stage recorded no approval — line 2 reads '${LINE2:-<empty>}' (full card: $LINES). The entry left the token page but nothing was written for the client, which is what a rollback looks like" ;;
 esac
 
-echo "PASS: verify-customer-token-approve — client approved via token; week '$WEEK' reached To Process credited to (Client)"
+# THE SURVIVING GUARANTEE: the line names whoever ACTUALLY approved. An HR stand-in
+# approving on the client's behalf shows the HR user, so seeing the HR user here
+# would mean this token approval was not credited to the client. Read the HR name
+# from the live session rather than hardcoding a fixture's full name, which is not
+# recorded in this repo.
+HRNAME="$(tt647_session_fullname)"
+if [ -n "$HRNAME" ] && [ "$LINE2" = "$HRNAME" ]; then
+  tt_fail "approver reads as the HR user ('$HRNAME'), not the client: $LINES"
+fi
+
+echo "PASS: verify-customer-token-approve — client approved via token; week '$WEEK' reached To Process credited to '$LINE2'"
