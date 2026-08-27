@@ -52,13 +52,26 @@
 #   E2E Customer Approval verify-customer-approval-flow, verify-pm-dashboard-pending
 #   E2E Dual Approval     verify-tt647-a5  (expects TWO approval lines)
 #   E2E Line Items        verify-consultant-line-items, verify-tt692693-b1
-#   E2E Sandbox           general scratch project
+#   E2E Sandbox           the consultant-side scratch project: verify-hours-validation,
+#                         verify-timesheet-clear, verify-timesheet-status-rollup,
+#                         verify-tt692693-a1 (all as e2e_consultant2)
+#
+# E2E Sandbox REQUIRES ApprovalFromManager=Yes. It reads like a scratch project that
+# should need no approval, and this table declared No until 2026-08-27 — but nothing
+# had ever compared the table to the environment, so the mismatch was invisible.
+# verify-timesheet-status-rollup submits 40 hours on this project and asserts the
+# consultant's Awaiting_Approval week count goes UP. With a manager stage, the entry
+# becomes AwaitingManagerApproval and the week rolls up to Awaiting_Approval, which is
+# what that test wants. With No/No, Main.SUB_AssignmentEntry_Submit routes 40 hours
+# STRAIGHT to ToProcess, SUB_AssignmentEntry_UpdateTimesheetStatus counts ToProcess as
+# accepted, and the week rolls up to Approved instead — so the test would fail.
+# Do not "simplify" this back to No without re-reading that test.
 FX_PROJECTS=(
   "E2E Manager Approval|Yes|No|No"
   "E2E Customer Approval|No|Yes|No"
   "E2E Dual Approval|Yes|Yes|No"
   "E2E Line Items|No|No|Yes"
-  "E2E Sandbox|No|No|No"
+  "E2E Sandbox|Yes|No|No"
 )
 
 # Consultant/user display names the suite depends on.
