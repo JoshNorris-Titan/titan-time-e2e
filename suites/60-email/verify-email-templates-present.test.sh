@@ -50,6 +50,10 @@ source "$TT_ROOT/lib/_login.sh"
 # before that date, and the one whose absence is worst: ACT_Password_Forgot has
 # already replaced the user's password by the time the send is skipped, so a
 # missing row locks them out with no way back in.
+#
+# These are the enum value NAMES, which is what keys each type's recipient
+# address. They are not necessarily what the dropdown displays - it displays
+# captions, and ForgotPassword's caption is "Forgot Password". See et_pick_type.
 TYPES="ToConsultant_SubmissionReminder ToConsultant_RejectionNotice \
 ToManager_ApprovalRequest ToManager_ApprovalReminder ToManager_HoursNotice \
 ToCustomer_ApprovalRequest ToCustomer_ApprovalReminder NewAccount \
@@ -73,13 +77,31 @@ et_open_tester() {
   return 0
 }
 
-# et_pick_type — choose one value in the enum combobox. Mendix's combobox renders
-# its options as role=option nodes once opened, so the value is matched on its own
-# text rather than on a generated widget id.
+# et_pick_type — choose one value in the enum combobox.
+#
+# THE DROPDOWN SHOWS CAPTIONS, NOT NAMES. The tester's picker is the Mendix
+# Combobox bound to Main.EmailHelper.EmailType, so each option renders the enum
+# value's CAPTION. For eleven of the twelve values the caption happens to be
+# identical to the name, which is why matching on the name worked for a year and
+# looked like a rule. It is a coincidence. ForgotPassword, added 2026-08-26, is
+# captioned "Forgot Password" - with a space - so an exact match on the name
+# found nothing and the step reported the type as "not offered", i.e. as though
+# the enum and the dropdown had diverged, when nothing had diverged at all.
+#
+# So: try the exact name first (unchanged for the eleven), then fall back to a
+# comparison that ignores case and every non-alphanumeric character, which makes
+# "Forgot Password", "forgot_password" and "ForgotPassword" the same string. The
+# twelve names stay distinct under that flattening, so it cannot silently pick a
+# neighbour - and if a future value ever does collide, the ambiguous case says so
+# rather than guessing.
+#
+# The name is still what keys the recipient address; only the MATCHING is
+# caption-aware. On a miss, return what the dropdown actually offered rather than
+# a bare count, so the next divergence is read off the failure instead of hunted.
 et_pick_type() {
   playwright-cli click "$SEL_TYPE" >/dev/null 2>&1
   sleep 1
-  playwright-cli eval "() => { const os=[...document.querySelectorAll('[role=option]')]; const o=os.find(e=>(e.innerText||'').trim()==='$1'); if(!o) return 'notoffered:'+os.length; o.click(); return 'picked'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const os=[...document.querySelectorAll('[role=option]')]; const txt=e=>(e.innerText||'').trim(); const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,''); const want='$1'; let o=os.find(e=>txt(e)===want); if(!o){ const m=os.filter(e=>norm(txt(e))===norm(want)); if(m.length===1){ o=m[0]; } else if(m.length>1){ return 'ambiguous:'+m.map(txt).join(', '); } } if(!o) return 'notoffered:'+os.map(txt).filter(Boolean).join(', '); o.click(); return 'picked'; }" 2>/dev/null | _tt_eval_str
 }
 
 # --------------------------------------------------------------- 1. mark the page
@@ -91,6 +113,7 @@ et_open_tester || tt_fail "could not open the Email Tester as ${TT_ADMIN_USER:-M
 
 sent=""
 notoffered=""
+offered=""
 for t in $TYPES; do
   addr="$(et_addr "$t")"
   # tt_fill is FATAL by design - a silent no-write is worse than a stop - so the
@@ -109,6 +132,10 @@ for t in $TYPES; do
     picked) ;;
     notoffered:*)
       notoffered="$notoffered $t"
+      [ -z "$offered" ] && offered="${r#notoffered:}"
+      continue ;;
+    ambiguous:*)
+      notoffered="$notoffered $t(matched several options: ${r#ambiguous:})"
       continue ;;
     *)
       notoffered="$notoffered $t(combobox:$r)"
@@ -150,6 +177,13 @@ if [ -n "$notoffered" ]; then
   echo "FAIL: verify-email-templates-present - the tester did not offer these types:$notoffered"
   echo "      Main.ENUM_EmailType and the tester's dropdown have diverged, so those types"
   echo "      could not be exercised at all."
+  if [ -n "$offered" ]; then
+    echo "      The dropdown offered: $offered"
+    echo "      Those are CAPTIONS. A value whose caption merely reads differently from its"
+    echo "      name is matched anyway (case and punctuation are ignored), so a type listed"
+    echo "      above is one the dropdown genuinely does not carry - a value added to the"
+    echo "      enum since this list was written, or one the tester cannot select."
+  fi
   exit 1
 fi
 
