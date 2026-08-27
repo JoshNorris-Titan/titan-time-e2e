@@ -8,7 +8,10 @@
 # dashboard (ChangeMethod=Manager, FromStatus=AwaitingManagerApproval) -> the entry
 # moves to AwaitingCustomerApproval -> HR approves it on the Client Approval tab
 # (ChangeMethod=HR, FromStatus=AwaitingCustomerApproval) -> ToProcess with TWO
-# approval rows in the cycle, which must render as two lines.
+# approval rows in the cycle, which must render as two names:
+#   line 1 = "E2E ProjectManger"    (manager stage)
+#   line 2 = the HR user's own name (client stage, performed by HR)
+# Neither line may be 'N/A' -- that is what proves both stages were recorded.
 #
 # ── FIXTURE REQUIRED ────────────────────────────────────────────────────────────
 # Needs a project with BOTH ApprovalFromManager=Yes AND ApprovalFromCustomer=Yes,
@@ -59,7 +62,7 @@ tt647_select_week_with "$PROJECT" >/dev/null \
 
 # 4) HR approves in the client's place -> second approval row in the same cycle.
 tt647_hr_approve_card "$PROJECT" \
-  || tt_fail "no Approve control on the Client Approval card for '$PROJECT'"
+  || tt_fail "could not approve the Client Approval card for '$PROJECT': ${TT647_APPROVE_ERR:-unknown}"
 
 # 5) Both approvers must now be listed, manager stage first.
 tt647_hr_open_tab "$TT647_TAB_TOPROCESS"
@@ -69,6 +72,11 @@ echo "matched To Process week: $WEEK"
 
 tt647_require_widgets "To Process tab"
 
+# HR is signed in here, so this is the name ChangeBy recorded for the client stage.
+HR_NAME="$(tt647_session_fullname)"
+[ -n "$HR_NAME" ]   || tt_fail "could not read the signed-in HR user's display name from the session"
+echo "approving HR user: '$HR_NAME'"
+
 LINES="$(tt647_card_lines "$PROJECT")"
 L1="${LINES%%~~*}"
 L2="${LINES#*~~}"
@@ -76,21 +84,16 @@ echo "line1: '$L1'"
 echo "line2: '$L2'"
 
 [ -n "$L1" ] || tt_fail "dual-approval card has an empty approver line 1"
-[ -n "$L2" ] || tt_fail "dual-approval card has only ONE approver line — the client-stage approval is missing. line1='$L1'"
+[ -n "$L2" ] || tt_fail "dual-approval card has an empty approver line 2"
 
-case "$L1" in
-  "Approved by $PM_NAME (Project Manager) on "??/??/????) : ;;
-  *) tt_fail "line 1 should be the manager-stage approval by $PM_NAME, got: '$L1'" ;;
-esac
-case "$L2" in
-  *"(HR/Titan Manager, on behalf of Client)"*) : ;;
-  *) tt_fail "line 2 should be the client-stage approval performed by HR, got: '$L2'" ;;
-esac
+# Manager stage is line 1 by construction.
+[ "$L1" = "$PM_NAME" ]   || tt_fail "line 1 should be the manager-stage approver '$PM_NAME', got: '$L1'"
 
-# Manager stage is line 1 by construction; both lines must carry a real date.
-case "$L1$L2" in
-  *" on "??/??/????*" on "??/??/????*) : ;;
-  *) tt_fail "both lines should end in an MM/DD/YYYY date. line1='$L1' line2='$L2'" ;;
-esac
+# Client stage is line 2, performed here by HR standing in for the client.
+[ "$L2" = "$HR_NAME" ]   || tt_fail "line 2 should be the client-stage approver, the HR user '$HR_NAME', got: '$L2'"
 
-echo "PASS: verify-tt647-a5-dual-approval-two-lines — both approvers listed, manager stage first"
+# The whole point of a dual-approval project: NEITHER stage may be missing.
+[ "$L1" != "N/A" ]   || tt_fail "line 1 is 'N/A' — the manager-stage approval was not recorded"
+[ "$L2" != "N/A" ]   || tt_fail "line 2 is 'N/A' — the client-stage approval was not recorded, so only one approver is listed"
+
+echo "PASS: verify-tt647-a5-dual-approval-two-lines — line1='$L1' line2='$L2'"

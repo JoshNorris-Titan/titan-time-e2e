@@ -3,12 +3,12 @@
 #
 # Path: consultant submits on "E2E Manager Approval" (ApprovalFromManager=Yes,
 # ApprovalFromCustomer=No) -> PM approves from the PM dashboard -> entry lands in
-# ToProcess. Main.ACT_ApprovalHelper_Approve stamps ChangeMethod=Manager because the
-# approving account IS the project's PM, so TT-647 must render "(Project Manager)".
+# ToProcess. Main.ACT_ApprovalHelper_Approve records ChangeBy = the approving
+# account's name, which on this path is the project's own PM.
 #
 # Asserts on the HR "Weekly Timesheets to Process" tab:
-#   line 1 = "Approved by E2E ProjectManger (Project Manager) on MM/DD/YYYY"
-#   line 2 = empty (a manager-only project has no client stage)
+#   line 1 = "E2E ProjectManger"  (the manager-stage approver, a bare name)
+#   line 2 = "N/A"                (a manager-only project has no client stage)
 #
 # Consumes one pending manager-approval entry per run and seeds one if the pool is
 # empty. Env: TT_BASE_URL, TT_ROLE_PASS.
@@ -62,12 +62,10 @@ echo "line2: '$L2'"
 
 [ -n "$L1" ] || tt_fail "To Process card for '$PROJECT' has an empty approver line 1"
 
-case "$L1" in
-  "Approved by $PM_NAME (Project Manager) on "??/??/????) : ;;
-  *) tt_fail "line 1 is not the expected PM approval sentence. got: '$L1' (wanted \"Approved by $PM_NAME (Project Manager) on MM/DD/YYYY\")" ;;
-esac
+# Line 1 is the manager-stage approver's name verbatim, nothing more.
+[ "$L1" = "$PM_NAME" ]   || tt_fail "line 1 should be the PM's name for a PM-approved entry. got: '$L1' (wanted '$PM_NAME')"
 
-# A manager-only project has no client stage, so the second line must stay empty.
-[ -z "$L2" ] || tt_fail "line 2 should be empty on a manager-only project, got: '$L2'"
+# A manager-only project has no client stage, so line 2 is the empty marker.
+[ "$L2" = "N/A" ]   || tt_fail "line 2 should be 'N/A' on a manager-only project, got: '$L2'"
 
-echo "PASS: verify-tt647-a1-pm-approver-line — PM approval renders '$L1'"
+echo "PASS: verify-tt647-a1-pm-approver-line — line1='$L1' line2='$L2'"

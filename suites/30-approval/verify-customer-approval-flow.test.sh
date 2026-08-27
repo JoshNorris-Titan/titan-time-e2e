@@ -20,6 +20,14 @@
 #
 # Prerequisite data on the target env: a project with ApprovalFromCustomer=Yes
 # whose approver email is that inbox, with the E2E consultant assigned.
+#
+# SCOPING IS LOAD-BEARING. Both the remind and the fallback submit below name
+# $PROJECT explicitly. dev carries several client-approval projects for the same
+# consultant on DIFFERENT customers (E2E ClientApproval B/C/D/E ->
+# Walmart/Yamaha/Rapidappwerks/Thomas Inc.), and the approval token is per PROJECT.
+# Reminding whichever entry happened to be first emailed a token for another
+# customer, and this test then failed asserting 'Costco' on a page that was
+# correctly showing Walmart - a data-selection bug that read like a product bug.
 
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
@@ -40,12 +48,14 @@ tt_click_text "CLIENT APPROVAL"
 sleep 2
 
 TS=$(date +%s%3N)
-if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME"); then
+if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
   echo "reminded existing pending entry (week: $WEEK)"
 else
-  echo "no pending '$CONSULTANT_NAME' entry — creating one via the consultant"
+  echo "no pending '$CONSULTANT_NAME' entry on '$PROJECT' — creating one via the consultant"
   tt_login "e2e_consultant" "My Timesheets"
-  tt_consultant_submit_entry || tt_fail "consultant: failed to submit a timesheet for setup"
+  # Must be an entry on THIS project: a generic submit can land on any assignment,
+  # and only $PROJECT routes to $CUSTOMER's approval token.
+  tt_consultant_submit_project_row "$PROJECT"
   tt_login "e2e_hr" "WEEKLY TO PROCESS"
   tt_click_text "CLIENT APPROVAL"
   sleep 2
@@ -53,8 +63,8 @@ else
   # inbox again — otherwise the poll could latch onto that instead.
   tt_mail_prepare
   TS=$(date +%s%3N)
-  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME") \
-    || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
+  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
+    || tt_fail "still no pending '$CONSULTANT_NAME' entry on '$PROJECT' after creating one"
   echo "reminded newly-created entry (week: $WEEK)"
 fi
 
@@ -71,6 +81,12 @@ echo "received token link"
 playwright-cli cookie-clear >/dev/null 2>&1
 playwright-cli goto "$LINK" >/dev/null 2>&1
 tt_wait_for ".mx-name-galPendingEntries" "customer-approval pending list"
+
+# Log every row the token page is offering. One token page covers a whole
+# CUSTOMER, so it can list several projects; when a match fails, this shows
+# exactly what was on offer instead of leaving "none for week X" unexplained.
+playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=[...g.querySelectorAll('.mx-name-btnView')].map(v=>{ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||'').replace(/\\s+/g,' ').trim(); if(t.length>25) return t.slice(0,120); } return '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
+
 
 tt_assert_all "customer-approval page" "$CONSULTANT_NAME" "$CUSTOMER" "$PROJECT"
 

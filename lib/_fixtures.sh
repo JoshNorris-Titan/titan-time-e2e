@@ -20,9 +20,11 @@
 # SCOPE — read this before assuming it covers something
 # -----------------------------------------------------
 #   Customers  verify + create
-#   Projects   verify + create  (including the approval flags, which are the whole
-#                                point — a project is only useful to a test if its
-#                                ApprovalFromManager/Customer/NeedsLineItems match)
+#   Projects   verify + create. Existence is matched on NAME ONLY; the approval
+#                                flags, project manager, customer and archived state
+#                                are reconciled separately by fx_reconcile_collect
+#                                below, because a project is only useful to a test if
+#                                its CONFIGURATION matches, not just its name.
 #   Accounts / consultants
 #              VERIFY ONLY. Creating a login is a different surface (Core.Account_New)
 #              and provisioning credentials from a test run is a decision that should
@@ -104,6 +106,7 @@ FX_CUSTOMER="${FX_CUSTOMER:-Costco}"
 FX_CREATED=0
 FX_PRESENT=0
 FX_MISSING=""
+FX_DRIFT=""
 
 fx_log() { echo "  [fixtures] $*"; }
 
@@ -367,6 +370,105 @@ fx_ensure_assignments() {
   done
 }
 
+# ---------------------------------------------------------------- reconciliation
+#
+# WHY THIS EXISTS
+# fx_ensure_projects and fx_ensure_assignments match on NAME ALONE. A project that
+# already exists with the wrong approval flags, the wrong project manager, or
+# Archived=true passes the preflight silently -- and so does an assignment whose
+# date window no longer covers the weeks the tests drive. That is invisible drift:
+# the preflight prints "ok", and unrelated tests fail an hour later with symptoms
+# that read like product bugs.
+#
+# Found the hard way on 2026-08-27: five cluster-1 failures were investigated as a
+# routing bug before the live rows were read and found correct -- except E2E
+# Sandbox, whose ApprovalFromManager is Yes while the table says No. Nothing in the
+# suite could have surfaced that.
+#
+# This reads the real values through the Mendix client data API rather than by
+# reopening each form. The Titan Manager session is already signed in here, and
+# Project/Assignment carry ManagerName, CustomerName, Archived and the date window
+# as plain attributes, so one round trip answers everything. Reading the edit form
+# was the obvious alternative and is worse: clicking a project card opens a
+# READ-ONLY "Project Overview" popup with only Archive/Close, so the flags are not
+# reachable that way at all.
+#
+# Drift is REPORTED, never silently repaired. The flags are a deliberate property
+# of each fixture; a preflight that quietly rewrote them would hide the fact that
+# something changed them.
+
+# fx_config_snapshot -- one line per declared project and assignment:
+#   PROJECT|<name>|<mgr>|<cust>|<lineItems>|<archived>|<managerName>|<customerName>
+#   ASSIGN|<consultant>|<project>|<start>|<end>|<archived>|<weeklyHours>
+# or <...>|ABSENT, or <...>|ERROR|<message> when the retrieve itself failed.
+fx_config_snapshot() {
+  local row name mgr cust li consultant project hours names_js="" pairs_js=""
+
+  for row in "${FX_PROJECTS[@]}"; do
+    IFS='|' read -r name mgr cust li <<< "$row"
+    names_js="$names_js'$name',"
+  done
+  for row in "${FX_ASSIGNMENTS[@]}"; do
+    IFS='|' read -r consultant project hours <<< "$row"
+    pairs_js="$pairs_js['$consultant','$project'],"
+  done
+
+  playwright-cli eval "() => { const P=[${names_js}]; const A=[${pairs_js}]; const d=v=>v?new Date(v).toISOString().slice(0,10):''; const proj=n=>new Promise(r=>mx.data.get({xpath:\"//Main.Project[Name='\"+n+\"']\",filter:{amount:1},callback:o=>r(o.length?['PROJECT',n,o[0].get('ApprovalFromManager'),o[0].get('ApprovalFromCustomer'),o[0].get('NeedsLineItems'),o[0].get('Archived'),o[0].get('ManagerName')||'',o[0].get('CustomerName')||''].join('|'):['PROJECT',n,'ABSENT'].join('|')),error:e=>r(['PROJECT',n,'ERROR',e.message].join('|'))})); const asg=q=>new Promise(r=>mx.data.get({xpath:\"//Main.Assignment[ConsultantName='\"+q[0]+\"'][Main.Assignment_Project/Main.Project/Name='\"+q[1]+\"']\",filter:{amount:5},callback:o=>r(o.length?['ASSIGN',q[0],q[1],d(o[0].get('StartDate')),d(o[0].get('EndDate')),o[0].get('Archived'),o[0].get('WeeklyHours')].join('|'):['ASSIGN',q[0],q[1],'ABSENT'].join('|')),error:e=>r(['ASSIGN',q[0],q[1],'ERROR',e.message].join('|'))})); return Promise.all([...P.map(proj),...A.map(asg)]).then(x=>x.join('\n')); }" 2>/dev/null | _tt_eval_str
+}
+
+# fx_reconcile_collect -- compare live configuration against the declared tables.
+# Prints one drift line per problem (empty output == clean). Printing rather than
+# appending to a global is deliberate: the read loop runs in a pipeline subshell,
+# so a global assignment inside it would be discarded.
+fx_reconcile_collect() {
+  local snap f1 f2 f3 f4 f5 f6 f7 f8 row name mgr cust li
+  local want_mgr want_cust want_li horizon
+
+  snap="$(fx_config_snapshot)"
+  case "$snap" in
+    ""|NOGAL*)
+      echo "    could not read configuration through the data API - reconciliation skipped" >&2
+      return 0 ;;
+  esac
+
+  # The suite steps forward up to ~10 weeks hunting an editable week, so an
+  # assignment ending sooner than that is unusable even though it exists.
+  horizon="$(date -d '+12 weeks' +%Y-%m-%d 2>/dev/null || echo '')"
+
+  printf '%s\n' "$snap" | while IFS='|' read -r f1 f2 f3 f4 f5 f6 f7 f8; do
+    [ -n "$f1" ] || continue
+    if [ "$f1" = "PROJECT" ]; then
+      if [ "$f3" = "ABSENT" ]; then
+        echo "    project '$f2' could not be read back through the data API"; continue
+      elif [ "$f3" = "ERROR" ]; then
+        echo "    project '$f2' read failed: $f4"; continue
+      fi
+      for row in "${FX_PROJECTS[@]}"; do
+        IFS='|' read -r name mgr cust li <<< "$row"
+        [ "$name" = "$f2" ] || continue
+        if [ "$mgr"  = "Yes" ]; then want_mgr=true;  else want_mgr=false;  fi
+        if [ "$cust" = "Yes" ]; then want_cust=true; else want_cust=false; fi
+        if [ "$li"   = "Yes" ]; then want_li=true;   else want_li=false;   fi
+        [ "$f3" = "$want_mgr" ]  || echo "    project '$f2' ApprovalFromManager is '$f3', table declares '$mgr'"
+        [ "$f4" = "$want_cust" ] || echo "    project '$f2' ApprovalFromCustomer is '$f4', table declares '$cust'"
+        [ "$f5" = "$want_li" ]   || echo "    project '$f2' NeedsLineItems is '$f5', table declares '$li'"
+        [ "$f6" = "false" ]      || echo "    project '$f2' is ARCHIVED - it will not appear on the PM dashboard or as a consultant week row"
+        [ "$f7" = "$FX_PROJECT_MANAGER" ] || echo "    project '$f2' ManagerName is '$f7', expected '$FX_PROJECT_MANAGER' (DS_ProjectsManaged retrieves via ProjectManager_Account, so the PM dashboard will not list it)"
+      done
+    elif [ "$f1" = "ASSIGN" ]; then
+      if [ "$f4" = "ABSENT" ]; then
+        echo "    assignment '$f2' -> '$f3' could not be read back through the data API"; continue
+      elif [ "$f4" = "ERROR" ]; then
+        echo "    assignment '$f2' -> '$f3' read failed: $f5"; continue
+      fi
+      [ "$f6" = "false" ] || echo "    assignment '$f2' -> '$f3' is ARCHIVED - that project renders no row for the consultant"
+      if [ -n "$horizon" ] && [ -n "$f5" ] && [ "$f5" \< "$horizon" ]; then
+        echo "    assignment '$f2' -> '$f3' ends $f5, within the ~12 weeks the tests step through (today+12w = $horizon) - tests walking forward for an editable week will run out of runway"
+      fi
+    fi
+  done
+}
+
 # ---------------------------------------------------------------- entry point
 fx_ensure_all() {
   [ -n "${TT_BASE_URL:-}" ] || tt_fail "fixtures: TT_BASE_URL must be set explicitly — this writes data and must never fall back to a default environment"
@@ -378,9 +480,20 @@ fx_ensure_all() {
   fx_ensure_consultants
   fx_ensure_assignments
 
+  # Existence is not enough -- reconcile the CONFIGURATION of what now exists.
+  FX_DRIFT="$(fx_reconcile_collect)"
+
   echo "  [fixtures] $FX_PRESENT present, $FX_CREATED created"
   if [ -n "$FX_MISSING" ]; then
     printf '  [fixtures] STILL MISSING:%b\n' "$FX_MISSING"
+    return 1
+  fi
+  if [ -n "$FX_DRIFT" ]; then
+    printf '  [fixtures] CONFIGURATION DRIFT (present, but not as declared):\n%s\n' "$FX_DRIFT"
+    if [ "${TT_FIXTURES_ALLOW_DRIFT:-0}" = "1" ]; then
+      echo "  [fixtures] TT_FIXTURES_ALLOW_DRIFT=1 - reported only, not failing"
+      return 0
+    fi
     return 1
   fi
   return 0

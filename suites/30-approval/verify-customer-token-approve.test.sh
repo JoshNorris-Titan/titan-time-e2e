@@ -51,19 +51,21 @@ tt_click_text "CLIENT APPROVAL"
 sleep 2
 
 TS=$(date +%s%3N)
-if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME"); then
+if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
   echo "reminded existing pending entry (week: $WEEK)"
 else
   echo "no pending '$CONSULTANT_NAME' entry — creating one via the consultant"
   tt_login "e2e_consultant" "My Timesheets"
-  tt_consultant_submit_entry || tt_fail "consultant: failed to submit a timesheet for setup"
+  # Must be an entry on THIS project: a generic submit can land on any assignment,
+  # and only $PROJECT produces a token for $CUSTOMER.
+  tt_consultant_submit_project_row "$PROJECT"
   tt_login "e2e_hr" "WEEKLY TO PROCESS"
   tt_click_text "CLIENT APPROVAL"
   sleep 2
   # Submitting may itself have sent mail; reset so the poll cannot latch onto it.
   tt_mail_prepare
   TS=$(date +%s%3N)
-  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME") \
+  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
     || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
   echo "reminded newly-created entry (week: $WEEK)"
 fi
@@ -91,9 +93,15 @@ playwright-cli cookie-clear >/dev/null 2>&1
 playwright-cli goto "$LINK" >/dev/null 2>&1
 tt_wait_for ".mx-name-galPendingEntries" "customer-approval pending list"
 
+# Log every row the token page is offering. One token page covers a whole
+# CUSTOMER, so it can list several projects; when a match fails, this shows
+# exactly what was on offer instead of leaving "none for week X" unexplained.
+playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=[...g.querySelectorAll('.mx-name-btnView')].map(v=>{ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||'').replace(/\\s+/g,' ').trim(); if(t.length>25) return t.slice(0,120); } return '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
+
+
 # Open the review popup for OUR week. Falling back to the first row would make the
 # later assertions describe an entry we did not choose, so a miss is a failure.
-opened="$(playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView')]; for(const v of vs){ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; if((p.innerText||'').indexOf('$WEEKFRAG')>=0){ v.click(); return 'hit'; } } } return vs.length ? 'nomatch' : 'empty'; }" 2>/dev/null | _tt_eval_str)"
+opened="$(playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView')]; for(const v of vs){ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=p.innerText||''; if(t.indexOf('$WEEKFRAG')>=0 && t.indexOf('$PROJECT')>=0){ v.click(); return 'hit'; } } } return vs.length ? 'nomatch' : 'empty'; }" 2>/dev/null | _tt_eval_str)"
 case "$opened" in
   hit)     ;;
   nomatch) tt_fail "the token page lists entries but none for week '$WEEK'" ;;
@@ -115,9 +123,17 @@ sleep 3
 
 # The entry must leave the client's pending list — the anonymous half of the
 # transition. Poll: the workflow commits asynchronously.
+#
+# MATCH ON WEEK **AND** PROJECT, never the week alone. One token page covers a
+# whole CUSTOMER, and a customer can own several client-approval projects the
+# same consultant works on — on dev, Costco owns both 'E2E Customer Approval'
+# and 'E2E Dual Approval'. With a week-only check, approving our entry left the
+# OTHER project's entry for the same week sitting in the list, and this step
+# reported "still pending after Approve" for a approval that had in fact
+# succeeded. WEEKFRAG is only "Mon DD", so it collides readily.
 gone=""
 for _ in $(seq 1 10); do
-  still="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); return String(!!g && (g.innerText||'').indexOf('$WEEKFRAG') >= 0); }" 2>/dev/null | _tt_eval_str)"
+  still="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return 'false'; const rows=[...g.querySelectorAll('.mx-name-btnView')].map(v=>{ let p=v; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=p.innerText||''; if(t.indexOf('$WEEKFRAG')>=0 || t.indexOf('$PROJECT')>=0) return t; } return ''; }); return String(rows.some(t => t.indexOf('$WEEKFRAG')>=0 && t.indexOf('$PROJECT')>=0)); }" 2>/dev/null | _tt_eval_str)"
   [ "$still" = "false" ] && { gone=1; break; }
   sleep 3
 done
