@@ -91,8 +91,24 @@ tt_goto_week_with_project() {
 }
 
 # tt_goto_fresh_week <project-substring> [max-weeks]
-# A "fresh" week for A1/B1 = one where the project row exists AND every day cell on
-# that row is empty (never entered). Steps forward from the current week.
+# A "fresh" week for A1/B1 = one where the project row exists, every day cell on
+# that row reads as empty, AND the week is still actionable. Steps forward from
+# the current week.
+#
+# WHY THE ACTIONABLE CHECK. "Reads as empty" cannot mean "never used". Main.SUB_
+# Timesheet_Zero converts every empty day value to 0 whenever a week is saved or
+# submitted, so ANY week that has been touched before reads 0.00 in all seven
+# cells for good - identical, on screen, to a week nobody has opened. Treating
+# '', '0' and '0.00' alike is still right for THIS job; what was missing is a
+# second question the values cannot answer.
+#
+# tt_week_actionable asks the app instead: Clear, Save and Submit are all hidden
+# once Main.Timesheet.Status leaves Draft/Rejected/(empty), and a hidden Mendix
+# widget is absent from the DOM. A week that has moved on is therefore one no
+# caller of this helper can do anything with - they all fill, save, submit or
+# clear - so it is skipped here rather than handed over to fail obscurely later.
+# verify-timesheet-clear took such a week and reported "Clear did not empty the
+# week" about a Clear button that was not on the page.
 tt_goto_fresh_week() {
   local proj="$1" max="${2:-16}" i
   for i in $(seq 1 "$max"); do
@@ -102,7 +118,10 @@ tt_goto_fresh_week() {
         # all day inputs on the matching row blank?
         local blank
         blank=$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-galAssignmentRows [class*=mx-name-txtDay]')]; if(!rows.length) return 'norows'; const vals=rows.map(i=>(i.querySelector('input')||i).value||''); return String(vals.every(v=>v===''||v==='0'||v==='0.00')); }" 2>/dev/null | sed -n '2p' | tr -d '"')
-        if [ "$blank" = "true" ]; then tt_week_label; return 0; fi
+        # Blank-looking is necessary but not sufficient - see the note above.
+        if [ "$blank" = "true" ] && [ "$(tt_week_actionable)" = "true" ]; then
+          tt_week_label; return 0
+        fi
         ;;
     esac
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
