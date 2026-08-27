@@ -643,14 +643,17 @@ _tt_login_interactive() {
 #
 # tt_assert_all is deliberately single-shot: one indexOf, no retry. That is right
 # for content already on screen, and wrong for content still being fetched.
-# verify-pm-dashboard-pending asserted the managed-project card immediately after
-# login and failed in 4 SECONDS with "expected text not found:
-# 'E2E Customer Approval'" -- while the project was correctly configured, correctly
-# associated to e2e_pm, active, and one of only 10 that PM manages (well inside any
-# page size). The test simply looked before Main.DS_ProjectsManaged had rendered.
-# Its one tt_wait_for came AFTER the assertion that failed.
 #
 # Wait once for the slow thing, then assert the rest single-shot as before.
+#
+# WHAT THIS HELPER CANNOT DO. It only waits; it never makes the page load more. The
+# note that used to sit here blamed verify-pm-dashboard-pending's managed-project
+# failure on render timing and claimed the project was "one of only 10 that PM
+# manages, well inside any page size". Both halves were wrong. That gallery pages at
+# THREE with virtual scrolling, so 'E2E Customer Approval' was not in the DOM at all
+# and no amount of waiting could ever find it. When the target lives in a gallery,
+# reach for tt_gallery_load_until_text below instead -- a text wait against a paged
+# list fails after the full timeout and reads exactly like slow data.
 tt_wait_text() {
   local needle="$1" label="${2:-$1}" tries="${3:-20}" i
   for i in $(seq 1 "$tries"); do
@@ -669,6 +672,105 @@ tt_assert_all() {
     playwright-cli eval "() => String(document.body.innerText.indexOf('$s') >= 0)" 2>/dev/null | grep -qiw true \
       || tt_fail "$label: expected text not found: '$s'"
   done
+}
+
+# ------------------------------------------------------------------ gallery paging
+#
+# WHY THIS EXISTS. The galleries on this app are configured with Pagination =
+# "virtual scrolling", which renders ONLY the currently loaded page and emits NO
+# paging controls at all. The widget asks for the next page from an onScroll handler
+# on its own .widget-gallery-content box:
+#
+#     scrollHeight - 30 - scrollTop <= clientHeight + 2   ->  setPage(p + 1)
+#
+# so nothing new arrives until THAT element is scrolled. Scrolling the window does
+# nothing, and there is no button to click.
+#
+# This cost the suite days. Main.SNIP_ProjectsDashboardView's Projects gallery has
+# pageSize 3, and Main.DS_ProjectsManaged sorts createdDate DESCENDING, so the PM
+# dashboard shows only the three NEWEST projects e2e_pm manages. Once dev accumulated
+# more E2E projects, 'E2E Customer Approval' stopped being in the DOM at all --
+# verify-pm-dashboard-pending failed on a text wait that could never succeed, and it
+# was read as a rendering-timing problem. Main.ProjectManagerDashboard's
+# galPMPendingEntries carries the same setting with pageSize 10.
+#
+# tt_gallery_load_until_text <gallery-css> <text> [label] [max-rounds]
+#
+# Scroll a virtual-scrolling gallery until <text> is inside it, or until the gallery
+# runs out of items to load. <gallery-css> must resolve to EXACTLY ONE element -- the
+# helper refuses to guess which of several lists to scroll, because scrolling the
+# wrong one looks identical to a missing row. <text> must not contain a single quote.
+#
+# Fails (via tt_fail) when the text never turns up, naming every card it did load.
+tt_gallery_load_until_text() {
+  local gal="$1" needle="$2" label="${3:-$2}" rounds="${4:-12}"
+  local n before after stuck=0 i
+
+  n="$(playwright-cli eval "() => String(document.querySelectorAll('$gal').length)" 2>/dev/null | _tt_eval_str)"
+  case "$n" in
+    1)           ;;
+    0)           tt_fail "$label: no gallery matches '$gal'" ;;
+    ''|*[!0-9]*) tt_fail "$label: could not count the galleries matching '$gal' (got [$n])" ;;
+    *)           tt_fail "$label: '$gal' matches $n elements — scope it to one gallery; this helper will not guess which list to scroll" ;;
+  esac
+
+  # Virtual scrolling is both what makes this helper necessary and what makes it
+  # work. If the box is not there, scrolling loads nothing and a silent no-op would
+  # send the next reader hunting a data problem again.
+  if [ "$(playwright-cli eval "() => String(!!document.querySelector('$gal .widget-gallery-content.infinite-loading'))" 2>/dev/null | _tt_eval_str)" != "true" ]; then
+    tt_fail "$label: '$gal' has no virtual-scrolling content box (.widget-gallery-content.infinite-loading). Either the gallery has not rendered yet, or its Pagination was changed away from virtual scrolling — in which case scrolling loads nothing and this is the wrong helper."
+  fi
+
+  for i in $(seq 1 "$rounds"); do
+    if [ "$(_tt_gallery_has_text "$gal" "$needle")" = "true" ]; then
+      echo "  [$label] '$needle' is loaded — $(_tt_gallery_count "$gal") card(s) after $((i - 1)) scroll(s)"
+      return 0
+    fi
+
+    before="$(_tt_gallery_count "$gal")"
+    # Assigning scrollTop fires a real scroll event, which is what the widget
+    # listens for; the explicit dispatch covers the case where the assignment is a
+    # no-op because the box is already at the bottom.
+    playwright-cli eval "() => { const c = document.querySelector('$gal .widget-gallery-content'); if (!c) return 'NOBOX'; c.scrollTop = c.scrollHeight; c.dispatchEvent(new Event('scroll', { bubbles: true })); return String(c.scrollTop); }" >/dev/null 2>&1
+    sleep 2
+    after="$(_tt_gallery_count "$gal")"
+
+    if [ "$after" = "$before" ]; then
+      # One barren round can be a slow fetch; two in a row means the list is done.
+      stuck=$((stuck + 1))
+      [ "$stuck" -lt 2 ] || break
+    else
+      stuck=0
+    fi
+  done
+
+  # The last scroll may have landed while we were counting.
+  if [ "$(_tt_gallery_has_text "$gal" "$needle")" = "true" ]; then
+    echo "  [$label] '$needle' is loaded — $(_tt_gallery_count "$gal") card(s)"
+    return 0
+  fi
+
+  echo "  [$label] cards loaded: $(tt_gallery_titles "$gal")" >&2
+  tt_fail "$label: '$needle' is not in '$gal' after loading $(_tt_gallery_count "$gal") card(s) and running out of items to load. The gallery paged to the end, so this is missing data or a wrong name — not a paging problem."
+}
+
+# _tt_gallery_count <gallery-css> — how many cards are currently in the DOM.
+_tt_gallery_count() {
+  playwright-cli eval "() => String(document.querySelectorAll('$1 .widget-gallery-item').length)" 2>/dev/null | _tt_eval_str
+}
+
+# _tt_gallery_has_text <gallery-css> <text> — 'true' when the text is inside THIS
+# gallery. Scoped deliberately: the page body carries other sections (the PM
+# dashboard's Pending Approval list names projects too), so a body-wide check
+# answers a different question than the one the caller is asking.
+_tt_gallery_has_text() {
+  playwright-cli eval "() => { const g = document.querySelector('$1'); return String(!!g && (g.innerText || '').indexOf('$2') >= 0); }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_gallery_titles <gallery-css> — the first line of each loaded card, comma
+# separated. For diagnostics: "what did the gallery actually show me".
+tt_gallery_titles() {
+  playwright-cli eval "() => [...document.querySelectorAll('$1 .widget-gallery-item')].map(e => (((e.innerText || '').split('\n').find(s => s.trim())) || '(blank)').trim()).join(', ') || '(no cards)'" 2>/dev/null | _tt_eval_str
 }
 
 # tt_combobox_sorted <combobox-css> <dismiss-css> <label>
