@@ -278,7 +278,11 @@ tt683_select_week() {
 # not own. Same reasoning as lib/_testdata.sh: on a shared dev environment,
 # draining the whole To Process tab would consume other people's timesheets.
 # Cards are matched on the consultant name being one of TT683_E2E_CONSULTANTS.
-TT683_E2E_CONSULTANTS="${TT_E2E_CONSULTANTS:-E2E Consultant|E2E Consultant Two}"
+# Kept identical to the default in lib/_testdata.sh: both answer the same
+# question ("which consultants does the suite own"), and if they disagree the
+# clear owns a consultant this does not, so seeded rows for that consultant get
+# deleted without ever having been processed here.
+TT683_E2E_CONSULTANTS="${TT_E2E_CONSULTANTS:-E2E Consultant|E2E Consultant Two|E2E Consultant Three}"
 
 # _tt683_owned_js — JS boolean expression testing whether card text `t` belongs
 # to an e2e consultant. Built from TT683_E2E_CONSULTANTS so the list stays in
