@@ -20,6 +20,18 @@ source "$TT_ROOT/lib/_login.sh"
 tt_login "e2e_pm" "Project Manager Dashboard"
 
 # Managed-project card (stable data: project + assignment + PM linkage).
+#
+# The card comes from Main.DS_ProjectsManaged through a gallery in
+# Main.SNIP_ProjectsDashboardView, so it renders ASYNCHRONOUSLY after login. Wait
+# for it before asserting: this test used to fail in 4s against a correctly
+# configured project simply because it looked too early.
+# Log what the dashboard actually rendered before asserting on it: DS_ProjectsManaged
+# returns every non-archived project for this PM, so "which ones came back" is the
+# first thing worth knowing when a name is missing.
+playwright-cli eval "() => { const b=document.body.innerText||''; const m=b.match(/E2E [A-Za-z ]+/g); return m ? [...new Set(m)].join(', ') : '(no E2E project names on the page)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [pm-dashboard projects] /'
+
+tt_wait_text "E2E Customer Approval" "managed-project card on the PM dashboard"
+
 tt_assert_all "PM dashboard: managed project" \
   "Project Manager Dashboard" \
   "E2E Customer Approval" \
@@ -27,6 +39,9 @@ tt_assert_all "PM dashboard: managed project" \
   "E2E ProjectManger"
 
 # Pending-approval oversight section (data-dependent on a standing pending entry).
+# Same asynchronous-load caveat as above.
+tt_wait_text "Pending Approval" "pending-approval section on the PM dashboard"
+
 tt_assert_all "PM dashboard: pending approval" \
   "Pending Approval" \
   "E2E Consultant"

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # TT-647 angle 3 — an entry that reached ToProcess with NO approval step reads
-# "No approval required", not the consultant's own name.
+# 'N/A' on both lines, and above all NOT the consultant's own name.
 #
 # Main.ACT_AssignmentEntry_Submit routes a zero-hour entry straight to ToProcess
 # (Status = if TotalHours = 0 then ToProcess ...) and logs it with
-# ChangeMethod=Consultant_Solo. Main.SUB_ApprovalHelper_SetApprovalLines finds no
-# genuine approval row for that cycle, so line 1 must read "No approval required".
+# ChangeMethod=Consultant_Solo, which the approval filter excludes. With no
+# genuine approval row in the cycle, both lines fall back to the literal 'N/A'.
 #
-# This is the case that would otherwise render "Approved by <the consultant
-# themselves>", which is the misleading output Josh explicitly ruled out.
+# This is the case that would otherwise credit the consultant as their own
+# approver, which is the misleading output Josh explicitly ruled out.
 #
 # Seeds a zero-hour week for e2e_consultant2 on the sandbox project if the To
 # Process tab has no such card yet. Env: TT_BASE_URL, TT_ROLE_PASS.
@@ -21,7 +21,7 @@ source "$TT_ROOT/lib/_tt647.sh"
 
 CUSER="${TT_A3_USER:-e2e_consultant2}"
 CNAME="${TT_A3_NAME:-E2E Consultant Two}"
-EXPECT="No approval required"
+EXPECT="N/A"
 
 # Seed: step to an editable week, force every day box to 0, submit.
 # Zeroing uses the native value setter (a plain fill does not always commit a
@@ -74,12 +74,14 @@ echo "line2: '$L2'"
 [ "$L1" = "$EXPECT" ] \
   || tt_fail "expected line 1 to read '$EXPECT' for an entry with no approval step, got: '$L1'"
 
-# "No approval required" is a whole-line replacement — there is no second line.
-[ -z "$L2" ] || tt_fail "line 2 should be empty when no approval was required, got: '$L2'"
+# No approval at either stage, so line 2 carries the same empty marker.
+[ "$L2" = "$EXPECT" ] || tt_fail "line 2 should also read '$EXPECT', got: '$L2'"
 
-# Guard the specific wrong output this scenario exists to prevent.
-case "$L1" in
-  *"Approved by $CNAME"*) tt_fail "the consultant is being credited as their own approver: '$L1'" ;;
+# Guard the specific wrong output this scenario exists to prevent: if the cycle
+# filter ever let a submit/draft ChangeLog through, the consultant's own name
+# would appear here as their own approver.
+case "$L1$L2" in
+  *"$CNAME"*) tt_fail "the consultant is being credited as their own approver: line1='$L1' line2='$L2'" ;;
 esac
 
 echo "PASS: verify-tt647-a3-no-approval-required — no-approval entry renders '$L1'"

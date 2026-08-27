@@ -583,6 +583,33 @@ _tt_login_interactive() {
   esac
 }
 
+# tt_wait_text <text> [label] [tries]
+#
+# Poll until <text> appears anywhere in the page body. Use this INSTEAD of
+# tt_assert_all for the first assertion that depends on an asynchronously loaded
+# widget -- a gallery or list backed by a microflow data source.
+#
+# tt_assert_all is deliberately single-shot: one indexOf, no retry. That is right
+# for content already on screen, and wrong for content still being fetched.
+# verify-pm-dashboard-pending asserted the managed-project card immediately after
+# login and failed in 4 SECONDS with "expected text not found:
+# 'E2E Customer Approval'" -- while the project was correctly configured, correctly
+# associated to e2e_pm, active, and one of only 10 that PM manages (well inside any
+# page size). The test simply looked before Main.DS_ProjectsManaged had rendered.
+# Its one tt_wait_for came AFTER the assertion that failed.
+#
+# Wait once for the slow thing, then assert the rest single-shot as before.
+tt_wait_text() {
+  local needle="$1" label="${2:-$1}" tries="${3:-20}" i
+  for i in $(seq 1 "$tries"); do
+    if playwright-cli eval "() => String(document.body.innerText.indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
+      return 0
+    fi
+    sleep 1
+  done
+  tt_fail "timed out waiting for text: $label"
+}
+
 tt_assert_all() {
   local label="$1"; shift
   local s
@@ -650,8 +677,20 @@ tt_combobox_select_text() {
 # Prints the matched week label and returns 0 on success; returns 1 if no
 # matching entry is found in any listed week. (Reminding does NOT consume the
 # entry, so the flow stays idempotent.)
+# tt_hr_remind_e2e_entry <consultantName> [projectName]
+#
+# Clicks Remind on a pending card for <consultantName>, walking the week list until
+# one matches. Pass <projectName> to require the card to be for that project too.
+#
+# WHY THE PROJECT ARGUMENT MATTERS. Matching on the consultant alone picks whatever
+# pending entry comes first, and dev carries several client-approval projects for
+# the same consultant on DIFFERENT customers (E2E ClientApproval B/C/D/E ->
+# Walmart/Yamaha/Rapidappwerks/Thomas Inc., alongside E2E Customer Approval ->
+# Costco). The approval token is per PROJECT, so reminding an unscoped entry emails
+# a token for some other customer, and a caller asserting a fixed customer name on
+# the token page fails on data selection rather than on anything the product did.
 tt_hr_remind_e2e_entry() {
-  local who="$1" labels lbl
+  local who="$1" proj="${2:-}" labels lbl
   # playwright-cli wraps eval results in a JSON string, so a returned array would
   # arrive double-encoded; return a pipe-joined line instead and split in bash.
   labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const set=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - [A-Z][a-z]{2} \\d{2}/.test(t)))]; return set.join('|'); }" 2>/dev/null | sed -n '2p')
@@ -661,7 +700,7 @@ tt_hr_remind_e2e_entry() {
     [ -n "$lbl" ] || continue
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 4
-    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(el && (el.innerText||'').indexOf('$who')>=0){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
+    if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
       echo "$lbl"
       return 0
     fi
@@ -901,10 +940,21 @@ tt_consultant_submit_entry() {
 # Mon-Fri, and submits — clicking through any confirm dialog. Targets the correct
 # row by computing its ordinal at runtime (row order is not assumed) and using
 # Playwright's :nth-match. Best-effort (exact hours may vary); returns 0.
+# Row identification: walk UP from a day input until we reach the container that
+# both mentions <proj> and holds exactly ONE day-row (one .mx-name-txtDayMon). The
+# single-row test is what stops us ascending into a wrapper that spans several
+# assignments and then submitting the wrong one.
+#
+# It replaced a guard that required exactly one match of
+# /E2E (Customer|Manager) Approval/ in the row text. That hardcoded two project
+# names, so "E2E Dual Approval" matched ZERO times, the condition was never true,
+# and verify-tt647-a5 failed every run with "no editable week with a
+# 'E2E Dual Approval' row found" - which read like a missing fixture and was not
+# (the assignment exists on dev, 2026-07-01..2027-12-31).
 tt_consultant_submit_project_row() {
   local proj="$1" ord="" i d
   for i in $(seq 1 12); do
-    ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const isTarget=(mon)=>{let el=mon; for(let k=0;k<12;k++){el=el.parentElement; if(!el)break; const t=el.innerText||''; if(t.indexOf('$proj')>=0 && (t.match(/E2E (Customer|Manager) Approval/g)||[]).length===1) return true;} return false;}; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); if(isTarget(mons[n]) && inp && !inp.disabled && !inp.readOnly && document.querySelector('.mx-name-btnSubmit')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p')
+    ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const isTarget=(mon)=>{let el=mon; for(let k=0;k<12;k++){el=el.parentElement; if(!el)break; const t=el.innerText||''; if(t.indexOf('$proj')>=0 && el.querySelectorAll('.mx-name-txtDayMon').length===1) return true;} return false;}; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); if(isTarget(mons[n]) && inp && !inp.disabled && !inp.readOnly && document.querySelector('.mx-name-btnSubmit')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p')
     ord="${ord%\"}"; ord="${ord#\"}"
     [ -n "$ord" ] && [ "$ord" != "0" ] && break
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
