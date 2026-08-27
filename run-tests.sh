@@ -25,15 +25,44 @@
 #   ./run-tests.sh --list
 #   ./run-tests.sh --expect-count 52        fail unless exactly 52 tests are found
 #   ./run-tests.sh --junit results.xml --skip-file ci-skip.txt
+#   ./run-tests.sh --no-fail-fast           run the whole suite even after a failure
+#
+# Fail-fast is ON by default: the first FAIL stops the run, and the only thing that
+# still executes is the teardown (suites/99-teardown/, i.e. verify-zzz-*), so the
+# environment is left clean and the browser session is closed. Everything after the
+# failure is reported as "not run", never as passed.
 #
 # Env:
-#   TT_BASE_URL    app origin, no trailing slash (default http://localhost:8080)
+#   TT_BASE_URL    app origin, no trailing slash. REQUIRED — there is no default.
+#                  Pass --base-url instead if you prefer. See the note below.
 #   TT_ADMIN_USER / TT_ADMIN_PASS / TT_ROLE_PASS   see lib/_login.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-BASE_URL="${TT_BASE_URL:-http://localhost:8080}"
+# NO DEFAULT, DELIBERATELY.
+#
+# This used to be `${TT_BASE_URL:-http://localhost:8080}`, and a few lines below the
+# result is exported as TT_BASE_URL for every test. That export SATISFIED the guard in
+# lib/_fixtures.sh (fx_ensure_all):
+#
+#   "fixtures: TT_BASE_URL must be set explicitly - this writes data and must never
+#    silently fall back to a default environment"
+#
+# so the guard could never fire, and `./run-tests.sh` with no env quietly ran the whole
+# suite -- including the write-capable fixture provisioning -- against whatever app
+# happened to be listening on 8080.
+#
+# That is not hypothetical. On 2026-08-27 a run intended for dev went to a local F5 app
+# whose database holds the demo users (Warren/Sam/Blake) and only part of the E2E
+# fixtures. It reported two consultants MISSING and aborted on an unreadable project
+# customer, which read exactly like dev data drift; dev was in fact clean (14 present,
+# 0 created). The whole investigation was chasing a phantom.
+#
+# Running locally stays fully supported -- it just has to be said out loud:
+#   TT_BASE_URL=http://localhost:8080 ./run-tests.sh
+#   ./run-tests.sh --base-url http://localhost:8080
+BASE_URL="${TT_BASE_URL:-}"
 JUNIT=""
 SKIP_FILE=""
 # 2m was tuned against a local F5 run. Against Mendix Cloud dev the same steps take
@@ -48,6 +77,18 @@ LIST_ONLY=0
 EXPECT_COUNT=""
 VERBOSE=0
 HEALTH_CHECK=1
+# Stop at the first failure and go straight to teardown. On by default.
+#
+# The suite shares one browser session and one database, and the steps are ordered
+# on purpose (00-setup seeds and clears, 99-teardown clears again). Once a step
+# fails, everything after it runs against a state nobody designed: a half-written
+# timesheet, a week the failing step claimed but never released, a login that never
+# happened. Those downstream failures are noise that reads like signal, and the real
+# one scrolls off the top. Worse, a run that keeps going keeps WRITING.
+#
+# Teardown is deliberately exempt -- skipping it would leak the seeded rows into the
+# next run, which is the failure mode lib/_testdata.sh was written to stop.
+FAIL_FAST=1
 TARGETS=()
 
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
@@ -62,12 +103,28 @@ while [ $# -gt 0 ]; do
     --expect-count)     EXPECT_COUNT="$2"; shift 2 ;;
     --verbose|-v)       VERBOSE=1; shift ;;
     --skip-health-check) HEALTH_CHECK=0; shift ;;
+    --no-fail-fast|--keep-going) FAIL_FAST=0; shift ;;
+    --fail-fast)        FAIL_FAST=1; shift ;;
     --color)            shift ;;   # accepted for compatibility, no-op
     -h|--help)          usage ;;
     -*)                 echo "unknown flag: $1" >&2; exit 2 ;;
     *)                  TARGETS+=("$1"); shift ;;
   esac
 done
+
+# --list only enumerates files on disk, so it needs no environment.
+if [ -z "$BASE_URL" ] && [ "$LIST_ONLY" -eq 0 ]; then
+  cat >&2 <<'EOF'
+FATAL: no target environment. Set TT_BASE_URL or pass --base-url.
+
+  This suite WRITES data (lib/_fixtures.sh provisions projects and assignments, and
+  the 00-setup bookends clear timesheets), so it will not guess where to run.
+
+    TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh
+    ./run-tests.sh --base-url http://localhost:8080        # local F5 run
+EOF
+  exit 2
+fi
 
 BASE_URL="${BASE_URL%/}"
 export TT_BASE_URL="$BASE_URL"
@@ -226,13 +283,45 @@ xml_escape() {
       -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
-PASSED=0; FAILED=0; SKIPPED=0
+PASSED=0; FAILED=0; SKIPPED=0; NOTRUN=0
 CASES_FILE="$(mktemp)"
 RUN_START=$(date +%s)
+
+# Set to the name of the step that tripped fail-fast, empty while the run is healthy.
+ABORTED_BY=""
+
+# is_teardown <path> — does this script still run after a fail-fast abort?
+#
+# Matched two ways on purpose: the folder is the real contract (suites/99-teardown/),
+# and the verify-zzz- prefix is what makes it sort last under the runner's LC_ALL=C
+# sort. A file that satisfies only one of the two is almost certainly a mistake, but
+# treating it as teardown is the safe direction to be wrong in -- the cost is running
+# one extra cleanup step, versus leaking seeded rows into the next run.
+is_teardown() {
+  case "$1" in
+    */99-teardown/*)  return 0 ;;
+  esac
+  case "$(basename "$1")" in
+    verify-zzz-*)     return 0 ;;
+  esac
+  return 1
+}
 
 for script in "${SCRIPTS[@]}"; do
   name="$(basename "$script" .test.sh)"
   base="$(basename "$script")"
+
+  # Fail-fast: everything after the first failure is reported as "not run" rather
+  # than silently dropped, so the totals still add up to the discovered count and
+  # --expect-count keeps meaning something.
+  if [ -n "$ABORTED_BY" ] && ! is_teardown "$script"; then
+    echo "NOTRUN $name"
+    NOTRUN=$((NOTRUN+1))
+    { echo "    <testcase name=\"$(printf '%s' "$name" | xml_escape)\" time=\"0\">"
+      echo "      <skipped message=\"not run - suite aborted after $(printf '%s' "$ABORTED_BY" | xml_escape) failed\"/>"
+      echo "    </testcase>"; } >> "$CASES_FILE"
+    continue
+  fi
 
   if [ -n "${SKIP[$base]:-}" ]; then
     echo "SKIP  $name"
@@ -266,17 +355,30 @@ for script in "${SCRIPTS[@]}"; do
       printf '%s\n' "$out" | sed 's/]]>/]]]]><![CDATA[>/g'
       echo "      ]]></failure>"
       echo "    </testcase>"; } >> "$CASES_FILE"
+
+    # Trip the abort on the FIRST failure only, and never on the teardown itself --
+    # by the time teardown runs there is nothing left to skip, and blaming the abort
+    # on it would misreport which step actually broke.
+    if [ "$FAIL_FAST" -eq 1 ] && [ -z "$ABORTED_BY" ] && ! is_teardown "$script"; then
+      ABORTED_BY="$name"
+      echo "----------------------------------------------------------------"
+      echo "fail-fast: stopping after '$name'. Running teardown, then reporting."
+      echo "           (use --no-fail-fast to run the whole suite regardless)"
+      echo "----------------------------------------------------------------"
+    fi
   fi
 done
 
 RUN_END=$(date +%s); TOTAL_TIME=$((RUN_END-RUN_START))
-TOTAL=$((PASSED+FAILED+SKIPPED))
+TOTAL=$((PASSED+FAILED+SKIPPED+NOTRUN))
 
 # --- junit -----------------------------------------------------------------
 if [ -n "$JUNIT" ]; then
   { echo '<?xml version="1.0" encoding="UTF-8"?>'
     echo "<testsuites>"
-    echo "  <testsuite name=\"titan-time-e2e\" tests=\"$TOTAL\" failures=\"$FAILED\" skipped=\"$SKIPPED\" time=\"$TOTAL_TIME\">"
+    # Both the skip-file skips and the fail-fast "not run" cases emit <skipped/>,
+    # so the attribute has to count both or the XML contradicts its own elements.
+    echo "  <testsuite name=\"titan-time-e2e\" tests=\"$TOTAL\" failures=\"$FAILED\" skipped=\"$((SKIPPED+NOTRUN))\" time=\"$TOTAL_TIME\">"
     cat "$CASES_FILE"
     echo "  </testsuite>"
     echo "</testsuites>"; } > "$JUNIT"
@@ -285,6 +387,11 @@ fi
 rm -f "$CASES_FILE"
 
 echo "----------------------------------------------------------------"
-echo "$TOTAL tests: $PASSED passed, $FAILED failed, $SKIPPED skipped  (${TOTAL_TIME}s)"
+if [ "$NOTRUN" -gt 0 ]; then
+  echo "$TOTAL tests: $PASSED passed, $FAILED failed, $SKIPPED skipped, $NOTRUN not run  (${TOTAL_TIME}s)"
+  echo "ABORTED after '$ABORTED_BY' — $NOTRUN step(s) never ran, so this run says nothing about them."
+else
+  echo "$TOTAL tests: $PASSED passed, $FAILED failed, $SKIPPED skipped  (${TOTAL_TIME}s)"
+fi
 
 [ "$FAILED" -eq 0 ]
