@@ -14,6 +14,13 @@
 #   a plain TIMEOUT. The runner now reads the whole header, but a directive is
 #   still easiest to trust where it cannot be pushed anywhere.
 #
+#   EXPECT THIS STEP TO GET LONGER, not shorter. The 474s run of 2026-08-28 was
+#   fast only because every send was miscounted as a failure: that left nothing to
+#   read back, and the poll loop exited on its first round. Counting the sends
+#   properly means the loop actually runs, and the read-back is now the expensive
+#   half. Against that, ~12s per type comes back from the wait this no longer does,
+#   and ~1s per popup field is paid for the re-mark. 15m still covers it.
+#
 # Every email type the app can send must have a template row behind it.
 #
 # WHY THIS EXISTS. The subject and body of each email are not in the model — they
@@ -80,6 +87,48 @@
 # is skipped). Covering those needs a branch for them in Main.ACT_SendTemplate1,
 # or a different route to the template list; the step says so rather than
 # pretending.
+#
+# WHAT WAS WRONG ON 2026-08-28, AND HOW THE SEND IS JUDGED NOW
+#
+# The version before this one treated "the popup closed itself" as the signal
+# that a send had gone through, and waited twelve seconds for it. That premise is
+# false, and it failed all nine sendable types in a single run.
+#
+# Read from the live model on 2026-08-28: the Send button on every tester popup
+# (Main.Remind_Consultant_Tester.actionButton1 and its eight siblings) is a
+# MICROFLOW action calling Main.SUB_SendEmail_Template - synchronous, no progress
+# bar, and NO close-page. Main.SUB_SendEmail_Template contains no close-page
+# activity anywhere either, inside its send loop or outside it. The only widget on
+# those popups that closes anything is Cancel. So a popup still standing after
+# Send is the DESIGNED behaviour, not a microflow that never returned.
+#
+# The run said as much itself and nobody read it: it reported "the send could not
+# be completed" for all nine types and, three lines earlier, "4 new rows visible
+# on the Emails Sent page". Those rows are diffed against the baseline THIS test
+# takes at its top, so four of the sends it had just called failures had in fact
+# raised mail. The other five had not been through the two-minute queue yet.
+#
+# The reason text made it worse. With the popup still up, tt_clear_dialogs picked
+# the last visible .modal-content - the tester popup itself - found no
+# yes/ok/confirm button among its Send and Cancel, and reported it as a blocking
+# dialog. Every "dialog:x Remind Consultant Email ..." in that output was the
+# popup's own title being read back as if the app had complained.
+#
+# So the send is now judged on what the app actually offers:
+#
+#   * the Send button carries disabledDuringExecution, so it is DISABLED while the
+#     microflow runs and enabled again when it returns. That, not the popup
+#     closing, is the "it finished" signal - and waiting for it is also what stops
+#     Cancel racing a send that is still in flight;
+#   * a modal appearing ON TOP of the popup is the only UI evidence of a send that
+#     actually failed, so the poll counts visible modals against the count taken
+#     before the click and reports the extra one's text;
+#   * the popup is then closed with Cancel, deliberately. Cancel rolls back the
+#     client-side EmailHelper only; by the time it returns, SUB_SendEmail_Template
+#     has already committed the template and queued the message server-side.
+#
+# Whether a template row exists is left where it always belonged: the Emails Sent
+# readback in section 3.
 #
 # ASSUMPTION, stated because it could not be checked without running: that
 # Main.SUB_SendEmail_Template sends to the address in the tester's own email
@@ -170,14 +219,56 @@ et_pick_type() {
 # class no Mendix widget uses, and every later selector is scoped to that tag — so
 # an action can only ever reach the popup that is actually on screen.
 #
+# The widget names are de-duplicated. The name comes from walking up to eight
+# parents for an mx-name-* class, so two inputs under one named container resolve
+# to the SAME name - and a selector matching two inputs is refused by Playwright
+# in strict mode, which tt_fill_commit swallows, leaving both fields blank and
+# nothing said about it.
+#
 # Prints  none
 #     or  popup|<title>|<blank field widget names, comma separated>|<send button widget name>
 et_mark_popup() {
-  playwright-cli eval "() => { const vis=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); document.querySelectorAll('.tt-live-popup').forEach(e=>e.classList.remove('tt-live-popup')); const d=vis[vis.length-1]; if(!d) return 'none'; d.classList.add('tt-live-popup'); const wname=el=>{ let p=el; for(let k=0;k<8&&p;k++){ const m=((p.className||'')+'').match(/mx-name-[A-Za-z0-9_]+/); if(m) return m[0]; p=p.parentElement; } return ''; }; const blanks=[...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.disabled && !i.readOnly && !((i.value||'').trim())).map(wname).filter(Boolean); const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const send=btns.find(b=>/^send\$/i.test((b.innerText||'').trim())) || btns.find(b=>/btn-success/.test((b.className||'')+'')); const title=(((d.querySelector('.modal-header')||{}).innerText)||'').replace(/\s+/g,' ').trim(); return 'popup|'+title+'|'+blanks.join(',')+'|'+(send?wname(send):''); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const vis=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); document.querySelectorAll('.tt-live-popup').forEach(e=>e.classList.remove('tt-live-popup')); const d=vis[vis.length-1]; if(!d) return 'none'; d.classList.add('tt-live-popup'); const wname=el=>{ let p=el; for(let k=0;k<8&&p;k++){ const m=((p.className||'')+'').match(/mx-name-[A-Za-z0-9_]+/); if(m) return m[0]; p=p.parentElement; } return ''; }; const blanks=[...new Set([...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.disabled && !i.readOnly && !((i.value||'').trim())).map(wname).filter(Boolean))]; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const send=btns.find(b=>/^send\$/i.test((b.innerText||'').trim())) || btns.find(b=>/btn-success/.test((b.className||'')+'')); const title=(((d.querySelector('.modal-header')||{}).innerText)||'').replace(/\s+/g,' ').trim(); return 'popup|'+title+'|'+blanks.join(',')+'|'+(send?wname(send):''); }" 2>/dev/null | _tt_eval_str
 }
 
 et_popup_open() {  # 'open' while a popup is on screen, 'gone' once it is not
   playwright-cli eval "() => { const vis=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); return vis.length ? 'open' : 'gone'; }" 2>/dev/null | _tt_eval_str
+}
+
+et_modal_count() {  # how many popups/dialogs are stacked on screen right now
+  playwright-cli eval "() => String([...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null).length)" 2>/dev/null | _tt_eval_str
+}
+
+# et_send_state <baseline-modal-count> — what the popup is doing after Send.
+#
+# This is the replacement for waiting on the popup to close, which it never does
+# (see the 2026-08-28 note in the header). Prints:
+#
+#   busy           the Send button is disabled — the microflow is still running
+#   idle           it is enabled again — the microflow returned
+#   closed         no modal left at all; a future close-page would land here
+#   nosend         no Send button visible this instant, e.g. mid re-render
+#   dialog:<text>  a modal appeared ON TOP of the popup — the send complained
+et_send_state() {
+  playwright-cli eval "() => { const v=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); if(!v.length) return 'closed'; if(v.length > $1) return 'dialog:'+(((v[v.length-1].innerText)||'').replace(/\s+/g,' ').trim().slice(0,140)); const d=v[v.length-1]; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^send\$/i.test((x.innerText||'').trim())); if(!b) return 'nosend'; return b.disabled ? 'busy' : 'idle'; }" 2>/dev/null | _tt_eval_str
+}
+
+# et_close_popup — Cancel out of the tester popup and land back on the tester.
+#
+# Cancel is the ONLY way these popups close, so this is the normal path out of a
+# type, not a recovery. It waits for the popup to actually go before re-opening
+# the tester: re-reading the tester's own fields through a popup that is still up
+# is how one odd type used to cascade into the next.
+et_close_popup() {
+  local _
+  if [ "$(et_popup_open)" = "open" ]; then
+    et_force_close >/dev/null 2>&1 || true
+    for _ in $(seq 1 6); do
+      sleep 1
+      [ "$(et_popup_open)" = "gone" ] && break
+    done
+  fi
+  et_open_tester >/dev/null 2>&1 || true
 }
 
 et_force_close() {  # last resort: Cancel out of whatever popup is still standing
@@ -255,57 +346,80 @@ for t in $TYPES; do
   # every other Main.EmailHelper attribute a tester popup shows is String). The
   # wording of these emails is not what this step asserts - only that a message
   # was raised at all.
+  #
+  # Re-mark before EACH fill, not once at the end. A committed field makes Mendix
+  # re-render, a re-render can drop a class this test added, and tt_fill_commit
+  # swallows its own errors by design - so a lost class turns every fill after the
+  # first into a silent no-op that nothing reports.
+  # et_mark_popup strips the class from everything BEFORE it looks for a popup to
+  # re-tag, so if a re-render leaves the modal momentarily invisible it returns
+  # 'none' and nothing carries the class. tt_fill_commit swallows its own errors by
+  # design, so the fill would then match nothing and say nothing - and the type
+  # would go on to be counted as sent and reported as a missing template row. Give
+  # it a few tries, and if the popup still cannot be found, SAY so.
+  unfilled=""
   for w in $blanks; do
+    marked=""
+    for _ in 1 2 3; do
+      case "$(et_mark_popup)" in popup*) marked="yes"; break ;; esac
+      sleep 1
+    done
+    if [ -z "$marked" ]; then
+      unfilled="$unfilled $w"
+      continue
+    fi
     tt_fill_commit ".tt-live-popup .$w input" "3"
   done
+  [ -z "$unfilled" ] || echo "    (could not re-find the live popup, so these stayed blank:$unfilled)"
 
   if [ -z "$sendbtn" ]; then
     sendfail="$sendfail $t(no-send-button)"
-    et_force_close >/dev/null 2>&1 || true
-    sleep 2
-    et_open_tester >/dev/null 2>&1 || true
+    et_close_popup
     continue
   fi
 
   # Re-mark before the click: a fill commits, Mendix re-renders the popup, and a
   # re-render can drop a class this test added to it.
   et_mark_popup >/dev/null 2>&1 || true
+  # How many modals are up BEFORE the click, so a dialog raised by the send is
+  # recognised as an EXTRA one rather than mistaken for the popup itself. That
+  # mistake is what produced the "dialog:x Remind Consultant Email ..." reasons.
+  base="$(et_modal_count)"
+  case "$base" in ''|*[!0-9]*) base=1 ;; esac
   clickout="$(playwright-cli click ".tt-live-popup .$sendbtn" 2>&1)"
   case "$clickout" in
     *"strict mode violation"*|*"### Error"*|*"Timeout"*)
       sendfail="$sendfail $t(send-click:$(printf '%s' "$clickout" | tr '\n' ' ' | cut -c1-80))"
-      et_force_close >/dev/null 2>&1 || true
-      sleep 2
-      et_open_tester >/dev/null 2>&1 || true
+      et_close_popup
       continue ;;
   esac
 
-  # The send is synchronous and the popup closes itself when it finishes. Wait for
-  # that rather than for a fixed three seconds: closing it early is how an earlier
-  # version cancelled every send and read the result as eleven missing templates.
-  gone=""
-  for _ in $(seq 1 12); do
+  # Wait for the MICROFLOW TO RETURN, not for the popup to close - it never does.
+  # The Send button is disabledDuringExecution, so busy -> idle is the completion
+  # signal, and waiting for it is also what stops the Cancel below racing a send
+  # that is still in flight. 'closed' is accepted too, so that a close-page added
+  # to SUB_SendEmail_Template later reads as success rather than as a new failure.
+  state=""
+  for _ in $(seq 1 15); do
     sleep 1
-    [ "$(et_popup_open)" = "gone" ] && { gone="yes"; break; }
+    state="$(et_send_state "$base")"
+    case "$state" in idle|closed|dialog:*) break ;; esac
   done
 
-  if [ -z "$gone" ]; then
-    # Still up: either a dialog is in the way, or the send did not complete. Say
-    # which, then clear it so one odd type cannot cascade into the next.
-    tt_clear_dialogs 4 >/dev/null 2>&1 || true
-    if [ -n "${TT_DIALOG_BLOCKED:-}" ]; then
-      sendfail="$sendfail $t(dialog:$(printf '%s' "$TT_DIALOG_BLOCKED" | cut -c1-60))"
-    else
-      sendfail="$sendfail $t(popup-stayed-open)"
-    fi
-    et_force_close >/dev/null 2>&1 || true
-    sleep 2
-    et_open_tester >/dev/null 2>&1 || true
-    continue
-  fi
+  case "$state" in
+    dialog:*)
+      sendfail="$sendfail $t(dialog:$(printf '%s' "${state#dialog:}" | cut -c1-60))"
+      tt_clear_dialogs 4 >/dev/null 2>&1 || true ;;
+    idle|closed)
+      sent="$sent $t" ;;
+    *)
+      # Fifteen seconds of 'busy', or a Send button that went missing and stayed
+      # missing. This is the case the old popup-stayed-open reason was reaching
+      # for, and now it only fires when that is what actually happened.
+      sendfail="$sendfail $t(send-did-not-return:${state:-no-reply})" ;;
+  esac
 
-  sent="$sent $t"
-  et_open_tester >/dev/null 2>&1 || true
+  et_close_popup
 done
 
 if [ -n "$notoffered" ]; then
@@ -378,17 +492,40 @@ echo "  raised $found of $sent_count sent types ($newrows new rows visible on th
 fail=0
 
 if [ -n "$nobranch" ]; then
-  fail=1
-  echo "FAIL: verify-email-templates-present - the Email Tester cannot send:$nobranch"
+  # REPORTED EVERY RUN, BUT NOT FATAL, and the choice is deliberate.
+  #
+  # This is a gap in the APP, not a defect in the step: those types have no branch
+  # to send through, so this test can say nothing about them either way. Making it
+  # exit 1 leaves a step that is red until somebody edits the model - and
+  # run-tests.sh is fail-fast by default, so it would also take 70-tickets,
+  # 75-export, 76-bulk and 80-platform down with it on every single run. A finding
+  # that blocks four suites indefinitely stops being read. It belongs in a ticket.
+  #
+  # The step still fails for the things it CAN prove: a send that did not go
+  # through, a sent type with no message behind it, and the case where nothing at
+  # all could be sent.
+  echo "GAP: verify-email-templates-present - the Email Tester cannot send:$nobranch"
   echo "      Picking the type and pressing Send Template opened no detail popup, which is"
   echo "      what Main.ACT_SendTemplate1 does when its split has no branch for the value:"
-  echo "      the flow runs into the merge and ends without sending anything."
-  echo "      THIS IS NOT A MISSING TEMPLATE ROW. Nothing was sent, so nothing can be"
-  echo "      concluded about whether the rows exist - including ForgotPassword, whose"
-  echo "      absence would lock a user out after Core.ACT_Password_Forgot has already"
-  echo "      replaced their password. Fix by adding a branch and a tester popup per type"
-  echo "      in Main.ACT_SendTemplate1; until then these types are untested here."
-  echo "      Known to be branchless when this test was written:$KNOWN_NO_BRANCH"
+  echo "      the flow runs into the merge and ends without sending anything. Confirmed"
+  echo "      against the live model on 2026-08-28 - the Which Type? split has nine"
+  echo "      show-page branches and four case flows straight to the merge: (empty), plus"
+  echo "      exactly these three."
+  echo "      THIS IS NOT A MISSING TEMPLATE ROW, and it is not a defect in this step."
+  echo "      Nothing was sent, so nothing can be concluded about whether the rows exist -"
+  echo "      including ForgotPassword, whose absence would lock a user out after"
+  echo "      Core.ACT_Password_Forgot has already replaced their password. Fix by adding a"
+  echo "      branch and a tester popup per type in Main.ACT_SendTemplate1; until then"
+  echo "      these types are untested here."
+  # Compared as a sorted set: the accumulated list is in TYPES order, which only
+  # happens to match KNOWN_NO_BRANCH today. Comparing the raw strings would report
+  # "the split has changed" after a harmless reorder of TYPES.
+  if [ "$(printf '%s\n' $nobranch | sort | tr '\n' ' ')" = "$(printf '%s\n' $KNOWN_NO_BRANCH | sort | tr '\n' ' ')" ]; then
+    echo "      That is exactly the list this test was written against, so nothing has moved."
+  else
+    echo "      That DIFFERS from the list this test was written against, so the split has"
+    echo "      changed since:$KNOWN_NO_BRANCH"
+  fi
 fi
 
 if [ -n "$sendfail" ]; then
@@ -416,6 +553,10 @@ if [ -n "$norow" ]; then
   echo "      Two other readings this step cannot rule out: the message was raised but is"
   echo "      not on the first page of the Emails Sent grid (it shows 20 rows; $newrows new"
   echo "      ones were visible), or the send failed inside the queue for that type."
+  echo "      Note what 'sent' means here: SUB_SendEmail_Template RETURNED. It has no visible"
+  echo "      success signal - the popup does not close and no confirmation is shown - so a"
+  echo "      clean return is all there is to observe, and a missing row produces exactly"
+  echo "      that: the Email Template Exists? split breaks out of the loop and returns."
   if [ "$found" -eq 0 ] && [ "$sent_count" -gt 0 ]; then
     echo "      NOTHING was raised for any type that was sent. Before hunting missing"
     echo "      templates, check the assumption in this file's header: that the tester sends"
@@ -424,6 +565,16 @@ if [ -n "$norow" ]; then
   fi
 fi
 
+if [ "$sent_count" -eq 0 ]; then
+  # Without this the step would report PASS having proven nothing at all, which is
+  # the failure mode the whole file exists to avoid.
+  fail=1
+  echo "FAIL: verify-email-templates-present - not one type could be sent, so no template"
+  echo "      row was proven to exist. Every type either has no branch in"
+  echo "      Main.ACT_SendTemplate1 or failed to send; the lines above say which."
+fi
+
 [ "$fail" -eq 0 ] || exit 1
 
 echo "PASS: verify-email-templates-present - all $sent_count types the Email Tester can send raised a message, so each has a template row"
+[ -z "$nobranch" ] || echo "      Still unproven, for want of a branch in Main.ACT_SendTemplate1:$nobranch"
