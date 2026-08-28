@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # verify-email-templates-present.test.sh
 #
+# tt-timeout: 15m
+#   Twelve sends, each with a combobox pick and a popup to complete, take ~230s on
+#   their own; then the two-minute mail queue has to run before any of them can be
+#   read back, and each poll round re-reads the Emails Sent page. Measured over 10m
+#   at 20 rounds, so the loop is 8 and the budget has room around it.
+#
+#   KEPT AT THE TOP DELIBERATELY. This line used to sit at the foot of the header,
+#   and when the header below grew it landed on line 78 - past the first 40 lines,
+#   which was all run-tests.sh read. The declaration was silently ignored, the 4m
+#   default applied, and the step was killed six types into twelve and reported as
+#   a plain TIMEOUT. The runner now reads the whole header, but a directive is
+#   still easiest to trust where it cannot be pushed anywhere.
+#
 # Every email type the app can send must have a template row behind it.
 #
 # WHY THIS EXISTS. The subject and body of each email are not in the model — they
@@ -75,11 +88,6 @@
 #
 # Sends up to twelve emails. They are queued rather than delivered, and the
 # environment guard on the send event decides whether they ever leave.
-# tt-timeout: 15m
-#   Twelve sends, each with a combobox pick and a popup to complete, take ~230s on
-#   their own; then the two-minute mail queue has to run before any of them can be
-#   read back, and each poll round re-opens the Emails Sent page. Measured over 10m
-#   at 20 rounds, so the loop is 8 and the budget has room around it.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
@@ -325,12 +333,28 @@ echo "  sent $sent_count of 12 types through the Email Tester"
 # thing wrong was that none of them had been queued out yet.
 #
 # So poll until every type that was actually SENT is accounted for, or the budget
-# runs out, and only then decide. Re-opening the page each round re-queries it.
+# runs out, and only then decide.
+#
+# _tt_mail_refresh, NOT _tt_mail_open. The rows this waits for are written by the
+# queue's scheduled event, on the server, with nothing to tell this browser session
+# about them - so the grid only shows them after a real re-query. _tt_mail_open
+# returns immediately once `.mx-name-gridEmailsSent` is on screen, which after
+# round 1 it always is, so rounds 2-8 re-read the SAME rendered rows they read the
+# first time. The loop looked patient and was not: it could only ever report what
+# had already arrived by the time the last send finished, seconds earlier, and
+# every later arrival came back as "sent, but no message was raised" - the exact
+# missing-template accusation this file was rewritten to stop making.
+# _tt_mail_refresh reloads the page and re-sorts, which is what the other mail
+# helpers (tt_mail_message, tt_mail_token) poll with.
 rows=""
 found=0
 for round in $(seq 1 8); do
-  _tt_mail_open >/dev/null 2>&1 || true
-  _tt_mail_sort_newest >/dev/null 2>&1 || true
+  if [ "$round" -eq 1 ]; then
+    _tt_mail_open >/dev/null 2>&1 || true
+    _tt_mail_sort_newest >/dev/null 2>&1 || true
+  else
+    _tt_mail_refresh >/dev/null 2>&1 || true
+  fi
   rows="$(_tt_mail_new_rows)"
   found=0
   for t in $sent; do

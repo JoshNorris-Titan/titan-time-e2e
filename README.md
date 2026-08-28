@@ -99,7 +99,11 @@ flowchart LR
    make that intent explicit instead of incidental.
 4. **Marks a step FAILED if it exits non-zero**, prints its output, and saves a screenshot named
    `<step>-failure.png` so you can see what the page looked like.
-5. **Gives up on a step after 2 minutes** (`--timeout` to change), so one hung page can't stall the run.
+5. **Gives up on a step after 4 minutes**, so one hung page can't stall the run. A step that is
+   legitimately longer declares its own budget with a `# tt-timeout: 15m` line anywhere in its
+   header comment (the block of `#` lines above the first line of code); `--timeout` overrides
+   every declaration. A `tt-timeout` line that has slipped below the header is not read, and the
+   runner says so with a `WARN` rather than quietly running the step at the default.
 6. **Writes a `results.xml` report** when asked (`--junit`) — that is what GitHub reads.
 7. **Closes the browser** at the end, whatever happened — and on Ctrl-C it stops the run
    instead of carrying on against a session it just closed.
