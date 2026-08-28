@@ -460,34 +460,68 @@ echo "  sent $sent_count of 12 types through the Email Tester"
 # missing-template accusation this file was rewritten to stop making.
 # _tt_mail_refresh reloads the page and re-sorts, which is what the other mail
 # helpers (tt_mail_message, tt_mail_token) poll with.
+# ACCUMULATE ACROSS ROUNDS, AND NEVER UN-PROVE A TYPE.
+#
+# A type whose message this loop has SEEN is proven for good - mail does not
+# un-send. The loop used to recompute `found` from scratch every round and then
+# derive `norow` from the LAST round's rows, so a type confirmed in round 1 was
+# forgotten by round 8. The 2026-08-28 run did exactly that:
+#
+#     round 1: 5 of 9 sent types accounted for
+#     round 2: 0 of 9 sent types accounted for      (... rounds 3-8 the same)
+#     raised 0 of 9 sent types (0 new rows visible on the Emails Sent page)
+#     FAIL: ... sent, but no message was raised for: <all nine>
+#
+# Five messages had demonstrably been raised - the step said so itself in round 1 -
+# and it went on to accuse all nine types of having no template row. It
+# contradicted itself in its own output.
 rows=""
 found=0
+accounted=""   # types whose message has been seen, in ANY round
+newrows=0      # the most new rows seen in one round, for the diagnosis below
 for round in $(seq 1 8); do
   if [ "$round" -eq 1 ]; then
     _tt_mail_open >/dev/null 2>&1 || true
-    _tt_mail_sort_newest >/dev/null 2>&1 || true
   else
     _tt_mail_refresh >/dev/null 2>&1 || true
   fi
+  # SORT ON EVERY ROUND, by whatever route we got here. _tt_mail_refresh sorts only
+  # on its fast path; when the reload drops the grid it falls back to
+  # _tt_mail_open, which does not sort at all. The grid then comes back in its
+  # default order, page one is the OLDEST twenty rows, and every one of them is
+  # already in the baseline - which reads as "no new mail" no matter how much has
+  # arrived. That is the other half of why rounds 2-8 above all reported 0.
+  _tt_mail_sort_newest >/dev/null 2>&1 || true
+
+  allrows="$(_tt_mail_rows)"
   rows="$(_tt_mail_new_rows)"
-  found=0
+  gridrows="$(printf '%s\n' "$allrows" | grep -c . || true)"
+  nnew="$(printf '%s\n' "$rows" | grep -c . || true)"
+  [ "$nnew" -gt "$newrows" ] && newrows="$nnew"
+
   for t in $sent; do
-    printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")" && found=$((found+1))
+    case " $accounted " in *" $t "*) continue ;; esac
+    printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")" && accounted="$accounted $t"
   done
+  found=0
+  for t in $accounted; do found=$((found+1)); done
+
   [ "$found" -ge "$sent_count" ] && break
-  echo "  round $round: $found of $sent_count sent types accounted for"
+  # The two counts are the diagnosis when a round finds nothing. "grid showed 0
+  # rows" means the page was not there at all; "grid showed 20 rows, 0 new" means
+  # we are reading the wrong page of a grid that lost its sort. Without them, both
+  # look identical and both look like missing templates.
+  echo "  round $round: $found of $sent_count sent types accounted for (grid showed $gridrows rows, $nnew new)"
   [ "$round" -lt 8 ] && sleep 20
 done
 
 norow=""
 for t in $sent; do
-  if ! printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")"; then
-    norow="$norow $t"
-  fi
+  case " $accounted " in *" $t "*) continue ;; esac
+  norow="$norow $t"
 done
 
-newrows="$(printf '%s\n' "$rows" | grep -c . || true)"
-echo "  raised $found of $sent_count sent types ($newrows new rows visible on the Emails Sent page)"
+echo "  raised $found of $sent_count sent types (most new rows seen in one round: $newrows)"
 
 fail=0
 
@@ -551,8 +585,11 @@ if [ -n "$norow" ]; then
   echo "      a friendly title. A row that exists under any other spelling, or with stray"
   echo "      whitespace, is invisible to that retrieve and looks exactly like this."
   echo "      Two other readings this step cannot rule out: the message was raised but is"
-  echo "      not on the first page of the Emails Sent grid (it shows 20 rows; $newrows new"
-  echo "      ones were visible), or the send failed inside the queue for that type."
+  echo "      not on the first page of the Emails Sent grid (it shows 20 rows; the best any"
+  echo "      round saw was $newrows new), or the send failed inside the queue for that type."
+  echo "      A type counts as raised if ANY round saw it, so this is not a type that was"
+  echo "      seen and then lost - check the per-round lines above for a round that showed"
+  echo "      no rows at all, which means the grid was not on screen rather than empty."
   echo "      Note what 'sent' means here: SUB_SendEmail_Template RETURNED. It has no visible"
   echo "      success signal - the popup does not close and no confirmation is shown - so a"
   echo "      clean return is all there is to observe, and a missing row produces exactly"
