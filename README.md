@@ -326,18 +326,36 @@ silently destroy hours somebody had already approved.
 interchangeable when hunting for a usable week — correct for that job, useless for this one. This
 step reads the fields itself rather than borrowing that notion of "blank".
 
-**59. `verify-email-templates-present` — Every email type has a template behind it.** &nbsp; `sends 11`
+**59. `verify-email-templates-present` — Every email type has a template behind it.** &nbsp; `sends up to 12`
 
 The wording of each email is not in the model. It lives in database rows, configured per
 environment. When the row for a type is missing the send loop simply **breaks** — no error, no
 warning in the log, no queued message. The email just never happens. That is the likeliest way
 email silently stops working on a fresh or restored environment, and nothing tested it.
 
-So this sends all eleven types from the Email Tester, giving each a **distinct recipient derived
-from the type name**, then reads the Emails Sent page once. A type whose template is missing
-produces no row, and the per-type address is what says *which* one. Counting eleven rows would
-only prove eleven arrived; addressing them by type turns "email is broken" into
-"`ToManager_HoursNotice` has no template".
+So this sends every type the Email Tester can send, giving each a **distinct recipient derived
+from the type name**, then polls the Emails Sent page. A type whose template is missing produces
+no row, and the per-type address is what says *which* one. Counting rows would only prove some
+arrived; addressing them by type turns "email is broken" into "`ToManager_HoursNotice` has no
+template".
+
+*Every type the tester can send — not every type.* `Main.ACT_SendTemplate1` splits on the email
+type and opens a per-type detail popup, but only for nine of the twelve values. Read from the live
+model on 2026-08-27, `ToConsultantApprovedRequest`, `ToManager_ForApproval` and `ForgotPassword`
+run straight into the merge and out of the end event: no popup, no send, nothing to read back,
+whatever the database holds. The step still tries all twelve and decides from what the app does,
+but a type with no popup is reported as **the tester cannot send this**, not as a missing template
+row. An earlier version reported those three as missing templates, and so did this suite's own
+notes; that finding was an artefact of the test, not a fact about the environment.
+
+The same separation runs through the rest of the step. The popup is tagged with a class of the
+test's own before anything is typed into it, so a selector cannot reach one of the closed popups
+Mendix leaves in the DOM; the fields are discovered rather than hardcoded, because the nine popups
+have different ones; the Send button is found by its caption; and the step waits for the popup to
+close instead of assuming three seconds was enough. Each of those has its own failure line. Only
+"the send went through and no message followed" is reported as a template-row problem — and even
+then the message names the two other readings it cannot rule out, including a row that exists but
+whose `TemplateName` is not spelled exactly like the enumeration value.
 
 It does not prove the wording is right, or that anything was delivered — only that a template
 exists and a message was raised. Delivery is the send event's job, on its own schedule.
