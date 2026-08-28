@@ -250,23 +250,62 @@ playwright-cli open "$BASE_URL/" >/dev/null 2>&1 \
 TIMEOUT_BIN=""
 command -v timeout >/dev/null 2>&1 && TIMEOUT_BIN="timeout"
 
+# script_header <script> — the comment block at the top of a test.
+#
+# Every line from the first, for as long as they are blank or start with '#'. The
+# header ends at the first line of code, which in every spec here is `set -uo
+# pipefail`. Directives are read from THIS, not from a line count, so a header can
+# grow without a directive silently falling off the end of the window — see
+# script_timeout.
+script_header() {
+  awk '/^[[:space:]]*(#|$)/ { print; next } { exit }' "$1"
+}
+
 # script_timeout <script> — the budget for ONE script.
 #
 # A test may declare its own with a line of the form
 #     # tt-timeout: 8m
-# in its first 40 lines. A handful of steps are legitimately long — verify-tt654-a3
-# drives five logins, a rejection hunt across HR tabs and a resubmit, and takes
-# ~280s on cloud dev — and raising the GLOBAL cap to suit them would mean every
-# genuinely stuck test burns that budget before the suite moves on. Declaring it
-# per test keeps the default tight and puts the cost where it is understood.
+# anywhere in its header comment. A handful of steps are legitimately long —
+# verify-tt654-a3 drives five logins, a rejection hunt across HR tabs and a
+# resubmit, and takes ~280s on cloud dev — and raising the GLOBAL cap to suit them
+# would mean every genuinely stuck test burns that budget before the suite moves
+# on. Declaring it per test keeps the default tight and puts the cost where it is
+# understood.
+#
+# THE WINDOW USED TO BE THE FIRST 40 LINES, and that is how a declared budget came
+# to be ignored without a word. verify-email-templates-present grew its header to
+# explain what it had learned, which pushed `# tt-timeout: 15m` to line 78; the
+# scan never reached it, the 4m default applied instead, and the step was killed
+# six types into twelve and reported as a TIMEOUT. Nothing in the output said the
+# declaration had been missed, so the file looked like it was asking for 15m and
+# being given 4m for some reason of its own. Reading the whole header removes the
+# cliff; check_timeout_directive below catches a declaration that falls outside it
+# anyway.
 #
 # An explicit --timeout on the command line always wins, so a run can still be
 # capped uniformly when that is what is wanted.
 script_timeout() {
   local declared
   [ -n "$TIMEOUT_EXPLICIT" ] && { printf '%s' "$TIMEOUT"; return; }
-  declared="$(sed -n '1,40p' "$1" | grep -m1 -oE '^#[[:space:]]*tt-timeout:[[:space:]]*[0-9]+[smh]?' | grep -oE '[0-9]+[smh]?$')"
+  declared="$(script_header "$1" | grep -m1 -oE '^#[[:space:]]*tt-timeout:[[:space:]]*[0-9]+[smh]?' | grep -oE '[0-9]+[smh]?$')"
   printf '%s' "${declared:-$TIMEOUT}"
+}
+
+# check_timeout_directive <script> — warn when a test asks for a budget it will
+# not get.
+#
+# A `# tt-timeout:` that sits BELOW the header (after the first line of code, or
+# indented so it does not start the line) is not read, and the only symptom is a
+# test killed early at the default. That is indistinguishable from the test being
+# genuinely stuck, which is exactly the wrong thing to have to guess at. So say it
+# out loud, once, before the test runs.
+check_timeout_directive() {
+  local declared_anywhere
+  declared_anywhere="$(grep -m1 -oE '^[[:space:]]*#[[:space:]]*tt-timeout:[[:space:]]*[0-9]+[smh]?' "$1" || true)"
+  [ -n "$declared_anywhere" ] || return 0
+  [ -n "$(script_header "$1" | grep -m1 -oE '^#[[:space:]]*tt-timeout:[[:space:]]*[0-9]+[smh]?' || true)" ] && return 0
+  echo "WARN  $(basename "$1" .test.sh): its 'tt-timeout' line is outside the header comment," >&2
+  echo "      so it is being run at $(script_timeout "$1") instead. Move it above the first line of code." >&2
 }
 
 run_one() {   # run_one <script> ; echoes output, returns exit code
@@ -331,6 +370,8 @@ for script in "${SCRIPTS[@]}"; do
       echo "    </testcase>"; } >> "$CASES_FILE"
     continue
   fi
+
+  check_timeout_directive "$script"
 
   t0=$(date +%s)
   out="$(run_one "$script")"; rc=$?
