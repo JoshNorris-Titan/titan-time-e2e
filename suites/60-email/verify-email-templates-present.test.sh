@@ -32,9 +32,16 @@
 #
 # HOW IT PROVES IT. Main.ENUM_EmailType has twelve values and Main.EmailTester can
 # send some of them on demand. The step sends each one it can, giving each a
-# DISTINCT recipient address derived from the type name, then reads the Emails
-# Sent admin page. A type whose template is missing produces no row, and the
-# per-type address is what says which one.
+# recipient address distinct BY TYPE AND BY RUN, then asks the Emails Sent admin
+# page's recipient filter whether a message exists for that address. A type whose
+# template is missing produces no message at all, because
+# Main.SUB_SendEmail_Template breaks out of its loop before creating one.
+#
+# It asks whether the message EXISTS, not whether it was delivered. A QUEUED row
+# is a pass: the template behind it clearly existed. See tt_mail_find in
+# lib/_login.sh for why reading page one of that grid could never answer this -
+# the short version is that it sorts on SentDate, which is empty until a message
+# has actually been sent, and is empty forever for one that fails.
 #
 # WHAT CHANGED, AND WHY IT MATTERED
 #
@@ -168,8 +175,23 @@ KNOWN_NO_BRANCH="ToConsultantApprovedRequest ToManager_ForApproval ForgotPasswor
 
 # ---------------------------------------------------------------------- helpers
 
-et_addr() {  # a recipient unique to one email type
-  printf 'tmpl-%s@%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" "${TT_MAIL_DOMAIN:-e2e.local}"
+# TT_RUN_ID - what makes this run's mail distinguishable from the last one's.
+#
+# The address used to be tmpl-<type>@e2e.local, IDENTICAL on every run, and the
+# only thing separating this run's rows from older ones was the page-one baseline
+# in tt_mail_prepare. That baseline can only exclude rows that were VISIBLE when
+# it was taken, so an old row drifting onto page one later was counted as this
+# run's - which is the most likely reason the accounted-for count wandered (4,
+# then 5, then 1) across three runs instead of holding steady. With a per-run
+# token in the address, a match can only be this run's, and the baseline stops
+# mattering for this step.
+# %Y%m%d as well as the time: nothing ever deletes tmpl-*@e2e.local rows, so a
+# time-only token collides with any earlier day's run that happened to start at
+# the same second, and that stale row would be reported as this run's message.
+TT_RUN_ID="$(date -u +%Y%m%d%H%M%S)"
+
+et_addr() {  # a recipient unique to one email type AND to this run
+  printf 'tmpl-%s-%s@%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" "$TT_RUN_ID" "${TT_MAIL_DOMAIN:-e2e.local}"
 }
 
 # Selectors are decided once, from whichever naming the environment actually has.
@@ -219,16 +241,22 @@ et_pick_type() {
 # class no Mendix widget uses, and every later selector is scoped to that tag — so
 # an action can only ever reach the popup that is actually on screen.
 #
-# The widget names are de-duplicated. The name comes from walking up to eight
-# parents for an mx-name-* class, so two inputs under one named container resolve
-# to the SAME name - and a selector matching two inputs is refused by Playwright
-# in strict mode, which tt_fill_commit swallows, leaving both fields blank and
-# nothing said about it.
+# Each blank field is reported as  <widget name>:<occurrence>, e.g. textBox1:2.
+#
+# The name comes from walking up to eight parents for an mx-name-* class, so two
+# inputs under ONE named container resolve to the same name - and a selector
+# matching two inputs is refused by Playwright in strict mode, which
+# tt_fill_commit swallows, leaving both fields blank with nothing said about it.
+# De-duplicating the names (the previous attempt) does not help: it makes the LIST
+# shorter but leaves the selector just as ambiguous. The occurrence index is what
+# actually resolves it, via :nth-match - which is what tt_fill's own docstring
+# recommends for exactly this. It is counted over every input under that name, not
+# just the blank ones, because that is the set :nth-match will be matching against.
 #
 # Prints  none
 #     or  popup|<title>|<blank field widget names, comma separated>|<send button widget name>
 et_mark_popup() {
-  playwright-cli eval "() => { const vis=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); document.querySelectorAll('.tt-live-popup').forEach(e=>e.classList.remove('tt-live-popup')); const d=vis[vis.length-1]; if(!d) return 'none'; d.classList.add('tt-live-popup'); const wname=el=>{ let p=el; for(let k=0;k<8&&p;k++){ const m=((p.className||'')+'').match(/mx-name-[A-Za-z0-9_]+/); if(m) return m[0]; p=p.parentElement; } return ''; }; const blanks=[...new Set([...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.disabled && !i.readOnly && !((i.value||'').trim())).map(wname).filter(Boolean))]; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const send=btns.find(b=>/^send\$/i.test((b.innerText||'').trim())) || btns.find(b=>/btn-success/.test((b.className||'')+'')); const title=(((d.querySelector('.modal-header')||{}).innerText)||'').replace(/\s+/g,' ').trim(); return 'popup|'+title+'|'+blanks.join(',')+'|'+(send?wname(send):''); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const vis=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); document.querySelectorAll('.tt-live-popup').forEach(e=>e.classList.remove('tt-live-popup')); const d=vis[vis.length-1]; if(!d) return 'none'; d.classList.add('tt-live-popup'); const wname=el=>{ let p=el; for(let k=0;k<8&&p;k++){ const m=((p.className||'')+'').match(/mx-name-[A-Za-z0-9_]+/); if(m) return m[0]; p=p.parentElement; } return ''; }; const blanks=[...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.disabled && !i.readOnly && !((i.value||'').trim())).map(i=>{ const n=wname(i); if(!n) return ''; const all=[...d.querySelectorAll('.'+n+' input')]; const k=all.indexOf(i); return k<0 ? '' : (n+':'+(k+1)); }).filter(Boolean); const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const send=btns.find(b=>/^send\$/i.test((b.innerText||'').trim())) || btns.find(b=>/btn-success/.test((b.className||'')+'')); const title=(((d.querySelector('.modal-header')||{}).innerText)||'').replace(/\s+/g,' ').trim(); return 'popup|'+title+'|'+blanks.join(',')+'|'+(send?wname(send):''); }" 2>/dev/null | _tt_eval_str
 }
 
 et_popup_open() {  # 'open' while a popup is on screen, 'gone' once it is not
@@ -275,8 +303,13 @@ et_force_close() {  # last resort: Cancel out of whatever popup is still standin
   playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'none'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^cancel\$/i.test((x.innerText||'').trim())) || [...d.querySelectorAll('.modal-header button, button.close')].filter(x=>x.offsetParent!==null)[0]; if(b){ b.click(); return 'closed'; } return 'nobutton'; }" 2>/dev/null | _tt_eval_str
 }
 
-# --------------------------------------------------------------- 1. mark the page
-# Done first: everything sent after this point is what the step is allowed to see.
+# ------------------------------------------------------- 1. prove mail is readable
+# Kept for the check it performs, not for the baseline it takes. tt_mail_prepare
+# fails loudly here if the admin account cannot open the Emails Sent page at all,
+# which is worth finding out BEFORE sending twelve emails at a page that cannot be
+# read. Its page-one baseline is no longer what this step reads: every address now
+# carries TT_RUN_ID, so a match can only be this run's, and section 3 asks the
+# recipient filter directly instead of diffing a snapshot.
 tt_mail_prepare
 
 # ------------------------------------------------------------ 2. send what we can
@@ -311,7 +344,12 @@ for t in $TYPES; do
       notoffered="$notoffered $t(matched several options: ${r#ambiguous:})"
       continue ;;
     *)
-      notoffered="$notoffered $t(combobox:$r)"
+      # An empty or unrecognised result means the EVAL failed - a browser hiccup, a
+      # dropdown not yet rendered - not that the dropdown lacks the value. Filing it
+      # under $notoffered would claim "Main.ENUM_EmailType and the tester's dropdown
+      # have diverged", which is an assertion about the MODEL, and would exit before
+      # section 3 and discard every send this run has already made and queued.
+      sendfail="$sendfail $t(type-pick:${r:-no-reply})"
       continue ;;
   esac
 
@@ -368,7 +406,7 @@ for t in $TYPES; do
       unfilled="$unfilled $w"
       continue
     fi
-    tt_fill_commit ".tt-live-popup .$w input" "3"
+    tt_fill_commit ":nth-match(.tt-live-popup .${w%%:*} input, ${w##*:})" "3"
   done
   [ -z "$unfilled" ] || echo "    (could not re-find the live popup, so these stayed blank:$unfilled)"
 
@@ -439,89 +477,89 @@ fi
 sent_count=0; for t in $sent; do sent_count=$((sent_count+1)); done
 echo "  sent $sent_count of 12 types through the Email Tester"
 
-# ------------------------------------------------- 3. read them back, patiently
-# SENDING IS NOT DELIVERY. Nothing leaves until the queue scheduled event runs,
-# which is every two minutes - verify-consultant-reminder-mail needs ~162s for a
-# SINGLE message to appear. Reading the page once, immediately after sending,
-# reported "raised 0 of 11" and pointed at eleven missing templates when the only
-# thing wrong was that none of them had been queued out yet.
+# ----------------------------------------------- 3. ask the grid, per recipient
+# WHY THIS IS A LOOKUP AND NOT A SCAN ANY MORE.
 #
-# So poll until every type that was actually SENT is accounted for, or the budget
-# runs out, and only then decide.
+# Every previous version read page one of the Emails Sent grid and diffed it
+# against a baseline. That could never work, and three runs failed three
+# different ways before the reason turned up in the model:
 #
-# _tt_mail_refresh, NOT _tt_mail_open. The rows this waits for are written by the
-# queue's scheduled event, on the server, with nothing to tell this browser session
-# about them - so the grid only shows them after a real re-query. _tt_mail_open
-# returns immediately once `.mx-name-gridEmailsSent` is on screen, which after
-# round 1 it always is, so rounds 2-8 re-read the SAME rendered rows they read the
-# first time. The loop looked patient and was not: it could only ever report what
-# had already arrived by the time the last send finished, seconds earlier, and
-# every later arrival came back as "sent, but no message was raised" - the exact
-# missing-template accusation this file was rewritten to stop making.
-# _tt_mail_refresh reloads the page and re-sorts, which is what the other mail
-# helpers (tt_mail_message, tt_mail_token) poll with.
-# ACCUMULATE ACROSS ROUNDS, AND NEVER UN-PROVE A TYPE.
+#   * the grid pages at 20, sorted by SentDate DESCENDING;
+#   * SentDate is stamped ONLY on successful delivery. Main.SUB_SendEmail_Template
+#     commits each new message with QueuedForSending=true and Status=QUEUED and
+#     nothing else; Email_Connector.SUB_SendQueuedEmail sets SentDate on its
+#     success branch only, and the error and max-attempts branches never do.
 #
-# A type whose message this loop has SEEN is proven for good - mail does not
-# un-send. The loop used to recompute `found` from scratch every round and then
-# derive `norow` from the LAST round's rows, so a type confirmed in round 1 was
-# forgotten by round 8. The 2026-08-28 run did exactly that:
+# So a message that has been created but not yet delivered - which is every
+# message the instant this step causes it, and permanently for any that fails to
+# send - has an empty SentDate and sorts to the far end of the list. It never
+# reaches page one. The step was measuring DELIVERY to tmpl-*@e2e.local and
+# reporting the result as "no template row".
 #
-#     round 1: 5 of 9 sent types accounted for
-#     round 2: 0 of 9 sent types accounted for      (... rounds 3-8 the same)
-#     raised 0 of 9 sent types (0 new rows visible on the Emails Sent page)
-#     FAIL: ... sent, but no message was raised for: <all nine>
+# Core.EmailsSent_Overview gained a recipient filter for this on 2026-08-28, so
+# the question can now be asked directly, per address, via tt_mail_find. Sort
+# order and page size stop mattering entirely.
 #
-# Five messages had demonstrably been raised - the step said so itself in round 1 -
-# and it went on to accuse all nine types of having no template row. It
-# contradicted itself in its own output.
-rows=""
-found=0
-accounted=""   # types whose message has been seen, in ANY round
-newrows=0      # the most new rows seen in one round, for the diagnosis below
-for round in $(seq 1 8); do
-  if [ "$round" -eq 1 ]; then
-    _tt_mail_open >/dev/null 2>&1 || true
-  else
-    _tt_mail_refresh >/dev/null 2>&1 || true
-  fi
-  # SORT ON EVERY ROUND, by whatever route we got here. _tt_mail_refresh sorts only
-  # on its fast path; when the reload drops the grid it falls back to
-  # _tt_mail_open, which does not sort at all. The grid then comes back in its
-  # default order, page one is the OLDEST twenty rows, and every one of them is
-  # already in the baseline - which reads as "no new mail" no matter how much has
-  # arrived. That is the other half of why rounds 2-8 above all reported 0.
-  _tt_mail_sort_newest >/dev/null 2>&1 || true
-
-  allrows="$(_tt_mail_rows)"
-  rows="$(_tt_mail_new_rows)"
-  gridrows="$(printf '%s\n' "$allrows" | grep -c . || true)"
-  nnew="$(printf '%s\n' "$rows" | grep -c . || true)"
-  [ "$nnew" -gt "$newrows" ] && newrows="$nnew"
-
-  for t in $sent; do
-    case " $accounted " in *" $t "*) continue ;; esac
-    printf '%s\n' "$rows" | grep -qi -- "$(et_addr "$t")" && accounted="$accounted $t"
+# THE ROW EXISTS IMMEDIATELY. SUB_SendEmail_Template commits the message before
+# it returns, so there is nothing to wait for the queue to do - which is why this
+# is three quick rounds rather than the old eight-times-twenty-seconds. The retry
+# is only there for a slow commit or a slow grid, not for delivery.
+accounted=""     # types whose message was found, in any round
+statuses=""      # "<type>=<status>" for each, so the report can say what it saw
+unreadable=""    # types the grid could not be READ for - never a template verdict
+pending="$sent"
+nofilter=""
+for round in 1 2 3; do
+  [ -n "$pending" ] || break
+  still=""
+  for t in $pending; do
+    r="$(tt_mail_find "$(et_addr "$t")")"
+    case "$r" in
+      FOUND*)
+        accounted="$accounted $t"
+        st="$(printf '%s' "$r" | cut -d'|' -f2)"
+        er="$(printf '%s' "$r" | cut -d'|' -f3-)"
+        statuses="$statuses $t=${st:-?}"
+        [ -z "$er" ] || echo "  $t: $st - $er"
+        ;;
+      NOFILTER)
+        nofilter="yes"
+        still="$still $t"
+        ;;
+      NONE)
+        still="$still $t"
+        ;;
+      *)
+        # NOGRID, or nothing at all because tt_fail killed the $( ) subshell. The
+        # page could not be read, so this says NOTHING about whether a message
+        # exists - and it must not fall through to "no template row", which is the
+        # one accusation this file exists to avoid making wrongly.
+        case " $unreadable " in *" $t "*) ;; *) unreadable="$unreadable $t" ;; esac
+        still="$still $t"
+        ;;
+    esac
   done
-  found=0
-  for t in $accounted; do found=$((found+1)); done
-
-  [ "$found" -ge "$sent_count" ] && break
-  # The two counts are the diagnosis when a round finds nothing. "grid showed 0
-  # rows" means the page was not there at all; "grid showed 20 rows, 0 new" means
-  # we are reading the wrong page of a grid that lost its sort. Without them, both
-  # look identical and both look like missing templates.
-  echo "  round $round: $found of $sent_count sent types accounted for (grid showed $gridrows rows, $nnew new)"
-  [ "$round" -lt 8 ] && sleep 20
+  pending="$still"
+  [ -n "$nofilter" ] && break
+  [ -n "$pending" ] || break
+  [ "$round" -lt 3 ] && sleep 15
 done
 
+found=0
+for t in $accounted; do found=$((found+1)); done
+
+# A type that was never found splits two ways, and the difference matters more
+# than anything else this step reports: $norow means the grid was READ and had no
+# message, which is a real finding; $unreadable means the grid could not be read
+# at all, which is a finding about the browser session and nothing else.
 norow=""
 for t in $sent; do
   case " $accounted " in *" $t "*) continue ;; esac
+  case " $unreadable " in *" $t "*) continue ;; esac
   norow="$norow $t"
 done
 
-echo "  raised $found of $sent_count sent types (most new rows seen in one round: $newrows)"
+echo "  raised $found of $sent_count sent types${statuses:+ ($statuses )}"
 
 fail=0
 
@@ -572,9 +610,16 @@ if [ -n "$sendfail" ]; then
   echo "      returned. None of these say anything about the template rows."
 fi
 
-if [ -n "$norow" ]; then
+# Suppressed when the filter is missing: without it nothing could be looked up, so
+# every type would land in $norow and be reported as a missing template row - the
+# exact false accusation this file exists to avoid. The NOFILTER failure below
+# says what actually happened.
+if [ -n "$norow" ] && [ -z "$nofilter" ]; then
   fail=1
-  echo "FAIL: verify-email-templates-present - sent, but no message was raised for:$norow"
+  echo "FAIL: verify-email-templates-present - sent, but no message exists for:$norow"
+  echo "      The recipient filter on the Emails Sent page matched NOTHING for those"
+  echo "      addresses, and the address carries this run's own token, so no older row"
+  echo "      could have masked the answer either way. The message was never created."
   echo "      The most likely cause is that Email_Connector.EmailTemplate has no row for"
   echo "      that type, so Main.SUB_SendEmail_Template breaks out of its loop silently -"
   echo "      no error, no log line, no queued message. The wording lives in the database,"
@@ -584,22 +629,40 @@ if [ -n "$norow" ]; then
   echo "      - the value's NAME, 'ToConsultant_SubmissionReminder', not its caption and not"
   echo "      a friendly title. A row that exists under any other spelling, or with stray"
   echo "      whitespace, is invisible to that retrieve and looks exactly like this."
-  echo "      Two other readings this step cannot rule out: the message was raised but is"
-  echo "      not on the first page of the Emails Sent grid (it shows 20 rows; the best any"
-  echo "      round saw was $newrows new), or the send failed inside the queue for that type."
-  echo "      A type counts as raised if ANY round saw it, so this is not a type that was"
-  echo "      seen and then lost - check the per-round lines above for a round that showed"
-  echo "      no rows at all, which means the grid was not on screen rather than empty."
-  echo "      Note what 'sent' means here: SUB_SendEmail_Template RETURNED. It has no visible"
-  echo "      success signal - the popup does not close and no confirmation is shown - so a"
-  echo "      clean return is all there is to observe, and a missing row produces exactly"
-  echo "      that: the Email Template Exists? split breaks out of the loop and returns."
+  echo "      This no longer depends on the message having been DELIVERED. A message that"
+  echo "      exists but has not left the queue shows up as QUEUED, and counts as a pass"
+  echo "      for this step - the template behind it clearly existed."
   if [ "$found" -eq 0 ] && [ "$sent_count" -gt 0 ]; then
-    echo "      NOTHING was raised for any type that was sent. Before hunting missing"
+    echo "      NOTHING was found for any type that was sent. Before hunting missing"
     echo "      templates, check the assumption in this file's header: that the tester sends"
     echo "      to the address in its own email field. If it sends somewhere else, every"
-    echo "      type looks missing even when all the templates are fine."
+    echo "      type looks missing even when all the templates are fine - and every address"
+    echo "      this run searched for carried the token $TT_RUN_ID, so a tester that ignores"
+    echo "      its email field would produce exactly this, nine times over."
   fi
+fi
+
+if [ -n "$unreadable" ]; then
+  fail=1
+  echo "FAIL: verify-email-templates-present - the Emails Sent page could not be read for:$unreadable"
+  echo "      tt_mail_find could not get the grid on screen - the admin session dropped, the"
+  echo "      re-login did not take, or the page never rendered. THIS IS NOT A TEMPLATE"
+  echo "      RESULT. Those types are excluded from the missing-message list above rather"
+  echo "      than counted as missing, because nothing was ever looked at for them."
+fi
+
+if [ -n "$nofilter" ]; then
+  fail=1
+  echo "FAIL: verify-email-templates-present - the Emails Sent page has no recipient filter"
+  echo "      (.mx-name-filterEmailsSentTo). This step needs it to ask whether a message"
+  echo "      exists for a given address; without it the only alternative is reading page"
+  echo "      one of a grid sorted by SentDate, which is empty for every message that has"
+  echo "      not been DELIVERED - i.e. for exactly the ones this step creates."
+  echo "      The filter was added to Core.EmailsSent_Overview on 2026-08-28, so this"
+  echo "      environment is running a build from before that. Redeploy it and run again."
+  echo "      NOTHING is being claimed about the template rows either way - the per-type"
+  echo "      result is suppressed above precisely so this cannot be misread as twelve"
+  echo "      missing templates."
 fi
 
 if [ "$sent_count" -eq 0 ]; then
