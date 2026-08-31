@@ -1041,9 +1041,27 @@ _tt_mail_open() {
   return 1
 }
 
-# _tt_mail_sort_newest - sort by Sent Date descending so new mail is on page one.
-# Best effort: the grid paginates at 20, and without this a busy environment can
-# push a fresh message onto a later page where no read would ever see it.
+# _tt_mail_sort_newest - A DELIBERATE NO-OP. Do not "fix" it.
+#
+# It was written to sort by Sent Date descending so new mail lands on page one.
+# It has never done that: it looks for a column header matching /sent\s*date/i,
+# but the caption on Core.EmailsSent_Overview is the single word `Sent`, so it
+# returns 'nocol' and clicks nothing - and every caller discards the result to
+# /dev/null, so nobody noticed.
+#
+# MAKING IT WORK WOULD BREAK THE CALLERS. The grid's data source already sorts by
+# SentDate DESCENDING by default, which is exactly what this was reaching for, so
+# the no-op is accidentally correct. A working version would click the `Sent`
+# header and TOGGLE that sort away from the default, on every call, inside
+# _tt_mail_refresh and tt_mail_prepare - which tt_mail_token and tt_mail_message
+# depend on. Left as-is on purpose. (Data Grid 2 also does not reliably emit
+# aria-sort, so its success test is unsound even on its own terms.)
+#
+# It is also the wrong instrument. SentDate is stamped only on successful
+# DELIVERY - Email_Connector.SUB_SendQueuedEmail sets it on its success branch
+# only, and neither the error nor the max-attempts branch ever does - so a QUEUED
+# or FAILED message has no SentDate at all, and no amount of sorting brings it to
+# page one. To find a specific message, filter by recipient: see tt_mail_find.
 _tt_mail_sort_newest() {
   playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return 'nogrid'; const hs=[...g.querySelectorAll('[role=columnheader], th')]; const h=hs.find(e=>/sent\\s*date/i.test((e.innerText||'').trim())); if(!h) return 'nocol'; for(let i=0;i<3;i++){ const s=(h.getAttribute('aria-sort')||'').toLowerCase(); if(s.indexOf('desc')===0) return 'desc'; (h.querySelector('[role=button],button')||h).click(); } return (h.getAttribute('aria-sort')||'unsorted'); }" 2>/dev/null | _tt_eval_str
 }
@@ -1076,6 +1094,90 @@ _tt_mail_new_rows() {
   else
     printf '%s\n' "$cur"
   fi
+}
+
+# _tt_mail_filter_rows - the rendered rows, as  <to>|||<status>|||<error>.
+#
+# Only the three cells a caller needs, so a body cell containing the separator
+# cannot corrupt the split. Column order on the grid is Sent, To, Subject, Status,
+# Error, Body (text), Body (HTML) - hence cells 1, 3 and 4.
+# Prints NOGRID when the grid is not on screen, which is NOT the same as no rows.
+_tt_mail_filter_rows() {
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return 'NOGRID'; const rows=[...g.querySelectorAll('[role=row], tr')].filter(r=>r.querySelector('[role=gridcell], td')); return rows.map(r=>{ const c=[...r.querySelectorAll('[role=gridcell], td')].map(x=>(x.innerText||'').replace(/\s+/g,' ').trim()); return (c[1]||'')+'|||'+(c[3]||'')+'|||'+(c[4]||''); }).join('\n'); }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_mail_find <address> - is there a message for this recipient, and what is it?
+#
+# WHY THIS EXISTS. The old way of answering that was to read page one of the
+# Emails Sent grid and diff it against a baseline. That cannot work. The grid
+# pages at 20 sorted by SentDate DESCENDING, and SentDate is empty for exactly the
+# messages a test has just caused - it is stamped only when the queue DELIVERS
+# one. A queued message therefore sorts to the far end of the list and never
+# reaches page one, so the old read was measuring delivery, not existence, and
+# reported perfectly good templates as missing.
+#
+# Core.EmailsSent_Overview gained a recipient filter (filterEmailsSentTo) for this
+# on 2026-08-28. Filtering asks the question directly and does not care about sort
+# order, page size, or whether anything has been delivered yet.
+#
+# Prints  NOGRID                  the Emails Sent page is not on screen
+#         NOFILTER                the filter widget is not on the page - the model
+#                                 change has not reached this environment yet
+#         NONE                    the filter matched nothing
+#         FOUND|<status>|<error>  e.g. FOUND|QUEUED| or FOUND|ERROR|Unknown host
+#
+# A QUEUED row is a real answer: the message exists, so the template behind it
+# exists. Whether it was ever delivered is a separate question this does not ask.
+tt_mail_find() {
+  local addr="$1" i rows total match
+  _tt_mail_open >/dev/null 2>&1 || { echo "NOGRID"; return 1; }
+  if ! playwright-cli eval "() => String(!!document.querySelector('.mx-name-filterEmailsSentTo input'))" 2>/dev/null | sed -n '2p' | grep -qiw true; then
+    echo "NOFILTER"
+    return 1
+  fi
+
+  # Clear first, and wait for the unfiltered grid to come back. Without this, a
+  # previous lookup that matched nothing leaves an EMPTY grid on screen, and the
+  # next address reads that emptiness as its own answer before its filter has even
+  # been applied - a false "no message" for a message that is really there.
+  tt_fill_commit ".mx-name-filterEmailsSentTo input" ""
+  for i in $(seq 1 8); do
+    sleep 1
+    rows="$(_tt_mail_filter_rows)"
+    [ "$rows" = "NOGRID" ] && continue
+    [ -n "$rows" ] && break
+  done
+
+  tt_fill_commit ".mx-name-filterEmailsSentTo input" "$addr"
+  # The filter debounces by delay:500 in the model and then round-trips to the
+  # server, so nothing is settled for at least a second.
+  for i in $(seq 1 10); do
+    sleep 1
+    rows="$(_tt_mail_filter_rows)"
+    [ "$rows" = "NOGRID" ] && continue
+    if [ -z "$rows" ]; then
+      # Empty is only trustworthy twice running - once could be a frame caught
+      # mid-update, between the old rows going and the new ones arriving.
+      sleep 1
+      [ -z "$(_tt_mail_filter_rows)" ] && { echo "NONE"; return 0; }
+      continue
+    fi
+    # Settled means every visible row belongs to THIS address. While the previous
+    # lookup's rows are still on screen they do not, which is the signal to keep
+    # waiting - no fixed sleep can tell those two states apart.
+    total="$(printf '%s\n' "$rows" | grep -c . || true)"
+    match="$(printf '%s\n' "$rows" | cut -d'|' -f1 | grep -cFi -- "$addr" || true)"
+    if [ "${total:-0}" -gt 0 ] && [ "${total:-0}" -eq "${match:-0}" ]; then
+      # Fields are separated by three pipes, so cut -d'|' sees 1=to, 4=status,
+      # 7=error, with empties between.
+      printf 'FOUND|%s|%s\n' \
+        "$(printf '%s' "$rows" | head -1 | cut -d'|' -f4)" \
+        "$(printf '%s' "$rows" | head -1 | cut -d'|' -f7- | cut -c1-80)"
+      return 0
+    fi
+  done
+  echo "NONE"
+  return 0
 }
 
 # --- the API the tests use -------------------------------------------------
