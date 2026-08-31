@@ -26,3 +26,8 @@
 # cannot run there. It is the one step that needs no app at all, so run it
 # locally instead - it is fast and needs nothing deployed.
 verify-scheduled-event-config.test.sh
+
+# Forgot password was REMOVED from the login page for now (2026-08-31), so
+# btnForgotPassword no longer exists and every case in this test fails. Skipped
+# rather than deleted - restore this line when the feature comes back.
+verify-forgot-password-link.test.sh
