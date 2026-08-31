@@ -30,6 +30,13 @@
 #      otherwise; a Clear that worked on a submitted week would silently destroy
 #      hours somebody had already approved.
 #
+# READING THE CELLS. hc_day returns the sentinel __MISSING__ when the cell it was
+# asked for does not exist, which is a different fault from the cell holding the
+# wrong value - and __MISSING__ is a NON-EMPTY string, so a bare `[ -n "$v" ]`
+# accepts it. Every reading below is therefore checked against hc_cells first, so
+# that "the grid rendered nothing" is reported as itself and never as a
+# blank-versus-zero regression. See the note on hc_cells.
+#
 # Uses e2e_consultant2 / E2E Sandbox, matching the other consultant steps, so it
 # cannot disturb the customer-approval data 30-approval depends on.
 #
@@ -66,6 +73,34 @@ hc_editable() {
 # '0' is the entire point of this step.
 hc_day() {
   playwright-cli eval "() => { const els=document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDay$2'); const c=els[$1-1]; if(!c) return '__MISSING__'; const i=c.querySelector('input'); return i ? String(i.value||'') : String((c.innerText||'').trim()); }" 2>/dev/null | _tt_eval_str
+}
+
+# hc_cells - how many day cells the assignment grid is rendering right now:
+# a number, or 'nogrid' when the gallery itself is not on the page.
+#
+# THE DISTINCTION THIS EXISTS FOR. hc_day returns __MISSING__ when its element is
+# absent, and __MISSING__ is a NON-EMPTY string - so `[ -n "$v" ]` accepts it, and
+# a value comparison reports it as though it were what the app rendered. A run on
+# 2026-08-31 failed with "Clear did not empty the week - Mon=[__MISSING__]" for
+# all seven days while the grid was rendering nothing at all. Those are different
+# faults and the message named the wrong one. Ask this before believing any cell
+# reading, and say which fault it is.
+hc_cells() {
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galAssignmentRows'); if(!g) return 'nogrid'; return String(g.querySelectorAll('.mx-name-txtDayMon').length); }" 2>/dev/null | _tt_eval_str
+}
+
+# hc_dialog_text - the LAST VISIBLE dialog, flattened, or ''.
+#
+# Read this BEFORE tt_clear_dialogs, never after. That helper clicks anything
+# captioned ok/yes/confirm/continue/proceed, which includes Mendix's own error
+# dialog - so by the time it returns, the one line that would explain a failed
+# action is gone. The 2026-08-31 run dismissed whatever was on screen and threw
+# the text away with `|| true`.
+#
+# Last VISIBLE, and outermost-last: Mendix leaves closed dialogs in the DOM, so
+# taking the first match hands back a corpse. Same rule as tt_clear_dialogs.
+hc_dialog_text() {
+  playwright-cli eval "() => { const all=[...document.querySelectorAll('.mx-window-content,.mx-dialog-content,.modal-content,[role=dialog]')].filter(d=>d.offsetParent!==null); const d=all.filter(x=>!all.some(o=>o!==x && o.contains(x))).pop(); return d ? (d.innerText||'').replace(/\s+/g,' ').trim().slice(0,240) : ''; }" 2>/dev/null | _tt_eval_str
 }
 
 hc_set() {  # hc_set <ordinal> <Day> <value>
@@ -110,7 +145,16 @@ echo "clear case on week '$WEEK' (row $ORD)"
 for d in Mon Tues Wed Thurs Fri; do hc_set "$ORD" "$d" "5"; done
 sleep 1
 filled="$(hc_day "$ORD" Mon)"
-[ -n "$filled" ] || tt_fail "could not enter hours before clearing (Mon read back empty)"
+# __MISSING__ is non-empty, so the old `[ -n "$filled" ]` accepted it and let a
+# grid with no cells through to be reported later as a blank-versus-zero fault.
+case "$filled" in
+  __MISSING__)
+    tt_fail "row $ORD has no Mon day cell on week '$WEEK' after writing to it (grid is rendering: $(hc_cells)). Nothing was entered, so Clear cannot be exercised - this is a rendering or fixture fault, not a blank-versus-zero one."
+    ;;
+  "")
+    tt_fail "could not enter hours before clearing (Mon read back empty)"
+    ;;
+esac
 
 # ------------------------------------------------------- A. Clear leaves BLANK
 # The app hides Clear, Save and Submit together the moment the week's status
@@ -124,23 +168,45 @@ fi
 if ! hc_click btnClear; then
   tt_fail "the Clear button could not be clicked on week '$WEEK' (week status: $(tt_week_status "$CUSER" "$WEEK"))"
 fi
-tt_clear_dialogs 8 "Clear" >/dev/null 2>&1 || true
+# Read the dialog before dismissing it, and keep BOTH the text and the verdict.
+# Discarding these with `|| true` is why a blocked Clear and a dismissed error
+# dialog looked identical to a Clear that ran and did nothing.
+CLEAR_DIALOG="$(hc_dialog_text)"
+clear_ran=1
+if ! tt_clear_dialogs 8 "Clear"; then
+  bad "A a dialog blocked the Clear on week '$WEEK', so it never ran: \"$TT_DIALOG_BLOCKED\""
+  clear_ran=0
+fi
 sleep 2
 
-notblank=""
-for d in $DAYS; do
-  v="$(hc_day "$ORD" "$d")"
-  [ "$v" = "" ] || notblank="$notblank $d=[$v]"
-done
+grid_gone=0
+if [ "$clear_ran" = "1" ]; then
+  cells="$(hc_cells)"
+  case "$cells" in
+    nogrid|0)
+      grid_gone=1
+      case "$cells" in
+        nogrid) where="the gallery is not on the page at all" ;;
+        *)      where="the gallery is on the page but rendering zero rows" ;;
+      esac
+      bad "A after Clear there are NO day cells to read - $where (week on screen: '$(tt_current_week)'; dialog at the click: \"${CLEAR_DIALOG:-none}\"; week status: $(tt_week_status "$CUSER" "$WEEK")). Nothing can be said about blank versus zero from a grid with no cells; this is a rendering or data fault, not ACT_Timesheet_Clear conflating the two states."
+      ;;
+    *)
+      notblank=""
+      for d in $DAYS; do
+        v="$(hc_day "$ORD" "$d")"
+        [ "$v" = "" ] || notblank="$notblank $d=[$v]"
+      done
 
-if [ -z "$notblank" ]; then
-  note "A Clear left every day cell exactly blank"
-else
-  if hc_is_zero "$(hc_day "$ORD" Mon)"; then
-    bad "A Clear wrote ZEROS instead of blanks —$notblank. Blank means 'nothing recorded' and 0 means 'recorded none'; ACT_Timesheet_Clear must not conflate them"
-  else
-    bad "A Clear did not empty the week —$notblank"
-  fi
+      if [ -z "$notblank" ]; then
+        note "A Clear left every day cell exactly blank"
+      elif hc_is_zero "$(hc_day "$ORD" Mon)"; then
+        bad "A Clear wrote ZEROS instead of blanks —$notblank. Blank means 'nothing recorded' and 0 means 'recorded none'; ACT_Timesheet_Clear must not conflate them"
+      else
+        bad "A Clear did not empty the week —$notblank"
+      fi
+      ;;
+  esac
 fi
 
 # ----------------------------------------- B. an explicit 0 survives as a zero
@@ -161,26 +227,41 @@ fi
 # tt_refetch_week in lib/_login.sh.
 hc_save_and_refetch() {
   hc_click btnSaveDraft || return 1
-  tt_clear_dialogs 6 >/dev/null 2>&1 || true
+  # Same rule as the Clear below: a blocked dialog gets reported, not swallowed.
+  if ! tt_clear_dialogs 6; then
+    bad "B a dialog blocked the save on week '$WEEK': \"$TT_DIALOG_BLOCKED\""
+  fi
   sleep 2
   tt_refetch_week
   return 0
 }
 
 sentinel_ok=1
-hc_set "$ORD" "Mon" "7"
-sleep 1
-if ! hc_save_and_refetch; then
-  bad "B the week could not be saved — no Save button (week status: $(tt_week_status "$CUSER" "$WEEK")). Save is hidden by the same rule as Clear, so nothing about zeros could be proven"
+if [ "$grid_gone" = "1" ]; then
+  # Writing a sentinel into a grid with no cells cannot fail loudly - the fill
+  # finds nothing and the read comes back __MISSING__, which the old code then
+  # reported as "the save path is not carrying values through". Say what is
+  # actually wrong instead, and do not pretend B ran.
+  note "B not exercised — the grid rendered no day cells after Clear, so a sentinel could neither be written nor read back"
   sentinel_ok=0
 else
-  ORD="$(hc_row_any)"
-  sv="$(hc_day "$ORD" Mon)"
-  case "$sv" in
-    7|7.0|7.00) : ;;
-    *) bad "B the save path is not carrying values through — a 7 written to Mon came back as [$sv], so a 0 reading back as 0.00 would prove nothing about the app"
-       sentinel_ok=0 ;;
-  esac
+  hc_set "$ORD" "Mon" "7"
+  sleep 1
+  if ! hc_save_and_refetch; then
+    bad "B the week could not be saved — no Save button (week status: $(tt_week_status "$CUSER" "$WEEK")). Save is hidden by the same rule as Clear, so nothing about zeros could be proven"
+    sentinel_ok=0
+  else
+    ORD="$(hc_row_any)"
+    sv="$(hc_day "$ORD" Mon)"
+    case "$sv" in
+      7|7.0|7.00) : ;;
+      __MISSING__)
+        bad "B after saving, row $ORD has no Mon day cell to read (grid is rendering: $(hc_cells); week on screen: '$(tt_current_week)'). The sentinel could not be re-read at all, so nothing about zeros is provable — and that is a rendering fault, not the save path dropping a value"
+        sentinel_ok=0 ;;
+      *) bad "B the save path is not carrying values through — a 7 written to Mon came back as [$sv], so a 0 reading back as 0.00 would prove nothing about the app"
+         sentinel_ok=0 ;;
+    esac
+  fi
 fi
 
 if [ "$sentinel_ok" = "1" ]; then
@@ -211,7 +292,19 @@ fi
 # --------------------------------------- C. Clear refused once not editable
 WEEK2="$(tt_goto_fresh_week "$PROJECT")" || WEEK2=""
 if [ -z "$WEEK2" ]; then
-  echo "  note: no second fresh week available; the submitted-week guard was not exercised"
+  # "No fresh week" has two causes the old note could not tell apart: a pool the
+  # earlier steps used up, or a grid rendering nothing at all. The first is the
+  # suite running out of weeks; the second is a fault, and it is what the
+  # 2026-08-31 run was actually reporting.
+  c2="$(hc_cells)"
+  case "$c2" in
+    nogrid|0)
+      echo "  note: no second fresh week available because the assignment grid is rendering NO rows at all (gallery: $c2). That is a broken or empty grid, NOT an exhausted week pool. The submitted-week guard was not exercised."
+      ;;
+    *)
+      echo "  note: no second fresh week available — the grid is rendering $c2 row(s), so the fresh-week pool is exhausted rather than broken (running this spec directly skips 00-setup's data clear, which is what refills it). The submitted-week guard was not exercised."
+      ;;
+  esac
 else
   ORD2="$(hc_row_any)"
   if [ "$ORD2" = "0" ]; then
