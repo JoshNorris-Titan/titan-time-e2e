@@ -25,9 +25,26 @@ EXPECT="N/A"
 
 # Seed: step to an editable week, force every day box to 0, submit.
 # Zeroing uses the native value setter (a plain fill does not always commit a
-# Mendix decimal box) — same technique as the TT-692/693 zero-hours test.
+# Mendix decimal box) - same technique as the TT-692/693 zero-hours test.
+#
+# Records the seeded week in TT_A3_SEEDED_WEEK, in the "MMM DD - MMM DD" form the
+# HR week picker uses, so the caller can pin the week it just created instead of
+# walking every week on the tab.
+#
+# DIALOG HANDLING. This used to run its own dismiss loop built on
+#   document.querySelector('.mx-dialog,.mx-window,[role=dialog],.modal-dialog,[class*=modal]')
+# which is the dead-node trap lib/_login.sh documents at tt_clear_dialogs: Mendix
+# leaves CLOSED dialogs in the DOM, and querySelector returns the FIRST in document
+# order, not the live one. Probed against dev on 2026-08-31 mid-submit there were
+# four such nodes and the first was invisible - so "Yes" was clicked on a corpse
+# while the real "Timesheet Confirmation / Are you Sure?" window stayed up. The
+# submit never committed, the loop gave up silently, and the test reported
+# "zero-hour entry did not reach the To Process tab" - which reads like a routing
+# defect in Main.ACT_AssignmentEntry_Submit and is not. tt_clear_dialogs takes the
+# LAST VISIBLE dialog and says what blocked it; use it, and never re-inline a
+# querySelector dismiss loop here.
 seed_zero_hour_week() {
-  local i
+  local i n week
   tt_login "$CUSER" "My Timesheets"
   for i in $(seq 1 10); do
     if playwright-cli eval "() => { const dm=document.querySelector('.mx-name-txtDayMon input'); return String(!!dm && !dm.disabled && !dm.readOnly && !!document.querySelector('.mx-name-btnSubmit')); }" 2>/dev/null | grep -qiw true; then
@@ -39,18 +56,33 @@ seed_zero_hour_week() {
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnSubmit'))" 2>/dev/null | grep -qiw true \
     || tt_fail "$CUSER: no editable week with a Submit button found to seed a zero-hour entry"
 
-  playwright-cli eval "() => { const ins=[...document.querySelectorAll('.mx-name-galAssignmentRows input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled); const set=(t,v)=>{ t.focus(); Object.getOwnPropertyDescriptor(t.__proto__,'value').set.call(t,v); t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); }; ins.forEach(i=>set(i,'0')); return String(ins.length); }" >/dev/null 2>&1
+  # The consultant caption reads "E2E Aug 30 - Sep 05"; the HR picker renders
+  # "Aug 30 - Sep 05, 2026". Keep the day range so the two are comparable.
+  week=$(playwright-cli eval "() => { const t=((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim(); const m=t.match(/[A-Z][a-z]{2}\s+\d{1,2}\s*-\s*[A-Z][a-z]{2}\s+\d{1,2}/); return m ? m[0] : ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
+  [ -n "$week" ] || tt_fail "$CUSER: could not read the week label off .mx-name-txtWeekRange to seed against"
+  TT_A3_SEEDED_WEEK="$week"
+  echo "  seeding zero hours into week '$week'"
+
+  n=$(playwright-cli eval "() => { const ins=[...document.querySelectorAll('.mx-name-galAssignmentRows input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled); const set=(t,v)=>{ t.focus(); Object.getOwnPropertyDescriptor(t.__proto__,'value').set.call(t,v); t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); }; ins.forEach(i=>set(i,'0')); return String(ins.length); }" 2>/dev/null | sed -n '2p' | tr -d '"')
+  echo "  zeroed ${n:-0} day box(es)"
+  [ "${n:-0}" != "0" ] || tt_fail "$CUSER: no editable day boxes in '$week' - nothing to zero, so no entry would be created"
   sleep 2
+
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  # Confirmation chain: "Are you Sure? yes", then "Submit Anyway" for the <40h warning.
-  for i in 1 2 3 4 5 6; do
-    if playwright-cli eval "() => { const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog],.modal-dialog,[class*=modal]'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(yes|submit anyway|confirm|continue|proceed|ok)$/i.test((x.innerText||'').trim())); if(b){b.click(); return 'clicked';} return 'stuck'; }" 2>/dev/null | sed -n '2p' | grep -qiw none; then
-      break
-    fi
-    sleep 3
-  done
+  # Confirmation chain: "Timesheet Confirmation / Are you Sure? -> Yes", then
+  # possibly "Submit Anyway" for the under-40h warning. Both captions are in
+  # tt_clear_dialogs' default accept list.
+  tt_clear_dialogs 8 \
+    || tt_fail "$CUSER: the submit confirmation was never dismissed, so the zero-hour week was never submitted: ${TT_DIALOG_BLOCKED:-unknown dialog}"
   sleep 3
+
+  # Postcondition: Submit is hidden once the week leaves Draft/Rejected. Without
+  # this the seed can "succeed" having changed nothing, and the failure surfaces
+  # later as a missing card on the HR tab.
+  playwright-cli eval "() => String(!document.querySelector('.mx-name-btnSubmit'))" 2>/dev/null | grep -qiw true \
+    || tt_fail "$CUSER: Submit is still on the page after confirming, so week '$week' never left Draft"
+  echo "  submitted '$week' with zero hours"
 }
 
 # 1) Look for an existing no-approval card, otherwise seed one.
@@ -59,8 +91,13 @@ if ! tt647_select_week_with "$CNAME" >/dev/null; then
   echo "no To Process entry for '$CNAME' — seeding a zero-hour week"
   seed_zero_hour_week
   tt647_hr_open_tab "$TT647_TAB_TOPROCESS"
-  tt647_select_week_with "$CNAME" >/dev/null \
-    || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab"
+  # Submit routes the entry into the queue ASYNCHRONOUSLY, so pin the week the
+  # seed just wrote and POLL for the card rather than walking the tab once.
+  # tt647_wait_for_card also separates "the week was never offered" (a filter left
+  # set on the tab) from "the week is there but holds no such card" (routing) --
+  # collapsing those is what made this read as a product defect.
+  tt647_wait_for_card "$TT_A3_SEEDED_WEEK" "$CNAME" "" 10 \
+    || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab: $TT647_WAIT_ERR"
 fi
 
 tt647_require_widgets "To Process tab"
