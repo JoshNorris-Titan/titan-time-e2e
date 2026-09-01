@@ -314,10 +314,13 @@ tt654_submit_row() {
 
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  # The chain is two dialogs deep on a future or under-40 week ("Are you Sure?"
-  # then "Submit Anyway"). A dialog whose buttons match neither leaves the submit
-  # parked, and tt_clear_dialogs reports that through TT_DIALOG_BLOCKED — which
-  # this used to discard, turning a nameable blocker into a silent timeout.
+  # ONE dialog now, not two: the "Are you Sure?" step is gone and btnSubmit opens
+  # the single confirm popup directly ("Submit Anyway" when the week warned, plain
+  # "Submit" when it did not). The second dismiss below is kept deliberately — it
+  # is a no-op when nothing is left, and still catches a stray dialog. A dialog
+  # whose buttons match nothing leaves the submit parked, and tt_clear_dialogs
+  # reports that through TT_DIALOG_BLOCKED — which this used to discard, turning a
+  # nameable blocker into a silent timeout.
   tt654_dismiss_dialog || blocked="${TT_DIALOG_BLOCKED:-}"
   sleep 2
   tt654_dismiss_dialog || blocked="${blocked:-${TT_DIALOG_BLOCKED:-}}"

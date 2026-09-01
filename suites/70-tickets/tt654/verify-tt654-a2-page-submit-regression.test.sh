@@ -5,8 +5,9 @@
 # This file used to claim it was the regression for the
 # Main.ACT_AssignmentEntry_Submit -> Main.SUB_AssignmentEntry_Submit extraction.
 # It is not, and never was. .mx-name-btnSubmit in Main.SNIP_Timesheet is
-# `show_page Main.Confirmation_timesheet` -> Main.ACT_Timesheet_Precheck ->
-# Main.ACT_Timesheet_Submit. That is a DIFFERENT microflow which keeps its own
+# `microflow Main.ACT_Timesheet_Submit_Start` -> Main.SUB_Timesheet_Warnings ->
+# the Main.Consultant_OverFortyHours confirm popup -> Main.ACT_Timesheet_SubmitAnyway
+# -> Main.ACT_Timesheet_Submit. That is a DIFFERENT microflow which keeps its own
 # inline submit logic; it does not call the extracted sub at all.
 #
 # The extraction is covered by verify-tt692693-c1-resubmit (general case) and

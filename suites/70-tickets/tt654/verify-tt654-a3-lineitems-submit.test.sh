@@ -4,7 +4,7 @@
 # ── WHAT CHANGED ABOUT THIS TEST, AND WHY ───────────────────────────────────────
 # This test used to drive the timesheet grid's .mx-name-btnSubmit and claim it
 # was covering the extraction. It was not. In Main.SNIP_Timesheet that button is
-# `show_page Main.Confirmation_timesheet` -> Main.ACT_Timesheet_Precheck ->
+# `microflow Main.ACT_Timesheet_Submit_Start` -> the single confirm popup ->
 # Main.ACT_Timesheet_Submit, which is the WEEKLY submit and keeps its own inline
 # line-items handling. Main.ACT_AssignmentEntry_Submit — the microflow that was
 # gutted into Main.SUB_AssignmentEntry_Submit — is referenced from exactly one

@@ -4,8 +4,8 @@
 # ── SCOPE CORRECTION ────────────────────────────────────────────────────────────
 # This file used to attribute the status expression to
 # Main.SUB_AssignmentEntry_Submit. It drives .mx-name-btnSubmit, which is
-# Main.ACT_Timesheet_Submit (via Main.Confirmation_timesheet ->
-# Main.ACT_Timesheet_Precheck), not the extracted sub. Both flows carry their own
+# Main.ACT_Timesheet_Submit (via Main.ACT_Timesheet_Submit_Start and the single
+# confirm popup), not the extracted sub. Both flows carry their own
 # copy of the same expression, so the test is still worth having — it just covers
 # the weekly one. The sub's copy is covered by verify-tt692693-c1-resubmit, which
 # asserts a resubmit lands in the Manager Approval queue.
