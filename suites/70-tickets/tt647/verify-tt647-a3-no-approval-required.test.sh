@@ -132,9 +132,17 @@ if ! tt647_select_week_with "$CNAME" >/dev/null; then
   # On failure, say which queue the entry DID reach before blaming the routing --
   # an entry submitted with hours still on it lands in an approval queue, and that
   # is a seed problem, not a product one. See tt647_locate_entry.
+  #
+  # GALLERY PAGING. This is the third thing to have failed here, and the one that
+  # produced "no card in it matches after ~60s" with a correctly routed entry:
+  # galTabEntries renders only four cards until it is scrolled, and this test's two
+  # seeded entries sorted past that. tt647_load_cards now runs inside the week
+  # selection, so the read below sees the whole week. Verified against dev
+  # 2026-08-31: every WEEKLY TO PROCESS week showed 4 cards under a heading reading
+  # "(5)", and one scroll took it to 5.
   tt647_wait_for_card "$TT_A3_SEEDED_WEEK" "$CNAME" "" 10 \
     || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab: $TT647_WAIT_ERR
-       Week '$TT_A3_SEEDED_WEEK' for '$CNAME' is currently on: $(tt647_locate_entry "$TT_A3_SEEDED_WEEK" "$CNAME"). An approval queue here means the seeded hours were not zero when Submit ran."
+       Week '$TT_A3_SEEDED_WEEK' for '$CNAME' is currently on: $(tt647_locate_entry "$TT_A3_SEEDED_WEEK" "$CNAME"). If that names an APPROVAL QUEUE, the seeded hours were not zero when Submit ran. If it names no tab at all, the entries are Draft, Rejected or AwaitingExport — they were never submitted, or something moved them on."
 fi
 
 tt647_require_widgets "To Process tab"

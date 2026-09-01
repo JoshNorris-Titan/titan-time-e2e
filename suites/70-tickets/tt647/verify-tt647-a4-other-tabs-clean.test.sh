@@ -21,7 +21,13 @@ source "$TT_ROOT/lib/_tt647.sh"
 CONSULTANTS="E2E Consultant"
 
 # approver_widget_count — how many TT-647 texts are rendered on the current tab.
+#
+# Pages the gallery in first. This step asserts a count of ZERO on the other tabs,
+# and galTabEntries only renders four cards until its content box is scrolled — so
+# without this the assertion passes for the wrong reason the moment a tab holds more
+# than four entries, which is the one case it exists to catch.
 approver_widget_count() {
+  tt647_load_cards >/dev/null 2>&1 || true
   playwright-cli eval "() => String(document.querySelectorAll('.mx-name-galTabEntries .mx-name-textApprovedBy1, .mx-name-galTabEntries .mx-name-textApprovedBy2').length)" 2>/dev/null | sed -n '2p' | tr -d '\"'
 }
 
