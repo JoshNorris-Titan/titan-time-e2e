@@ -63,10 +63,42 @@ seed_zero_hour_week() {
   TT_A3_SEEDED_WEEK="$week"
   echo "  seeding zero hours into week '$week'"
 
-  n=$(playwright-cli eval "() => { const ins=[...document.querySelectorAll('.mx-name-galAssignmentRows input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled); const set=(t,v)=>{ t.focus(); Object.getOwnPropertyDescriptor(t.__proto__,'value').set.call(t,v); t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); }; ins.forEach(i=>set(i,'0')); return String(ins.length); }" 2>/dev/null | sed -n '2p' | tr -d '"')
+  n=$(playwright-cli eval "() => { const ins=[...document.querySelectorAll('.mx-name-galAssignmentRows input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled); const set=(t,v)=>{ t.focus(); Object.getOwnPropertyDescriptor(t.__proto__,'value').set.call(t,v); t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); t.blur(); }; ins.forEach(i=>set(i,'0')); return String(ins.length); }" 2>/dev/null | sed -n '2p' | tr -d '"')
   echo "  zeroed ${n:-0} day box(es)"
   [ "${n:-0}" != "0" ] || tt_fail "$CUSER: no editable day boxes in '$week' - nothing to zero, so no entry would be created"
-  sleep 2
+
+  # WAIT FOR THE ZEROES TO REACH THE SERVER, don't sleep and hope.
+  #
+  # Each day box hands its value to Mendix on BLUR (lib/_login.sh, tt_commit_focused)
+  # and every commit is a separate server round trip. Fourteen boxes on cloud dev is
+  # several seconds of round trips, and this used to fire Submit after a flat 2s.
+  # Measured against dev on 2026-08-31: two seconds after the write the last box
+  # still read a raw "0" - unformatted, the widget's uncommitted signature - beside
+  # its row total of 7.00, so the server still had the OLD hours for that row.
+  #
+  # That is not cosmetic, it decides the routing. Main.SUB_AssignmentEntry_Submit
+  # re-reads the hours server-side and sets, PER ENTRY:
+  #   TotalHours = 0                  -> ToProcess
+  #   else Project/ApprovalFromManager -> AwaitingManagerApproval
+  #   else Project/ApprovalFromCustomer -> AwaitingCustomerApproval
+  # E2E Consultant Two's two assignments are exactly one of each (verified on dev:
+  # E2E Sandbox with hours goes to MANAGER APPROVAL, E2E EmailTest with hours goes
+  # to CLIENT APPROVAL), so a zero that has not landed sends BOTH rows to approval
+  # queues and NOTHING to To Process. The test then reported "zero-hour entry did
+  # not reach the To Process tab", which reads like a routing defect in the product
+  # and is not - the seed simply submitted hours it believed it had cleared.
+  #
+  # The row total is the honest gate: .mx-name-txtRowTotal only reads 0.00 after the
+  # server has recalculated the row, which is the same number Submit will read.
+  for i in $(seq 1 15); do
+    ZERO_STATE=$(playwright-cli eval "() => { const tot=[...document.querySelectorAll('.mx-name-txtRowTotal input')]; const days=[...document.querySelectorAll('.mx-name-galAssignmentRows input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled); const bad=tot.filter(t=>parseFloat(t.value||'0')!==0).length + days.filter(d=>!/^0(\\.0+)?$/.test((d.value||'').trim()) || (d.value||'').trim()==='').length; return bad===0 ? 'zeroed' : 'pending:' + tot.map(t=>t.value).join(',') + ' days=' + days.map(d=>d.value).join(','); }" 2>/dev/null | _tt_eval_str)
+    case "$ZERO_STATE" in zeroed) break ;; esac
+    sleep 2
+  done
+  case "$ZERO_STATE" in
+    zeroed) echo "  every row total reads 0.00 - the zeroes are committed" ;;
+    *) tt_fail "$CUSER: the zeroed hours never reached the server for week '$week' after ~30s, so Submit would route these entries by their OLD hours: $ZERO_STATE" ;;
+  esac
 
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
@@ -96,8 +128,12 @@ if ! tt647_select_week_with "$CNAME" >/dev/null; then
   # tt647_wait_for_card also separates "the week was never offered" (a filter left
   # set on the tab) from "the week is there but holds no such card" (routing) --
   # collapsing those is what made this read as a product defect.
+  # On failure, say which queue the entry DID reach before blaming the routing --
+  # an entry submitted with hours still on it lands in an approval queue, and that
+  # is a seed problem, not a product one. See tt647_locate_entry.
   tt647_wait_for_card "$TT_A3_SEEDED_WEEK" "$CNAME" "" 10 \
-    || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab: $TT647_WAIT_ERR"
+    || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab: $TT647_WAIT_ERR
+       Week '$TT_A3_SEEDED_WEEK' for '$CNAME' is currently on: $(tt647_locate_entry "$TT_A3_SEEDED_WEEK" "$CNAME"). An approval queue here means the seeded hours were not zero when Submit ran."
 fi
 
 tt647_require_widgets "To Process tab"

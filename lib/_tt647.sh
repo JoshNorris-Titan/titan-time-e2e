@@ -162,6 +162,34 @@ tt647_wait_for_card() {
   return 1
 }
 
+# tt647_locate_entry <week-fragment> <needle>
+# Say WHICH HR queue actually holds <needle>'s card for <week-fragment>, by walking
+# all three tabs. Prints e.g. "MANAGER APPROVAL, CLIENT APPROVAL", or "(none of the
+# three HR tabs)".
+#
+# FOR FAILURE PATHS ONLY -- it changes the selected tab and week, so call it when
+# the test is about to fail anyway.
+#
+# WHY. "the entry did not reach the To Process tab" has two completely different
+# causes and the message cannot tell them apart: the entry was never submitted, or
+# it was submitted and ROUTED SOMEWHERE ELSE. Main.SUB_AssignmentEntry_Submit picks
+# the queue from the hours it re-reads server-side -- 0 goes to ToProcess, anything
+# else follows the project's approval flags -- so a seed whose hours had not yet
+# committed lands its entries in the approval queues and leaves To Process empty.
+# That is a seed defect that reads exactly like a product routing defect. Naming the
+# queue turns a day of model-diving into one line of output.
+tt647_locate_entry() {
+  local frag="$1" needle="$2" tab found=""
+  for tab in "$TT647_TAB_TOPROCESS" "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT"; do
+    tt647_hr_open_tab "$tab" >/dev/null 2>&1
+    tt647_select_exact_week "$frag" || continue
+    if playwright-cli eval "() => String((((document.querySelector('.mx-name-galTabEntries')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
+      found="${found:+$found, }$tab"
+    fi
+  done
+  echo "${found:-(none of the three HR tabs)}"
+}
+
 # tt647_card_lines <needle> [needle2]
 # Prints the two approver lines of the entries-gallery card matching <needle>
 # (and <needle2> when given), separated by "~~" (line1~~line2). Either side may
