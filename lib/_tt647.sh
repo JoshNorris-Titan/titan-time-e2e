@@ -49,6 +49,30 @@ tt647_session_fullname() {
 TT647_TAB_TOPROCESS="WEEKLY TO PROCESS"
 TT647_TAB_MANAGER="MANAGER APPROVAL"
 TT647_TAB_CLIENT="CLIENT APPROVAL"
+TT647_TAB_SENT="SENT"
+
+# TT647_GAL -- the entries gallery. Named once because EVERY read of it has to go
+# through tt647_load_cards first; see below.
+TT647_GAL=".mx-name-galTabEntries"
+
+# tt647_load_cards [label] -- page the entries gallery in fully, then echo how many
+# cards it holds.
+#
+# MANDATORY BEFORE ANY READ OF TT647_GAL. galTabEntries is a virtual-scrolling
+# gallery with pageSize 4: it renders four cards and fetches the rest only when its
+# own .widget-gallery-content box is scrolled. Reading .innerText without scrolling
+# therefore answers "is this row in the first four", not "is this row in this week",
+# and the two are indistinguishable in the output.
+#
+# Measured on dev 2026-08-31: all five WEEKLY TO PROCESS weeks rendered 4 cards while
+# their heading read "Weekly Timesheets to Process (5)", and one scroll took the
+# count to 5. verify-tt647-a3 failed on exactly this -- its seeded zero-hour entries
+# reached ToProcess (confirmed at the data layer) but sat past position 4, so the
+# card wait timed out and tt647_locate_entry reported "(none of the three HR tabs)".
+# Do not add a new read of this gallery without a tt647_load_cards in front of it.
+tt647_load_cards() {
+  tt_gallery_load_all "$TT647_GAL" "${1:-entries gallery}"
+}
 
 # tt647_hr_open_tab <TAB TEXT> — log in as HR and switch to the named tab.
 tt647_hr_open_tab() {
@@ -71,6 +95,10 @@ tt647_hr_open_tab() {
 # verify-tt647-a2 failing with a correctly-routed entry.
 tt647_log_tab_state() {
   local label="${1:-tab state}" s
+  # Page the gallery in first, or cardsInSelectedWeek reports the page size (4)
+  # rather than the week -- which is precisely how a3's log showed 4 cards before
+  # the seed and 4 after two more entries landed in that same week.
+  tt647_load_cards >/dev/null 2>&1 || true
   s="$(playwright-cli eval "() => { const val=n=>{ const w=document.querySelector('.mx-name-'+n); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('.mx-name-galTabAvailableWeeks'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('.mx-name-galTabEntries'); const cards=g?g.querySelectorAll('.mx-name-textApprovedBy1,.mx-name-btnApprove').length:0; return 'consultantFilter=' + val('cbTabWeekConsultant') + ' | projectFilter=' + val('cbTabWeekProject') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | cardsInSelectedWeek=' + cards; }" 2>/dev/null | _tt_eval_str)"
   echo "  [tab] $label: $s"
 }
@@ -88,6 +116,9 @@ tt647_select_week_with() {
     unset IFS
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 4
+    # Load the whole week before concluding it does not hold the needle -- this walk
+    # decides "no entry anywhere", so a first-page-only read makes it lie.
+    tt647_load_cards "week $lbl" >/dev/null 2>&1 || true
     if playwright-cli eval "() => String((((document.querySelector('.mx-name-galTabEntries')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
       echo "$lbl"
       return 0
@@ -114,7 +145,16 @@ tt647_select_week_with() {
 tt647_select_exact_week() {
   local frag="$1" r
   r=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'nogallery'; const el=[...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).find(e=>(e.innerText||'').trim().indexOf('$frag')===0); if(!el) return 'nf'; el.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)
-  case "$r" in ok) sleep 4; return 0 ;; esac
+  case "$r" in
+    ok)
+      sleep 4
+      # Selecting a week re-runs Main.DS_EntriesForTab, so the gallery comes back at
+      # page 1. Every caller reads it straight afterwards; page it in here so none of
+      # them has to remember.
+      tt647_load_cards "week $frag" >/dev/null 2>&1 || true
+      return 0
+      ;;
+  esac
   return 1
 }
 
@@ -157,15 +197,22 @@ tt647_wait_for_card() {
   if [ -z "$week_seen" ]; then
     TT647_WAIT_ERR="week '$frag' was never offered by this tab's week picker. Weeks on offer: $weeks. The entry may be in the queue but hidden by a consultant/project filter left set on this tab, or it may not have reached this status at all."
   else
-    TT647_WAIT_ERR="week '$frag' WAS selectable, but no card in it matches '$needle'${needle2:+ + '$needle2'} after ~$((tries * 6))s. The week is in this queue, so routing worked; the specific entry is what is missing."
+    TT647_WAIT_ERR="week '$frag' WAS selectable, but no card in it matches '$needle'${needle2:+ + '$needle2'} after ~$((tries * 6))s, with $(tt647_load_cards) card(s) fully paged in. The week is in this queue, so routing worked; the specific entry is what is missing."
   fi
   return 1
 }
 
 # tt647_locate_entry <week-fragment> <needle>
 # Say WHICH HR queue actually holds <needle>'s card for <week-fragment>, by walking
-# all three tabs. Prints e.g. "MANAGER APPROVAL, CLIENT APPROVAL", or "(none of the
-# three HR tabs)".
+# every week-picker tab. Prints e.g. "MANAGER APPROVAL, CLIENT APPROVAL", or
+# "(no week-picker tab; the entry is Draft, Rejected or AwaitingExport)".
+#
+# THE TAB LIST IS FOUR, NOT THREE. Main.SUB_HRDashboard_CreateTabs creates exactly
+# four HRDashboardTab rows -- Manager, Customer, Process, Sent -- and this walked
+# only the first three, so an Exported entry came back as "nowhere". PENDING and
+# MONTHLY TO BE INVOICED are not HRDashboardTab tabs at all (the monthly one has no
+# week gallery), so Draft, Rejected and AwaitingExport are genuinely unreachable from
+# here; say that rather than implying the entry does not exist.
 #
 # FOR FAILURE PATHS ONLY -- it changes the selected tab and week, so call it when
 # the test is about to fail anyway.
@@ -180,14 +227,16 @@ tt647_wait_for_card() {
 # queue turns a day of model-diving into one line of output.
 tt647_locate_entry() {
   local frag="$1" needle="$2" tab found=""
-  for tab in "$TT647_TAB_TOPROCESS" "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT"; do
+  for tab in "$TT647_TAB_TOPROCESS" "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT" "$TT647_TAB_SENT"; do
     tt647_hr_open_tab "$tab" >/dev/null 2>&1
+    # tt647_select_exact_week pages the gallery in, so this read sees every card in
+    # the week rather than the first four.
     tt647_select_exact_week "$frag" || continue
     if playwright-cli eval "() => String((((document.querySelector('.mx-name-galTabEntries')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
       found="${found:+$found, }$tab"
     fi
   done
-  echo "${found:-(none of the three HR tabs)}"
+  echo "${found:-(no week-picker tab holds it, so it is Draft, Rejected or AwaitingExport)}"
 }
 
 # tt647_card_lines <needle> [needle2]
@@ -200,6 +249,8 @@ tt647_locate_entry() {
 # tt647_select_exact_week, that identifies one entry.
 tt647_card_lines() {
   local needle="$1" needle2="${2:-}" out
+  # The card may be past the gallery's first page of four.
+  tt647_load_cards >/dev/null 2>&1 || true
   out=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const hit=t=>t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0); let cards=[...g.querySelectorAll('.mx-name-container13')]; if(!cards.length){ cards=[...g.querySelectorAll('.mx-name-textApprovedBy1')].map(e=>{let p=e; for(let i=0;i<9;i++){ if(!p.parentElement) break; p=p.parentElement; if(hit(p.innerText||'')) return p; } return null;}).filter(Boolean); } const c=cards.find(x=>hit(x.innerText||'')); if(!c) return ''; const a=c.querySelector('.mx-name-textApprovedBy1'); const b=c.querySelector('.mx-name-textApprovedBy2'); return (((a&&a.innerText)||'').trim())+'~~'+(((b&&b.innerText)||'').trim()); }" 2>/dev/null | sed -n '2p')
   out="${out%\"}"; out="${out#\"}"
   echo "$out"
@@ -234,7 +285,10 @@ tt647_hr_approve_card() {
   local needle="$1" needle2="${2:-}" i r
   TT647_APPROVE_ERR=""
 
-  # 1) Click Approve on the card matching the needles.
+  # 1) Click Approve on the card matching the needles. Page the gallery in first:
+  #    with pageSize 4, "cards are present but none matches" was reachable purely by
+  #    the card sitting on page 2.
+  tt647_load_cards >/dev/null 2>&1 || true
   r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nogallery'; const bs=[...g.querySelectorAll('.mx-name-btnApprove')]; for(const b of bs){ let p=b; for(let i=0;i<9;i++){ if(!p.parentElement) break; p=p.parentElement; const t=p.innerText||''; if(t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0)){ b.click(); return 'ok'; } } } return bs.length ? 'nomatch' : 'nobuttons'; }" 2>/dev/null | _tt_eval_str)"
   case "$r" in
     ok) : ;;
@@ -264,6 +318,10 @@ tt647_hr_approve_card() {
   #    gallery: several cards can share a project name, so a gallery-wide check
   #    reports "still there" because of somebody else's row.
   for i in $(seq 1 15); do
+    # ACT_HRDashboard_ApproveOrReject refreshes the tab, which puts the gallery back
+    # on page 1. Absence is the PASS condition here, so an unpaged read would call a
+    # card "gone" when it had only scrolled out of the first four.
+    tt647_load_cards >/dev/null 2>&1 || true
     r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'false'; const rows=[...g.querySelectorAll('.mx-name-btnApprove')].map(b=>{ let p=b; for(let k=0;k<9;k++){ if(!p.parentElement) break; p=p.parentElement; const t=p.innerText||''; if(t.indexOf('$needle')>=0) return t; } return ''; }); return String(rows.some(t => t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0))); }" 2>/dev/null | _tt_eval_str)"
     [ "$r" = "false" ] && return 0
     tt_clear_dialogs 3 "Approve" >/dev/null 2>&1 || true

@@ -773,6 +773,58 @@ _tt_gallery_has_text() {
   playwright-cli eval "() => { const g = document.querySelector('$1'); return String(!!g && (g.innerText || '').indexOf('$2') >= 0); }" 2>/dev/null | _tt_eval_str
 }
 
+# tt_gallery_load_all <gallery-css> [label] [max-rounds]
+# Scroll a virtual-scrolling gallery until it stops producing new cards, then echo
+# the final card count. Never fails: a missing gallery echoes 0.
+#
+# THE ABSENCE-SAFE SIBLING of tt_gallery_load_until_text. That one stops as soon as
+# it sees the text it wants and tt_fail's when it does not, which is right for "wait
+# for my row" and wrong for every caller that must be able to conclude a row is NOT
+# there -- walking weeks looking for a match, or asserting a tab renders none. Those
+# callers need the whole list loaded and then a plain answer, so they get this.
+#
+# WHY THE TT-647 HELPERS NEEDED IT. Main.SNIP_HRDashboardTab's galTabEntries is
+# virtual-scrolling with pageSize 4, and every tt647_* helper read
+# .mx-name-galTabEntries innerText straight out of the DOM. Measured on dev
+# 2026-08-31, every week on WEEKLY TO PROCESS rendered exactly 4 cards while its own
+# heading said "Weekly Timesheets to Process (5)"; one scroll of the content box took
+# the count 4 -> 5. So the FIFTH entry in any week was invisible to the suite.
+#
+# That is the whole of the verify-tt647-a3 failure. Its seed submitted a zero-hour
+# week correctly -- the entries really did reach ToProcess, verified against dev at
+# the data layer -- but they sorted past position 4 and never rendered, so
+# tt647_wait_for_card polled the same first four cards for 60s and
+# tt647_locate_entry then reported "(none of the three HR tabs)" using the same blind
+# read. The log's tell is cardsInSelectedWeek=4 BEFORE the seed and still 4 after two
+# more entries landed in that same week. It reads exactly like a routing defect in
+# Main.ACT_Timesheet_Submit and is not.
+tt_gallery_load_all() {
+  local gal="$1" label="${2:-$1}" rounds="${3:-12}"
+  local before after stuck=0 i
+
+  if [ "$(playwright-cli eval "() => String(!!document.querySelector('$gal .widget-gallery-content.infinite-loading'))" 2>/dev/null | _tt_eval_str)" != "true" ]; then
+    # Not paged (or not rendered): whatever is there is all there is. Deliberately
+    # silent and non-fatal -- callers use this defensively before a read.
+    _tt_gallery_count "$gal"
+    return 0
+  fi
+
+  for i in $(seq 1 "$rounds"); do
+    before="$(_tt_gallery_count "$gal")"
+    playwright-cli eval "() => { const c = document.querySelector('$gal .widget-gallery-content'); if (!c) return 'NOBOX'; c.scrollTop = c.scrollHeight; c.dispatchEvent(new Event('scroll', { bubbles: true })); return String(c.scrollTop); }" >/dev/null 2>&1
+    sleep 2
+    after="$(_tt_gallery_count "$gal")"
+    if [ "$after" = "$before" ]; then
+      # One barren round can be a slow fetch; two in a row means the list is done.
+      stuck=$((stuck + 1))
+      [ "$stuck" -lt 2 ] || break
+    else
+      stuck=0
+    fi
+  done
+  _tt_gallery_count "$gal"
+}
+
 # tt_gallery_titles <gallery-css> — the first line of each loaded card, comma
 # separated. For diagnostics: "what did the gallery actually show me".
 tt_gallery_titles() {
