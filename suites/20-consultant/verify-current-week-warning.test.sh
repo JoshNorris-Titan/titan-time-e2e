@@ -71,8 +71,29 @@ note() { echo "  $*"; }
 # DOM, and reading the first match can return the corpse of an earlier popup
 # instead of the live one. tt_clear_dialogs learned this the hard way — see
 # lib/_login.sh.
+#
+# USE _tt_dialog_js, DO NOT REIMPLEMENT THE LOOKUP. This used to run its own
+# querySelectorAll over the OUTER dialog wrappers —
+#
+#     '.mx-window, .mx-dialog, [role=dialog], .modal-dialog'
+#         .filter(e => e.offsetParent !== null)
+#
+# — and that filter can never be true for this popup. Mendix styles the wrapper
+# `position: fixed`, and offsetParent is null for ANY fixed element by
+# specification, however plainly visible it is. Measured against dev on
+# 2026-09-01 the live warning read position:fixed, display:block,
+# visibility:visible, opacity:1, 600x284px, one client rect — and offsetParent
+# null. So the one real dialog was filtered out, cw_dialog_text returned '', and
+# the step failed blaming the first clause of Main.SUB_Timesheet_BuildWarningObjects
+# for a microflow that was working correctly the whole time.
+#
+# _tt_dialog_js selects the INNER content nodes instead (.mx-window-content,
+# .mx-dialog-content, .modal-content, [role=dialog]), which are not fixed, so
+# offsetParent means what it looks like it means. That is why every other
+# dismiss in this suite worked while this step alone saw nothing.
 cw_dialog_text() {
-  playwright-cli eval "() => { const ds=[...document.querySelectorAll('.mx-window, .mx-dialog, [role=dialog], .modal-dialog')].filter(e=>e.offsetParent!==null); const d=ds[ds.length-1]; return d ? (d.innerText||'').replace(/\s+/g,' ').trim().slice(0,300) : ''; }" 2>/dev/null | _tt_eval_str
+  local d; d="$(_tt_dialog_js)"
+  playwright-cli eval "() => { const d=$d; return d ? (d.innerText||'').replace(/\s+/g,' ').trim().slice(0,300) : ''; }" 2>/dev/null | _tt_eval_str
 }
 
 # cw_wait_dialog — echo the last visible dialog's text once it is non-empty.
@@ -179,7 +200,7 @@ esac
 # alone - and a lone warning must NOT be numbered.
 if [ "$ITEMS" = "1" ]; then
   [ "$NUMBERED" = "0" ] \
-    || tt_fail "the popup showed a single warning on '$WEEK' but numbered it. A lone warning is not a list - the ':only-child .tt-warning-item::before { content: none }' rule in themesource/titan_theme/web/custom.scss should suppress the number."
+    || tt_fail "the popup showed a single warning on '$WEEK' but numbered it. A lone warning is not a list - the 'li:only-child .tt-warning-item::before { content: none }' rule in themesource/titan_theme/web/custom.scss should suppress the number. It must match on the bare li - this Mendix version emits no .mx-listview-item class, so a rule written against that name matches nothing and every lone warning keeps its '1.'."
   note "A2 one warning row, correctly unnumbered"
 else
   [ "$NUMBERED" = "$ITEMS" ] \
