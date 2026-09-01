@@ -437,9 +437,17 @@ tt_click_text() {
 #
 # Raised to 60. It costs nothing on the happy path, because it returns the moment a
 # form appears; it only spends the time when the alternative is failing the run.
+#
+# TRIES IS A PARAMETER because the caller probes TWO locations. Spending the full
+# cold-start budget on /login.html before even looking at the app's own page is how
+# verify-000-testdata-clear-before came to eat its whole 4m timeout: each pass costs
+# two evals plus a sleep, so 60 tries is 2-3 minutes of waiting for a form that this
+# environment does not serve there at all. Give the first probe a short budget and
+# the second the long one -- a cold start is still covered, because the app has to
+# boot before EITHER page renders a form.
 _tt_login_form_variant() {
-  local _
-  for _ in $(seq 1 60); do
+  local _ tries="${1:-60}"
+  for _ in $(seq 1 "$tries"); do
     if playwright-cli eval "() => String(!!document.querySelector('#usernameInput'))" 2>/dev/null | grep -qiw true; then
       echo "old"; return 0
     fi
@@ -484,7 +492,17 @@ _tt_login_submit() {
     if playwright-cli eval "() => String(/you must reset your password/i.test(document.body ? document.body.innerText : ''))" 2>/dev/null | grep -qiw true; then
       return 2
     fi
-    if playwright-cli eval "() => String(/is incorrect/i.test(document.body ? document.body.innerText : ''))" 2>/dev/null | grep -qiw true; then
+    # BOTH forms' rejection wordings. "is incorrect" is the stock /login.html
+    # message; the custom Core.Login page raises an Information popup reading
+    # "Invalid Credentials" instead, which this used to miss entirely -- so a
+    # plainly rejected password fell through to the timeout below and was reported
+    # as exit 3, "signed in via Core.Login but never reached a dashboard showing
+    # '<ready>'". That sentence claims the sign-in worked and blames the ready text,
+    # which is the opposite of what happened. It sent an investigation of
+    # verify-000-testdata-clear-before at the landing-page wait in
+    # tt_open_testdata_admin, when the account simply could not sign in (dev,
+    # 2026-08-31: MxAdmin at the root URL, "Invalid Credentials").
+    if playwright-cli eval "() => String(/is incorrect|invalid credentials/i.test(document.body ? document.body.innerText : ''))" 2>/dev/null | grep -qiw true; then
       return 1
     fi
     sleep 2
@@ -604,8 +622,34 @@ _tt_login_interactive() {
     playwright-cli goto "$TT_BASE/login.html" >/dev/null 2>&1
   fi
 
-  variant="$(_tt_login_form_variant)"
-  [ -n "$variant" ] || tt_fail "$user: login form not found at $TT_BASE/login.html"
+  # /login.html first, on a SHORT budget, then the app's own page on the long one.
+  #
+  # WHY BOTH, IN THIS ORDER. Some accounts are not offered the stock form at all --
+  # measured on dev 2026-08-31, MxAdmin's /login.html served no #usernameInput and no
+  # password field for the full 60-try probe, while $TT_BASE/ rendered Core.Login
+  # immediately. This used to tt_fail right here with "login form not found at
+  # .../login.html", never trying the page that works, after burning ~2-3 minutes
+  # doing it. Falling through costs nothing when /login.html does work: the probe
+  # returns the moment a form appears.
+  variant="$(_tt_login_form_variant 10)"
+  if [ -z "$variant" ]; then
+    echo "  ($user: no form at /login.html — going to the app's own sign-in page)"
+    playwright-cli goto "$TT_BASE/" >/dev/null 2>&1
+    sleep 2
+    variant="$(_tt_login_form_variant 10)"
+    if [ -z "$variant" ]; then
+      # Same trap the /login.html block above handles: cookie-clear does not always
+      # drop the (httpOnly) session, and the ROOT url of a signed-in session renders
+      # the app, not Core.Login. Without this the fallback reports "no sign-in page
+      # at either location" purely because the previous test was still logged in.
+      playwright-cli eval "() => { if (window.mx && mx.logout) mx.logout(); }" >/dev/null 2>&1
+      sleep 3
+      playwright-cli goto "$TT_BASE/" >/dev/null 2>&1
+      sleep 2
+      variant="$(_tt_login_form_variant)"
+    fi
+    [ -n "$variant" ] || tt_fail "$user: no login form at $TT_BASE/login.html OR $TT_BASE/ — the app did not render a sign-in page at either location."
+  fi
 
   _tt_login_submit "$variant" "$user" "$pass" "$ready"
   rc=$?
