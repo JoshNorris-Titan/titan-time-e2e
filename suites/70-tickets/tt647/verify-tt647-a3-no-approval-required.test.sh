@@ -102,9 +102,10 @@ seed_zero_hour_week() {
 
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  # Confirmation chain: "Timesheet Confirmation / Are you Sure? -> Yes", then
-  # possibly "Submit Anyway" for the under-40h warning. Both captions are in
-  # tt_clear_dialogs' default accept list.
+  # ONE confirm popup: btnSubmit calls Main.ACT_Timesheet_Submit_Start, which
+  # evaluates the warnings and opens Main.Consultant_OverFortyHours once. A zero-hour
+  # week is under 40, so this consultant sees "Submit Anyway"; a clean week shows a
+  # plain "Submit". Both captions are in tt_clear_dialogs' default accept list.
   tt_clear_dialogs 8 \
     || tt_fail "$CUSER: the submit confirmation was never dismissed, so the zero-hour week was never submitted: ${TT_DIALOG_BLOCKED:-unknown dialog}"
   sleep 3

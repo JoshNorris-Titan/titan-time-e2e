@@ -237,7 +237,8 @@ else
   for d in Mon Tues Wed Thurs; do hv_set_day "$ORD_B" "$d" "5"; done   # 20h, under the limit
   sleep 1
   hv_submit
-  hv_dismiss 'yes'          # "Timesheet Confirmation - Are you Sure?"
+  # No "Are you Sure?" step any more: btnSubmit calls Main.ACT_Timesheet_Submit_Start,
+  # which evaluates the warnings and opens the single confirm popup directly.
   sleep 2
 
   if [ "$(hv_warning_open)" = "true" ]; then
@@ -253,7 +254,6 @@ else
 
     if [ "$(hv_row_editable)" = "true" ]; then
       hv_submit
-      hv_dismiss 'yes'
       sleep 2
       if [ "$(hv_warning_open)" = "true" ]; then
         b_before="$(tt_draft_count "$PROJECT" "$CUSER")"

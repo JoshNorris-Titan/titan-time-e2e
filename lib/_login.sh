@@ -82,7 +82,13 @@ _tt_dialog_js() {
 tt_clear_dialogs() {
   local max="${1:-8}" extra="${2:-}" i r d alts
   d="$(_tt_dialog_js)"
-  alts='yes|submit anyway|confirm|continue|proceed|ok'
+  # 'submit' is listed as well as 'submit anyway'. Since the two submit popups
+  # were merged, a week with nothing wrong opens the same confirm page reading
+  # "Submit Timesheet?" with a plain Submit button (btnConfirmSubmit); only a
+  # week that actually warned shows "Submit Anyway" (btnWarningSubmitAnyway).
+  # Without the bare caption every clean submit parks on BLOCKED. The regex is
+  # anchored with ^...$, so 'submit' does NOT swallow 'Submit Anyway'.
+  alts='yes|submit|submit anyway|confirm|continue|proceed|ok'
   # Strip regex metacharacters — the caption is interpolated into a JS literal.
   [ -n "$extra" ] && alts="$alts|$(printf '%s' "$extra" | tr -d '\^$.[]|()?*+{}/')"
   TT_DIALOG_BLOCKED=""
@@ -1294,9 +1300,12 @@ tt_consultant_submit_entry() {
   sleep 1
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  # click through any confirm dialogs (Submit Anyway / yes) until none remain
-  # Confirmation chain: "Are you Sure? yes" then possibly "Submit Anyway" (current/future
-  # week and/or <40h). Click the affirmative only — NEVER the close 'x' (it cancels submit).
+  # click through the confirm dialog until none remain.
+  # ONE popup now, not two: btnSubmit calls Main.ACT_Timesheet_Submit_Start, which
+  # evaluates the warnings and then opens Main.Consultant_OverFortyHours once —
+  # "Submit Anyway" when something warned, plain "Submit" when nothing did. The old
+  # "Are you Sure?" page (Main.Confirmation_timesheet) is no longer reachable.
+  # Click the affirmative only — NEVER the close 'x' (it cancels submit).
   # Mendix popups are .mx-window/.mx-dialog, not [role=dialog]/.modal-dialog.
   # tt_clear_dialogs targets the LAST VISIBLE dialog. The loop that used to
   # live here called document.querySelector, which can return a stale hidden
@@ -1374,8 +1383,9 @@ tt_consultant_submit_project_row() {
 
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  # Confirmation chain: "Are you Sure? yes" then possibly "Submit Anyway" (current/future
-  # week and/or <40h). Click the affirmative only — NEVER the close 'x' (it cancels submit).
+  # ONE confirm popup now, not two — see tt_consultant_submit_entry. "Submit Anyway"
+  # when the week warned, plain "Submit" when it did not.
+  # Click the affirmative only — NEVER the close 'x' (it cancels submit).
   # Mendix popups are .mx-window/.mx-dialog, not [role=dialog]/.modal-dialog.
   # tt_clear_dialogs targets the LAST VISIBLE dialog. The loop that used to
   # live here called document.querySelector, which can return a stale hidden
