@@ -190,8 +190,16 @@ tt_hr_reject_first() {
 # entry lands back in the consultant's Rejected Entries list.
 # Prints the week label used. Idempotent-ish: if the consultant ALREADY has a
 # rejected entry it returns immediately (cheap), unless TT_FORCE_NEW_REJECT=1.
+#
+# EXPORTS TT_REJECTED_WEEK -- the week label this fixture submitted, or '' when it
+# reused an entry it did not create and therefore cannot name the week. Callers that
+# assert on the consultant's own history need it: the history list is every week the
+# consultant has, newest first, so "read some text near the top of the page" reads a
+# DIFFERENT week's status and cannot fail. verify-tt692693-c2-zero-hours checked its
+# status that way and its slice stopped three rows above the row it had submitted.
 tt_make_rejected_entry() {
   local cuser="$1" cname="$2" proj="$3" wk
+  export TT_REJECTED_WEEK=""
 
   if [ "${TT_FORCE_NEW_REJECT:-0}" != "1" ]; then
     tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
@@ -213,6 +221,7 @@ tt_make_rejected_entry() {
   done
   [ "$ord" != "0" ] || { echo "  no editable '$proj' row for $cuser"; return 1; }
   wk="$(tt_week_label)"
+  export TT_REJECTED_WEEK="$wk"
   for d in Mon Tues Wed Thurs Fri; do
     tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "5"
   done
@@ -267,33 +276,139 @@ tt_popup_day_inputs() {
 
 # ---------------------------------------------------- HR queue inspection (C1-C3)
 
+# TT692693_GAL -- the HR tab's entries gallery. Named once because EVERY read of it
+# must be preceded by tt_gallery_load_all; see below.
+TT692693_GAL=".mx-name-galTabEntries"
+
+# tt692693_hr_tab_state <label> -- print what the HR tab is actually showing.
+#
+# Main.DS_EntriesForTab filters the retrieved entries by the tab's OWN dropdowns
+# (HRDashboardTab_Account / HRDashboardTab_Project), and Main.DS_WeeksForTab applies
+# the same two to the WEEK LIST. So a cbTabWeekConsultant or cbTabWeekProject left
+# set by an earlier test does not merely hide cards -- it can empty the week picker
+# outright, at which point every "walk the weeks" helper here concludes the entry is
+# in no queue at all. Cheap, and it runs on the happy path too: without it, "the
+# entry never routed" and "a filter is hiding it" are indistinguishable in the log.
+tt692693_hr_tab_state() {
+  local label="${1:-tab state}" s
+  s="$(playwright-cli eval "() => { const val=n=>{ const w=document.querySelector('.mx-name-'+n); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('.mx-name-galTabAvailableWeeks'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; return 'consultantFilter=' + val('cbTabWeekConsultant') + ' | projectFilter=' + val('cbTabWeekProject') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)'); }" 2>/dev/null | sed -n '2p')"
+  s="${s%\"}"; s="${s#\"}"
+  echo "  [tab] $label: $s" >&2
+}
+
+# tt692693_count_cards_here <consultant-display-name>
+# Count the cards in the CURRENTLY selected week whose first line is exactly the
+# consultant's name. Pages the gallery in first -- see tt_hr_count_cards_for.
+tt692693_count_cards_here() {
+  local who="$1"
+  tt_gallery_load_all "$TT692693_GAL" "entries gallery" >/dev/null 2>&1 || true
+  playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+}
+
 # tt_hr_count_cards_for <consultant-display-name> [tab-caption]
 # As HR (already logged in): opens <tab>, scans EVERY week in the picker, and counts
 # cards whose FIRST LINE is exactly <consultant-display-name>. Prints the count.
 # Used to assert an entry reached a queue (C1/C2) and that it appears ONCE (C3).
+#
+# EVERY READ OF THE GALLERY GOES THROUGH tt692693_count_cards_here, WHICH PAGES IT IN
+# FIRST. Main.SNIP_HRDashboardTab's galTabEntries is virtual-scrolling with pageSize
+# 4: it renders four cards and fetches the rest only when its own
+# .widget-gallery-content box is scrolled. Reading the DOM without scrolling answers
+# "is this consultant in the first four cards", not "is this consultant in this
+# week" -- and the two are indistinguishable in the output.
+#
+# This function's whole job is to let a caller conclude an entry is NOT in a queue,
+# which is exactly the conclusion an unpaged read cannot support. It is how
+# verify-tt692693-c2-zero-hours reported "not-in-process-queue" against a routing
+# chain that is provably correct in the model: Main.SUB_AssignmentEntry_Submit sets
+# Status to ToProcess when TotalHours = 0, and Main.AssignmentEntry_Approval's first
+# decision (TotalHours = 0) goes straight to the Process task. The tell in that log
+# is MANAGER APPROVAL=4 -- exactly the page size. Commit 04e11d7 fixed the identical
+# blindness in the tt647_* helpers and added tt_gallery_load_all for it; these
+# helpers never adopted it. Do not add a new read of this gallery without it.
 tt_hr_count_cards_for() {
   local who="$1" tab="${2:-MANAGER APPROVAL}" labels lbl total=0 n
   tt_click_text "$tab" >/dev/null 2>&1; sleep 3
+  tt692693_hr_tab_state "counting '$who' on '$tab'"
   labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
   labels="${labels%\"}"; labels="${labels#\"}"
   if [ -z "$labels" ]; then
-    playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+    # No week picker at all. Count whatever this tab is showing -- but say so, because
+    # an empty picker is also what a stuck consultant/project filter looks like.
+    echo "  (no week picker on '$tab' -- counting the cards currently shown)" >&2
+    tt692693_count_cards_here "$who"
     return 0
   fi
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
+    unset IFS
     playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 3
-    n=$(playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"')
+    n="$(tt692693_count_cards_here "$who")"
     total=$(( total + ${n:-0} ))
+    IFS='|'
   done
   unset IFS
   echo "$total"
 }
 
-# tt_consultant_week_status <week-substring> — the consultant's own history row text
-# for a week (status + hours), used to check totals/status shown to the consultant.
+# tt_week_key <week-label> -- the bare "Mmm DD - Mmm DD" part of a week label.
+#
+# The consultant grid's own .mx-name-txtWeekRange renders an environment prefix on
+# this data set ("E2E Sep 06 - Sep 12"), while the timesheet-history rows and the HR
+# week picker both render the range alone ("Sep 06 - Sep 12"). Matching one against
+# the other verbatim therefore never hits. Normalise before comparing.
+tt_week_key() {
+  printf '%s' "$1" | sed -n 's/.*\([A-Z][a-z][a-z] [0-9][0-9] - [A-Z][a-z][a-z] [0-9][0-9]\).*/\1/p'
+}
+
+# tt_consultant_history_load -- page the consultant's timesheet-history gallery in
+# fully and echo its text (newlines flattened).
+#
+# galTimesheetHistory is virtual-scrolling like the HR tabs, and it holds EVERY week
+# the consultant has, newest first. A week from a few rows down is simply not in the
+# DOM until it is scrolled to, so an unpaged read silently answers about whichever
+# weeks happen to be on top.
+tt_consultant_history_load() {
+  tt_gallery_load_all ".mx-name-galTimesheetHistory" "timesheet history" >/dev/null 2>&1 || true
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTimesheetHistory'); return g ? (g.innerText||'').replace(/\n+/g,' | ') : ''; }" 2>/dev/null | sed -n '2p'
+}
+
+# tt_consultant_week_status <week-label> -- the consultant's own history row for ONE
+# week (status + hours). Accepts either form of the label; see tt_week_key.
+# Echoes '' when that week is not in the history at all, which is a distinct answer
+# from "it is there with the wrong status" and must be reported as such.
+#
+# Falls back to the old body-wide slice when the needle is not in the history gallery
+# at all, because verify-customer-token-reject passes 'Rejected Entries' -- a heading
+# that lives outside it -- and still wants the text that follows.
 tt_consultant_week_status() {
-  playwright-cli eval "() => { const b=document.body.innerText||''; const i=b.indexOf('$1'); return i<0?'':b.slice(i, i+120).replace(/\n+/g,' | '); }" 2>/dev/null | sed -n '2p'
+  local key; key="$(tt_week_key "$1")"
+  [ -n "$key" ] || key="$1"
+  tt_gallery_load_all ".mx-name-galTimesheetHistory" "timesheet history" >/dev/null 2>&1 || true
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTimesheetHistory'); if(g){ const hit=[...g.querySelectorAll('.widget-gallery-item')].find(c=>(c.innerText||'').indexOf('$key')>=0); if(hit) return (hit.innerText||'').replace(/\n+/g,' | '); const t=(g.innerText||''); const i=t.indexOf('$key'); if(i>=0) return t.slice(i, i+120).replace(/\n+/g,' | '); } const b=document.body.innerText||''; const j=b.indexOf('$key'); return j<0 ? '' : b.slice(j, j+120).replace(/\n+/g,' | '); }" 2>/dev/null | sed -n '2p'
+}
+
+# ------------------------------------------------------- Review & Edit popup edits
+
+# tt_popup_zero_days -- set every editable day box in the Review & Edit popup to 0
+# and COMMIT the last one. Echoes how many boxes it touched.
+#
+# WHY THE EXPLICIT BLUR. A Mendix numeric input commits on blur, not on the input or
+# change event, so setting the boxes in a loop commits box N only when box N+1 takes
+# focus -- and the LAST box is left holding an uncommitted value. The tell in the C2
+# log was the day-input dump reading ["0.00","0.00","0.00","0.00","0.00","0.00","0"]:
+# six committed zeroes and one raw one. It did not change that run's outcome (that
+# box was already 0.00), but it means the test was not actually proving the week had
+# been zeroed, which is the entire premise of the assertion that follows.
+tt_popup_zero_days() {
+  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return '0'; const ins=[...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled && /^\s*-?[0-9]*\.?[0-9]*\s*$/.test(i.value||'')); const set=(t,v)=>{ t.focus(); Object.getOwnPropertyDescriptor(t.__proto__,'value').set.call(t,v); t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); }; ins.forEach(i=>set(i,'0')); if(ins.length){ ins[ins.length-1].blur(); } return String(ins.length); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+}
+
+# tt_popup_days_all_zero -- 'true' when EVERY editable day box in the popup reads as
+# a committed zero. A committed Mendix decimal renders '0.00'; a value that was set
+# but never blurred is still the raw '0', so requiring the decimal form IS the test.
+tt_popup_days_all_zero() {
+  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'false'; const ins=[...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled && /^\s*-?[0-9]*\.?[0-9]*\s*$/.test(i.value||'')); if(!ins.length) return 'false'; return String(ins.every(i=>/^0\.0+$/.test((i.value||'').trim()))); }" 2>/dev/null | sed -n '2p' | tr -d '"'
 }

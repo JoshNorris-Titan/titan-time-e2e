@@ -4,6 +4,17 @@
 # Before the change the entry DISPLAYED "Awaiting Manager Approval" while the only
 # live task was HR's Process task. So this checks BOTH: the status shown to the
 # consultant AND the queue it actually lands in — and that they agree.
+#
+# WHAT THE MODEL DOES, so a failure here can be read against something:
+#   Main.SUB_AssignmentEntry_Submit sets Status to
+#     'if $TotalHours = 0 then ToProcess else if ApprovalFromManager then ...'
+#   with TotalHours a plain sum of the seven day attributes, and
+#   Main.AssignmentEntry_Approval's FIRST decision ($WorkflowContext/TotalHours = 0)
+#   goes straight to the Process user task. HR's WEEKLY TO PROCESS tab is the
+#   HRDashboardTab row whose Status is ToProcess.
+# So a genuine "not in the process queue" means one of those three disagrees. Every
+# read below is paged and scoped so that conclusion is actually available; the
+# previous version of this test could not support it. See lib/_tt692693.sh.
 
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
@@ -19,17 +30,34 @@ PROJECT="${TT_C2_PROJECT:-E2E Sandbox}"
 TT_FORCE_NEW_REJECT=1 tt_make_rejected_entry "$CUSER" "$CNAME" "$PROJECT" \
   || tt_fail "C2 setup: could not produce a rejected entry"
 
+WEEK="${TT_REJECTED_WEEK:-}"
+[ -n "$WEEK" ] || tt_fail "C2 setup: the fixture did not report which week it submitted, so the consultant-status half of this test cannot be checked"
+echo "week under test: $WEEK (key '$(tt_week_key "$WEEK")')"
+
 tt_login "$CUSER" "My Timesheets"
 BEFORE="$(tt_rejected_count)"
 [ "$BEFORE" != "0" ] || tt_fail "C2: no rejected entry present"
 
 tt_open_review_edit || tt_fail "C2: could not open Review & Edit"
 
-# zero every editable day box
-ZEROED=$(playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); const ins=[...d.querySelectorAll('input')].filter(i=>i.offsetParent!==null && !i.readOnly && !i.disabled && /^\s*-?[0-9]*\.?[0-9]*\s*$/.test(i.value||'')); const set=(t,v)=>{ t.focus(); Object.getOwnPropertyDescriptor(t.__proto__,'value').set.call(t,v); t.dispatchEvent(new Event('input',{bubbles:true})); t.dispatchEvent(new Event('change',{bubbles:true})); }; ins.forEach(i=>set(i,'0')); return String(ins.length); }" 2>/dev/null | sed -n '2p' | tr -d '"')
+# Zero every editable day box AND commit the last one — see tt_popup_zero_days.
+ZEROED="$(tt_popup_zero_days)"
 echo "zeroed $ZEROED day box(es)"
-sleep 2
+[ "${ZEROED:-0}" -ge 1 ] || tt_fail "C2: no editable day boxes in the Review & Edit popup"
+
+# The premise of the whole test is that the week really is zero, so prove it rather
+# than assuming the blur landed. Bounded wait: the commit is a server round trip.
+ALLZERO=false
+for _ in 1 2 3 4 5; do
+  sleep 3
+  ALLZERO="$(tt_popup_days_all_zero)"
+  [ "$ALLZERO" = "true" ] && break
+done
 echo "day inputs now: $(tt_popup_day_inputs)"
+[ "$ALLZERO" = "true" ] \
+  || tt_fail "C2: the day boxes never all read as committed zeroes, so this run cannot test zero-hours routing.
+  day inputs: $(tt_popup_day_inputs)
+  (a raw '0' beside committed '0.00' values means that box was never blurred)"
 
 tt_click_button_exact "resubmit timesheet" popup || tt_fail "C2: no Resubmit button"
 sleep 4
@@ -37,26 +65,30 @@ tt_dismiss_dialogs
 sleep 3
 [ "$(tt_popup_open)" = "false" ] || tt_fail "C2: popup did not close"
 
-# status shown to the consultant
+# Status shown to the consultant, for THE WEEK THIS TEST SUBMITTED — the history list
+# holds every week the consultant has, so it must be addressed by name.
 tt_login "$CUSER" "My Timesheets" >/dev/null 2>&1
-HIST=$(playwright-cli eval "() => { const b=document.body.innerText||''; const i=b.indexOf('Timesheets'); return i<0?'':b.slice(i,i+400).replace(/\n+/g,' | '); }" 2>/dev/null | sed -n '2p')
-echo "consultant sees: $HIST"
+HIST="$(tt_consultant_week_status "$WEEK")"
+echo "consultant sees for $WEEK: ${HIST:-(week not found in history)}"
 
-# which queue did it actually land in?
+# Which queue did it actually land in?
 tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
-INMGR="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
 INPROC="$(tt_hr_count_cards_for "$CNAME" "WEEKLY TO PROCESS")"
+INMGR="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
 echo "'$CNAME' in MANAGER APPROVAL=$INMGR  |  in WEEKLY TO PROCESS=$INPROC"
 
 FAILS=""
 [ "${INPROC:-0}" -ge 1 ] || FAILS="$FAILS not-in-process-queue"
+[ -n "$HIST" ] || FAILS="$FAILS week-missing-from-consultant-history"
 case "$HIST" in
   *"Awaiting Manager Approval"*)
     [ "${INMGR:-0}" -ge 1 ] || FAILS="$FAILS shows-AwaitingManagerApproval-but-not-in-manager-queue" ;;
 esac
 
 [ -z "$FAILS" ] || tt_fail "C2 FAIL:$FAILS
-  consultant history: $HIST
+  week under test: $WEEK
+  consultant history row: ${HIST:-(week not found in history)}
+  full history: $(tt_consultant_history_load)
   MANAGER APPROVAL=$INMGR  WEEKLY TO PROCESS=$INPROC
   (expected: zero-hours resubmit -> Process/HR queue, and the displayed status must match the real queue)"
 
