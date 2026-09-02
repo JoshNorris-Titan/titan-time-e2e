@@ -71,7 +71,11 @@ tt683_open_export_tab() {
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    tt_click_text "$lbl" "HR '$lbl' tab" 2>/dev/null || true
+    # tt_try_click_text, not tt_click_text: the fatal version EXITS THE WHOLE TEST
+    # when a caption is missing, and 2>/dev/null on it hid the reason — one tab
+    # caption this dashboard happened not to render would kill the run here rather
+    # than let the walk try the next tab, and kill it printing nothing at all.
+    tt_try_click_text "$lbl" || { IFS='|'; continue; }
     sleep 2
     if tt683_has_export_button; then echo "$lbl"; return 0; fi
     IFS='|'
