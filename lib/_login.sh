@@ -420,6 +420,21 @@ tt_click_text() {
   sleep 2
 }
 
+# tt_try_click_text <exact-text> — tt_click_text without the tt_fail: returns 1
+# when nothing matches, so a caller that has somewhere else to look can move on.
+#
+# tt_click_text EXITS THE WHOLE TEST when it misses, which makes it the wrong
+# tool for a loop over candidate targets. tt_hr_reject_project walks three HR
+# tabs looking for a card, and with the fatal version a dashboard missing one of
+# those captions killed the run instead of trying the next tab — and killed it
+# silently, because the caller had redirected stderr away.
+tt_try_click_text() {
+  local txt="$1"
+  playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$txt' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  sleep 2
+  return 0
+}
+
 # _tt_login_form_variant — which sign-in form is on screen right now:
 #   'old' = the stock Mendix /login.html form (#usernameInput)
 #   'new' = the custom Core.Login page (mx widgets, input.form-control)

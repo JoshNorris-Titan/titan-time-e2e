@@ -185,11 +185,22 @@ tt_hr_reject_first() {
   return 0
 }
 
-# tt_make_rejected_entry <consultant-user> <consultant-display-name> <project>
-# Full fixture: consultant submits a week for <project>, HR rejects it, and the
-# entry lands back in the consultant's Rejected Entries list.
-# Prints the week label used. Idempotent-ish: if the consultant ALREADY has a
-# rejected entry it returns immediately (cheap), unless TT_FORCE_NEW_REJECT=1.
+# tt_make_rejected_entry <consultant-user> <consultant-display-name> <project> [tabs]
+# Full fixture: consultant submits a week for <project>, HR rejects THAT
+# project's card, and the entry lands back in the consultant's Rejected Entries
+# list. Prints the week label used. Idempotent-ish: if the consultant already
+# has a rejected entry ON THIS PROJECT it returns immediately (cheap), unless
+# TT_FORCE_NEW_REJECT=1.
+#
+# [tabs] is a '|'-separated list of HR tab captions to hunt the card on, tried in
+# order. The default leads with MANAGER APPROVAL because every current caller
+# uses E2E Sandbox (ApprovalFromManager=Yes), so the common case still costs one
+# tab scan; the other two are there so a project with different approval flags
+# does not fail as though HR were broken. See lib/_fixtures.sh for the flags.
+#
+# ONLY WORKS ON A PROJECT WHOSE AGGREGATE DAY CELLS ARE EDITABLE. It seeds hours
+# by filling those cells, and on a NeedsLineItems project they are read-only by
+# design. Use tt_make_rejected_lineitem_entry for those.
 #
 # EXPORTS TT_REJECTED_WEEK -- the week label this fixture submitted, or '' when it
 # reused an entry it did not create and therefore cannot name the week. Callers that
@@ -198,13 +209,18 @@ tt_hr_reject_first() {
 # DIFFERENT week's status and cannot fail. verify-tt692693-c2-zero-hours checked its
 # status that way and its slice stopped three rows above the row it had submitted.
 tt_make_rejected_entry() {
-  local cuser="$1" cname="$2" proj="$3" wk
+  local cuser="$1" cname="$2" proj="$3"
+  local tabs="${4:-MANAGER APPROVAL|WEEKLY TO PROCESS|CLIENT APPROVAL}" wk
   export TT_REJECTED_WEEK=""
 
   if [ "${TT_FORCE_NEW_REJECT:-0}" != "1" ]; then
     tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
-    if [ "$(tt_rejected_count)" != "0" ]; then
-      echo "(reusing existing rejected entry for $cuser)"
+    # Reuse only an entry on THIS project. "$cuser has a rejected entry" is not
+    # the same question: e2e_consultant is assigned to four projects and earlier
+    # tests leave rejections behind, so the cheap reuse path used to hand the
+    # caller somebody else's entry and call it seeded.
+    if tt_rejected_has_project "$proj"; then
+      echo "(reusing existing rejected '$proj' entry for $cuser)"
       return 0
     fi
   fi
@@ -215,11 +231,26 @@ tt_make_rejected_entry() {
   tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
   local ord="" i d
   for i in $(seq 1 16); do
-    ord=$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; for(let n=0;n<rows.length;n++){ let el=rows[n]; for(let k=0;k<10;k++){el=el.parentElement; if(!el)break; if((el.innerText||'').indexOf('$proj')>=0){ const inp=rows[n].querySelector('input'); if(inp && !inp.readOnly && !inp.disabled) return String(n+1); }} } return '0'; }" 2>/dev/null | sed -n '2p' | tr -d '"')
+    # SCOPE THE WALK TO THE ROW. This used to climb ten ancestors and accept the
+    # row as soon as ANY of them mentioned the project — but four ancestors up is
+    # already the whole gallery, which mentions every project, so the first row
+    # with an editable Monday cell always won. Asked for 'E2E Line Items' on
+    # dev's four-row week it returned row 1, 'E2E Customer Approval', filled 5h a
+    # day into it and printed "submitted E2E Line Items". Stop climbing the
+    # moment the ancestor holds more than one day cell: that means we have left
+    # the row, so a sibling row's project name can no longer match. Same test
+    # tt654_row_ordinal uses.
+    ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const isTarget=(mon)=>{ let el=mon; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return false; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) return false; if((el.innerText||'').indexOf('$proj')>=0) return true; } return false; }; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); if(isTarget(mons[n]) && inp && !inp.readOnly && !inp.disabled) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p' | tr -d '"')
     [ "$ord" != "0" ] && break
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1; sleep 2
   done
-  [ "$ord" != "0" ] || { echo "  no editable '$proj' row for $cuser"; return 1; }
+  [ "$ord" != "0" ] || {
+    echo "  no editable '$proj' row for $cuser in the next 16 weeks."
+    echo "  If '$proj' is a NeedsLineItems project its aggregate day cells are"
+    echo "  READ-ONLY by design (hours live on the task rows), so this fixture can"
+    echo "  never seed it — use tt_make_rejected_lineitem_entry instead."
+    return 1
+  }
   wk="$(tt_week_label)"
   export TT_REJECTED_WEEK="$wk"
   for d in Mon Tues Wed Thurs Fri; do
@@ -233,29 +264,206 @@ tt_make_rejected_entry() {
   sleep 2
   echo "submitted $proj week $wk as $cuser"
 
-  # 2) HR rejects it — retry with waits: the approval workflow routes the submitted
-  #    entry into the manager queue ASYNCHRONOUSLY, so it may not appear immediately.
-  #    Success signal = the consultant ends up with a rejected entry.
-  local rej=""
-  for i in 1 2 3 4 5 6; do
-    tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
-    tt_hr_reject_first "$cname" "MANAGER APPROVAL" >/dev/null 2>&1
-    tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
-    [ "$(tt_rejected_count)" != "0" ] && { rej=1; break; }
-    sleep 6
-  done
-  [ -n "$rej" ] || { echo "  HR could not find/reject the submitted '$proj' entry (async routing?)"; return 1; }
+  # 2) HR rejects THIS project's card, retrying: the approval workflow routes a
+  #    submitted entry into its queue ASYNCHRONOUSLY, so it may not be there yet.
+  tt_hr_reject_project "$cname" "$proj" "$tabs" || {
+    echo "  HR could not find a '$proj' card for '$cname' to reject on any of: $tabs"
+    return 1
+  }
 
-  # 3) confirm it came back as Rejected for the consultant
+  # 3) confirm the entry that came back as Rejected is THIS project's.
+  #
+  #    The old success signal was tt_rejected_count != 0 — "the consultant has a
+  #    rejected entry", satisfied by any leftover from any earlier test on any
+  #    project. That is how this fixture printed "rejected entry ready for
+  #    e2e_consultant (E2E Line Items, E2E Oct 25 - Oct 31)" about a
+  #    'Walmart - E2E Manager Approval' entry for week Nov 01 - Nov 07, and
+  #    verify-tt692693-c4 then asserted line-item behaviour against it.
   tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
-  [ "$(tt_rejected_count)" != "0" ] || { echo "  entry did not return to Rejected Entries"; return 1; }
-  echo "rejected entry ready for $cuser ($proj, $wk)"
+  tt_rejected_has_project "$proj" || {
+    echo "  no rejected '$proj' entry in $cuser's list after the reject"
+    echo "  rejected list shows: $(tt_rejected_projects)"
+    return 1
+  }
+  echo "rejected '$proj' entry ready for $cuser ($wk)"
+  return 0
+}
+
+# --------------------------------------------- project-targeted rejected entries
+#
+# WHY THESE EXIST. tt_hr_reject_first matches a card by CONSULTANT NAME only and
+# tt_open_review_edit takes the FIRST rejected row on the dashboard. Both are
+# safe for e2e_consultant2, who has exactly one assignment (E2E Sandbox) — and
+# only for them. e2e_consultant is assigned to four projects, the weekly Submit
+# submits every row on the week at once, and earlier tests leave entries sitting
+# in the queues, so "the first card for this consultant" is routinely a different
+# project on a different week than the one under test.
+#
+# verify-tt654-a3 hit this and grew private copies of these two helpers; they
+# live here now so there is one implementation for both suites.
+
+# _tt_rejected_match_js — JS factory: (proj) => the Review & Edit buttons whose
+# Rejected Entries row belongs to <proj>. Walks up from each button and stops
+# once the ancestor is bigger than a card, so the surrounding dashboard (which
+# names every project) cannot match.
+_tt_rejected_match_js() {
+  printf "%s" "(proj) => { const bs=[...document.querySelectorAll('.mx-name-btnReviewRejected')].filter(b=>b.offsetParent!==null); const hit=[]; for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>500) break; if(t.indexOf(proj)>=0){ hit.push(b); break; } } } return hit; }"
+}
+
+# tt_rejected_has_project <project> — true when a rejected row is on <project>.
+tt_rejected_has_project() {
+  playwright-cli eval "() => { const f=$(_tt_rejected_match_js); return String(f('$1').length > 0); }" 2>/dev/null | sed -n '2p' | grep -qiw true
+}
+
+# tt_rejected_projects — one flattened line per Rejected Entries row, for
+# diagnostics. A caller that failed a project assertion should print this so the
+# report says what it DID find, not only what it wanted.
+tt_rejected_projects() {
+  playwright-cli eval "() => { const bs=[...document.querySelectorAll('.mx-name-btnReviewRejected')].filter(b=>b.offsetParent!==null); const out=bs.map(b=>{ let el=b, best=''; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>500) break; best=t; } return best.replace(/\n+/g,' | '); }); return out.length ? out.join('  //  ') : '(none)'; }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_open_review_for_project <project> — open Review & Edit for the rejected
+# entry belonging to <project>, not merely the first rejected entry.
+tt_open_review_for_project() {
+  playwright-cli eval "() => { const f=$(_tt_rejected_match_js); const hit=f('$1'); if(!hit.length) return 'nf'; hit[0].click(); return 'ok'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  sleep 4
+  [ "$(tt_popup_open)" = "true" ]
+}
+
+# tt_hr_reject_card_for_project <consultant> <project> <tab> [comment]
+# As HR: open <tab>, scan EVERY week in the picker, and reject the card that is
+# BOTH this consultant's and this project's.
+#
+# WHICH CONTROL TO PRESS. The approval tabs put Reject behind "View", in a popup.
+# WEEKLY TO PROCESS does not: its cards carry "View & Process" AND a "Reject"
+# button side by side, and View & Process navigates to the process page, which
+# has no reject at all. So: press the card's own Reject when it has one, and fall
+# back to View.
+tt_hr_reject_card_for_project() {
+  local who="$1" proj="$2" tab="$3" comment="${4:-E2E automated reject for TT-693 testing}"
+  local lbl labels opened="" card
+  tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
+  tt_try_click_text "$tab" || { echo "  (no '$tab' tab on the HR dashboard)"; return 1; }
+  sleep 3
+  labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+  local IFS='|'
+  for lbl in $labels; do
+    [ -n "$lbl" ] || continue
+    unset IFS
+    playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
+    sleep 3
+    card="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, .mx-name-btnView')].filter(b=>b.offsetParent!==null); const card=(b)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who') return el; } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
+    if [ "$card" != "nf" ]; then
+      opened=1; echo "  (rejecting '$proj' on $tab, week $lbl, via $card)"; break
+    fi
+    IFS='|'
+  done
+  unset IFS
+  [ -n "$opened" ] || return 1
+  sleep 4
+  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(ta){ const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$comment'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); return 'typed'; } return 'nofield'; }" >/dev/null 2>&1
+  sleep 1
+  tt_click_button_exact "reject" popup || return 1
+  sleep 3
+  tt_dismiss_dialogs
+  return 0
+}
+
+# tt_hr_reject_project <consultant> <project> [tabs] [comment]
+# Hunt <project>'s card across a '|'-separated list of HR tabs, retrying each a
+# few times because the approval workflow routes a submitted entry into its queue
+# asynchronously. Which tab an entry reaches is decided by the project's approval
+# flags (lib/_fixtures.sh), so this never assumes one.
+tt_hr_reject_project() {
+  local who="$1" proj="$2"
+  local tabs="${3:-MANAGER APPROVAL|WEEKLY TO PROCESS|CLIENT APPROVAL}"
+  local comment="${4:-E2E automated reject for TT-693 testing}"
+  local tab attempt
+  local IFS='|'
+  for tab in $tabs; do
+    unset IFS
+    if [ -n "$tab" ]; then
+      for attempt in 1 2 3; do
+        echo "  reject attempt $attempt for '$proj' on the $tab tab"
+        tt_hr_reject_card_for_project "$who" "$proj" "$tab" "$comment" && return 0
+        sleep 6
+      done
+    fi
+    IFS='|'
+  done
+  unset IFS
+  return 1
+}
+
+# tt_make_rejected_lineitem_entry <consultant-user> <consultant-display-name> <project>
+# The NeedsLineItems counterpart of tt_make_rejected_entry: hours go on a TASK
+# row, because the aggregate day cells on such a project are read-only by design.
+# Requires lib/_tt654.sh to be sourced as well — that is where the line-item
+# seeding helpers live.
+#
+# Reuses an existing rejected entry on the project when there is one, unless
+# TT_FORCE_NEW_REJECT=1. Exports TT_REJECTED_WEEK like its sibling.
+tt_make_rejected_lineitem_entry() {
+  local cuser="$1" cname="$2" proj="$3" ord
+  export TT_REJECTED_WEEK=""
+
+  command -v tt654_find_editable_row >/dev/null 2>&1 || {
+    echo "  tt_make_rejected_lineitem_entry needs lib/_tt654.sh sourced (line-item seeding helpers)"
+    return 1
+  }
+
+  if [ "${TT_FORCE_NEW_REJECT:-0}" != "1" ]; then
+    tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
+    if tt_rejected_has_project "$proj"; then
+      echo "(reusing existing rejected '$proj' entry for $cuser)"
+      return 0
+    fi
+  fi
+
+  # 1) seed and submit a line-items week: aggregate cells first (they roll up
+  #    from the task, but filling them is harmless and matches tt654-a3), then
+  #    the task row that actually carries the hours.
+  tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
+  tt654_find_editable_row "$proj"
+  ord="$TT654_ORD"
+  export TT_REJECTED_WEEK="$TT654_WEEK"
+  echo "seeding '$proj' on week ${TT654_WEEK:-<unknown>} (row $ord)"
+  tt654_fill_row "$ord" "${TT654_HOURS:-8}"
+  tt654_add_task "$ord" "E2E rejected line item" "${TT654_HOURS:-8}" >/dev/null || return 1
+  tt654_save_draft
+  ord="$(tt654_row_ordinal "$proj")"
+  [ -n "$ord" ] && [ "$ord" != "0" ] || {
+    echo "  '$proj' row is no longer editable after Save Draft — nothing to submit"
+    return 1
+  }
+  tt654_submit_row "$ord" "$proj" >/dev/null 2>&1 || true
+  echo "submitted '$proj' week ${TT654_WEEK:-<unknown>} as $cuser"
+
+  # 2) reject it. A NeedsLineItems project with no approval stage routes straight
+  #    to ToProcess, so WEEKLY TO PROCESS leads here; the approval tabs stay in
+  #    the list so this still works if the fixture is ever given an approval step.
+  tt_hr_reject_project "$cname" "$proj" "WEEKLY TO PROCESS|MANAGER APPROVAL|CLIENT APPROVAL" || {
+    echo "  HR could not find a '$proj' card for '$cname' to reject on any tab"
+    return 1
+  }
+
+  # 3) it must be THIS project's entry that came back rejected.
+  tt_login "$cuser" "My Timesheets" >/dev/null 2>&1
+  tt_rejected_has_project "$proj" || {
+    echo "  no rejected '$proj' entry in $cuser's list after the reject"
+    echo "  rejected list shows: $(tt_rejected_projects)"
+    return 1
+  }
+  echo "rejected '$proj' entry ready for $cuser (${TT654_WEEK:-<unknown>})"
   return 0
 }
 
 # tt_open_review_edit — from the consultant dashboard, open the Review & Edit popup
-# for the first rejected entry. Prefers the semantic widget class (stable), falls
+# for the FIRST rejected entry. Prefers the semantic widget class (stable), falls
 # back to the caption.
+#
+# Only safe when the consultant can have exactly one rejected entry. Any test
+# that cares WHICH project the popup shows must use tt_open_review_for_project.
 tt_open_review_edit() {
   playwright-cli click ".mx-name-btnReviewRejected" >/dev/null 2>&1
   sleep 4
