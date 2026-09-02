@@ -64,51 +64,16 @@ CNAME="${TT654_CONSULTANT_NAME:-E2E Consultant}"
 # first-match-by-name helper would happily reject or reopen the wrong one — a
 # run that proves nothing while reporting green.
 
-# hr_reject_card_for_project <consultant> <project> <tab>
+# Both live in lib/_tt692693.sh now, under tt_-prefixed names, because
+# verify-tt692693-c4 needed the identical pair: it asks for a rejected 'E2E Line
+# Items' entry and used the name-only helpers, so it rejected and then reopened a
+# different project's entry and reported a failure it had manufactured. Two
+# copies of a helper this fiddly is how one of them gets fixed and the other does
+# not. These aliases keep the local call sites reading as they did.
 hr_reject_card_for_project() {
-  local who="$1" proj="$2" tab="$3" lbl labels opened=""
-  tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
-  tt_click_text "$tab" "HR '$tab' tab"
-  sleep 3
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
-  local IFS='|'
-  for lbl in $labels; do
-    [ -n "$lbl" ] || continue
-    unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
-    sleep 3
-    # WHICH CONTROL TO PRESS. The approval tabs put Reject behind "View", in a
-    # popup. WEEKLY TO PROCESS does not: its cards carry "View & Process" AND a
-    # "Reject" button side by side, and View & Process navigates to the process
-    # page, which has no reject at all. Pressing View there opened the right card
-    # and then found nothing to click - which is why this reported "could not
-    # find a card" three times in a row while the log showed it had found one.
-    # So: press the card's own Reject when it has one, and fall back to View.
-    CARD="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, .mx-name-btnView')].filter(b=>b.offsetParent!==null); const card=(b)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who') return el; } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
-    if [ "$CARD" != "nf" ]; then
-      opened=1; echo "  (rejecting '$proj' in week $lbl via $CARD)"; break
-    fi
-    IFS='|'
-  done
-  unset IFS
-  [ -n "$opened" ] || return 1
-  sleep 4
-  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(ta){ const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'E2E automated reject for TT-654 A3'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); return 'typed'; } return 'nofield'; }" >/dev/null 2>&1
-  sleep 1
-  tt_click_button_exact "reject" popup || return 1
-  sleep 3
-  tt_dismiss_dialogs
-  return 0
+  tt_hr_reject_card_for_project "$1" "$2" "$3" "E2E automated reject for TT-654 A3"
 }
-
-# open_review_for_project <project> — open Review & Edit for the rejected entry
-# belonging to <project>, not merely the first rejected entry on the dashboard.
-open_review_for_project() {
-  local proj="$1"
-  playwright-cli eval "() => { const bs=[...document.querySelectorAll('.mx-name-btnReviewRejected')]; for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0){ b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
-  sleep 4
-  [ "$(tt_popup_open)" = "true" ]
-}
+open_review_for_project() { tt_open_review_for_project "$1"; }
 
 # ---------------------------------------------------------------- 1) fixture
 # Seed a line-items week: hours live on the task row, not the day cells.
