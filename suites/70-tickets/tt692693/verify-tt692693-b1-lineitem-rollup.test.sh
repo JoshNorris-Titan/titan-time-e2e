@@ -25,10 +25,30 @@ ROW=".mx-name-galAssignmentRows"
 
 line_total() { playwright-cli eval "() => String((document.querySelectorAll('$ROW .mx-name-txtLineTotal input')[$1 - 1]||{}).value||'')" 2>/dev/null | sed -n '2p' | tr -d '"'; }
 
-# Row total: widget name isn't guaranteed, so match any row-total-ish input, else
-# fall back to the row's rendered text.
+# Row total OF THE ROW UNDER TEST.
+#
+# This used to be document.querySelector('...txtRowTotal input') - i.e. the FIRST
+# row total in the whole gallery. The consultant's week carries one row per
+# assignment, and lib/_fixtures.sh seeds four of them; on dev the order is
+#   0 E2E Customer Approval | 1 E2E Manager Approval | 2 E2E Line Items | 3 E2E Dual Approval
+# so the unscoped read returned the E2E Customer Approval row, which this test never
+# touches and which therefore reads 0.00 forever. The assertion could not pass, and
+# it failed as "ROW TOTAL STALE (0.00)" - a product bug that was not there. Measured
+# on dev 2026-09-01 after entering 7h: the four row totals were 0.00 / 0.00 / 7.00 /
+# 0.00, so the rollup was correct and instant while the test read index 0.
+#
+# Scope it by ANCHOR, not by index or project text. Only the line-items row carries
+# btnAddTask / btnLineItemsCollapse, so walk up from that control to the first
+# ancestor holding EXACTLY ONE row total - that ancestor is the row. Requiring
+# exactly one is what makes this self-checking: the gallery-wide container holds
+# four, so overshooting is detected rather than silently returning row 0. Matching
+# on the project NAME instead does not work - every row total has an ancestor
+# containing 'E2E Line Items' once you walk far enough up (depth 5 on dev).
+#
+# Returns '' when the row cannot be identified; probe_fresh_entry reports that as
+# its own failure rather than comparing against a number it did not read.
 row_total() {
-  playwright-cli eval "() => { const sel=['$ROW [class*=mx-name-txtRowTotal] input','$ROW [class*=mx-name-txtTotal] input','$ROW [class*=Total] input']; for(const s of sel){ const e=document.querySelector(s); if(e) return String(e.value||''); } return ''; }" 2>/dev/null | sed -n '2p' | tr -d '"'
+  playwright-cli eval "() => { const g=document.querySelector('$ROW'); if(!g) return ''; const a=g.querySelector('.mx-name-btnAddTask')||g.querySelector('.mx-name-btnLineItemsCollapse')||g.querySelector('.mx-name-btnLineItemsExpand'); if(!a) return ''; let el=a; for(let k=0;k<14;k++){ el=el.parentElement; if(!el||el===g) break; const n=el.querySelectorAll('[class*=mx-name-txtRowTotal] input'); if(n.length===1) return String(n[0].value||''); if(n.length>1) return ''; } return ''; }" 2>/dev/null | sed -n '2p' | tr -d '"'
 }
 
 task_count() { playwright-cli eval "() => String(document.querySelectorAll('$ROW .mx-name-txtLineItemName input').length)" 2>/dev/null | sed -n '2p' | tr -d '"'; }
@@ -80,9 +100,19 @@ probe_fresh_entry() {
     FAILED="$FAILED $label(name-not-set)"; return 1
   fi
 
-  # THE critical step: first edit of a brand-new entry (Tuesday, 7h)
+  # THE critical step: first edit of a brand-new entry (Tuesday, 7h).
+  #
+  # SELECT ALL BEFORE TYPING. Add Task commits the LineItem with its day attributes
+  # at 0, so the cell already renders "0.00" - it is not empty. Clicking it puts the
+  # caret where the click landed (measured on dev: index 2, right after the "0."),
+  # and `type "7"` then INSERTS: "0.00" -> "0.700" -> committed as 0.7 -> "0.70".
+  # That is where the 2026-09-01 failure's lineTotal=0.70 came from, and the old
+  # `case "$lt" in *7*)` check waved it through because "0.70" contains a 7.
+  # Ctrl/Cmd+A keeps this a real keystroke path - which is the point of B1, the
+  # original bug fired on typing - while making the 7 replace the default.
   playwright-cli click ":nth-match($ROW .mx-name-txtLineTues input, $idx)" >/dev/null 2>&1
   sleep 1
+  playwright-cli press "ControlOrMeta+a" >/dev/null 2>&1
   playwright-cli type "7" >/dev/null 2>&1
   playwright-cli press "Tab" >/dev/null 2>&1
   sleep 3
@@ -98,10 +128,15 @@ probe_fresh_entry() {
 
   local lt rt; lt="$(line_total "$idx")"; rt="$(row_total)"
   echo "  [$label] lineTotal=$lt rowTotal=$rt"
-  case "$lt" in *7*) ;; *) echo "  [$label] line total wrong (expected 7)"; FAILED="$FAILED $label(line-total)"; return 1 ;; esac
+  # Match 7 / 7.0 / 7.00 EXACTLY. The old pattern was *7*, which also accepts 0.70,
+  # 17, 7.75 - i.e. it passed on the very mis-entry the select-all above now
+  # prevents, and left the row-total branch to report the resulting mismatch as a
+  # product bug. If the number is wrong, say so here, where the cause is visible.
+  case "$lt" in 7|7.0|7.00) ;; *) echo "  [$label] line total wrong (expected 7, got '$lt')"; FAILED="$FAILED $label(line-total)"; return 1 ;; esac
   case "$rt" in
-    *7*) echo "  [$label] rollup OK" ;;
-    ""|*0.00*) echo "  [$label] ROW TOTAL STALE ($rt) while line total is $lt"; FAILED="$FAILED $label(row-0.00)"; return 1 ;;
+    7|7.0|7.00) echo "  [$label] rollup OK" ;;
+    "") echo "  [$label] could not identify the '$PROJECT' row's total - not reporting a rollup result"; FAILED="$FAILED $label(no-row-total)"; return 1 ;;
+    *0.00*) echo "  [$label] ROW TOTAL STALE ($rt) while line total is $lt"; FAILED="$FAILED $label(row-0.00)"; return 1 ;;
     *) echo "  [$label] row total unexpected: $rt"; RESIDUAL="$RESIDUAL $label($rt)" ;;
   esac
 
