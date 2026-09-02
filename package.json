@@ -5,7 +5,7 @@
   "description": "End-to-end Playwright suite for the Titan Time Mendix app",
   "scripts": {
     "test": "./run-tests.sh",
-    "test:ci": "./run-tests.sh --junit results.xml --skip-file ci-skip.txt",
+    "test:ci": "./run-tests.sh --skip-file ci-skip.txt",
     "list": "./run-tests.sh --list"
   },
   "dependencies": {
