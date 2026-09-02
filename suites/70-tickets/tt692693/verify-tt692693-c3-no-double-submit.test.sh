@@ -7,6 +7,15 @@
 #
 # Runs C1's flow first (resubmit once), then attempts a second resubmit from the
 # stale popup/list state without a full reload.
+#
+# tt-timeout: 10m
+#
+# This test cannot scope its queue read to one week the way C2 does: its Q0 baseline is read BEFORE the fixture picks a
+# week, so at that point there is no week to scope to. Two sweeps, one either side.
+# So it keeps tt_hr_count_cards_for's sweep over every week in the picker, at
+# roughly 10s a week per tab. That sweep cost ~55s a week before the paging in
+# tt692693_count_cards_here was folded into a single eval; at nine weeks and the
+# call count below it did not fit the 4m default, which is what timed C2 out.
 
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test

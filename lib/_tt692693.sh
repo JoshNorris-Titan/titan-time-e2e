@@ -298,11 +298,24 @@ tt692693_hr_tab_state() {
 
 # tt692693_count_cards_here <consultant-display-name>
 # Count the cards in the CURRENTLY selected week whose first line is exactly the
-# consultant's name. Pages the gallery in first -- see tt_hr_count_cards_for.
+# consultant's name, paging the virtual-scrolling gallery in FIRST.
+#
+# THE SCROLL-AND-COUNT LOOP RUNS INSIDE ONE eval, DELIBERATELY. It used to be a bash
+# loop around tt_gallery_load_all, and every iteration of that loop spends a fresh
+# playwright-cli process -- ~2.6s of node startup, measured -- on each of its nine
+# evals. One week's count therefore cost ~27s of which well under a second was the
+# app. tt_hr_count_cards_for calls this once PER WEEK IN THE WEEK PICKER, and C2/C3
+# call that twice over, so the paging that went in with efec776 multiplied out to
+# ~10 minutes against a 4m default budget: verify-tt692693-c2-zero-hours was killed
+# mid-sweep, having printed only the first tab's diagnostic. Identical DOM work, one
+# process. Do not unroll this back into bash.
+#
+# The in-page loop is also MORE patient than the bash one it replaces: three barren
+# rounds at 1s each before it calls the list finished, against the old two at 2s, so
+# a slow page fetch on a cloud environment gets an extra chance rather than fewer.
 tt692693_count_cards_here() {
   local who="$1"
-  tt_gallery_load_all "$TT692693_GAL" "entries gallery" >/dev/null 2>&1 || true
-  playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const box=gal&&gal.querySelector('.widget-gallery-content'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; if(box&&box.classList.contains('infinite-loading')){ let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); box.scrollTop=box.scrollHeight; box.dispatchEvent(new Event('scroll',{bubbles:true})); await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
 }
 
 # tt_hr_count_cards_for <consultant-display-name> [tab-caption]
@@ -351,6 +364,49 @@ tt_hr_count_cards_for() {
   done
   unset IFS
   echo "$total"
+}
+
+# tt_hr_count_cards_for_week <consultant-display-name> <tab-caption> <week-label>
+# As HR (already logged in): open <tab>, select THE ONE WEEK named, and count the
+# cards there. Accepts either form of the week label; see tt_week_key.
+#
+# Prefer this over tt_hr_count_cards_for whenever the caller knows which week it is
+# asking about, for two separate reasons.
+#
+# It is a SHARPER ASSERTION. tt_hr_count_cards_for sums the consultant's cards over
+# every week in the picker, so "the entry reached the process queue" was satisfied by
+# any card that consultant has in any week -- including the ones earlier tests left
+# behind. C2 submits a specific week and asserts about that week's routing; summing
+# the others in could only ever mask a failure.
+#
+# It is also ~9x cheaper, which is what killed C2: one week's paged count instead of
+# one per week in the picker. See tt692693_count_cards_here.
+#
+# An empty count and a week that is not in the picker are DIFFERENT ANSWERS and both
+# are reported: Main.DS_WeeksForTab builds the picker from the entries the tab holds,
+# so a missing week means no entry of that status -- but it is also what a stuck
+# consultant/project filter looks like, and tt692693_hr_tab_state has already printed
+# which of the two it is.
+tt_hr_count_cards_for_week() {
+  local who="$1" tab="$2" week="$3" key sel
+  key="$(tt_week_key "$week")"; [ -n "$key" ] || key="$week"
+  tt_click_text "$tab" >/dev/null 2>&1; sleep 3
+  tt692693_hr_tab_state "counting '$who' on '$tab' for week '$key'"
+  sel="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$key')===0); if(!el) return 'absent'; el.click(); return 'ok'; }" 2>/dev/null | sed -n '2p' | tr -d '"')"
+  case "$sel" in
+    ok)
+      sleep 3
+      tt692693_count_cards_here "$who"
+      ;;
+    absent)
+      echo "  (week '$key' is not in the '$tab' week picker at all, so no entry of that status exists for it)" >&2
+      echo 0
+      ;;
+    *)
+      echo "  (no week picker on '$tab' -- counting the cards currently shown)" >&2
+      tt692693_count_cards_here "$who"
+      ;;
+  esac
 }
 
 # tt_week_key <week-label> -- the bare "Mmm DD - Mmm DD" part of a week label.

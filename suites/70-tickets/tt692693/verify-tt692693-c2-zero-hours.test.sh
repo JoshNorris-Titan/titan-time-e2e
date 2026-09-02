@@ -15,6 +15,15 @@
 # So a genuine "not in the process queue" means one of those three disagrees. Every
 # read below is paged and scoped so that conclusion is actually available; the
 # previous version of this test could not support it. See lib/_tt692693.sh.
+#
+# tt-timeout: 10m
+#
+# The budget is declared because the fixture is expensive and honest about it: it
+# submits a week, then retries the HR reject up to six times because the approval
+# workflow routes asynchronously, and each attempt re-logs in twice at ~27s a login.
+# The queue reads themselves are ~20s now they are scoped to one week; they were
+# ~10 minutes when they walked all nine weeks of the picker, which is what made this
+# test a TIMEOUT rather than a pass or a fail.
 
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
@@ -71,10 +80,13 @@ tt_login "$CUSER" "My Timesheets" >/dev/null 2>&1
 HIST="$(tt_consultant_week_status "$WEEK")"
 echo "consultant sees for $WEEK: ${HIST:-(week not found in history)}"
 
-# Which queue did it actually land in?
+# Which queue did it actually land in? Asked about THE WEEK THIS TEST SUBMITTED, not
+# summed over every week the consultant has -- a leftover card from an earlier test's
+# week would otherwise satisfy "it reached the process queue" on its own. See
+# tt_hr_count_cards_for_week.
 tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
-INPROC="$(tt_hr_count_cards_for "$CNAME" "WEEKLY TO PROCESS")"
-INMGR="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
+INPROC="$(tt_hr_count_cards_for_week "$CNAME" "WEEKLY TO PROCESS" "$WEEK")"
+INMGR="$(tt_hr_count_cards_for_week "$CNAME" "MANAGER APPROVAL" "$WEEK")"
 echo "'$CNAME' in MANAGER APPROVAL=$INMGR  |  in WEEKLY TO PROCESS=$INPROC"
 
 FAILS=""
