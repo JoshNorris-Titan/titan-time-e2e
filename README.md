@@ -104,7 +104,10 @@ flowchart LR
    header comment (the block of `#` lines above the first line of code); `--timeout` overrides
    every declaration. A `tt-timeout` line that has slipped below the header is not read, and the
    runner says so with a `WARN` rather than quietly running the step at the default.
-6. **Writes a `results.xml` report** when asked (`--junit`) — that is what GitHub reads.
+6. **Writes a `results.xml` report** when asked (`--junit`). Nothing consumes it today — CI
+   stopped passing `--junit` because no check annotation or dashboard ever read the file, and
+   it is written only after the whole run, so a timed-out run produced nothing at all. The
+   step log is what people actually read.
 7. **Closes the browser** at the end, whatever happened — and on Ctrl-C it stops the run
    instead of carrying on against a session it just closed.
 8. **Refuses to start if the number of steps is not what you expected** (`--expect-count N`).
@@ -864,9 +867,10 @@ to `TT_ROLE_PASS` at the forced-reset prompt.
 `.github/workflows/e2e.yml` runs the suite on GitHub's machines:
 **Actions → E2E → Run workflow**, optionally typing an app address.
 
-Each run installs the tools and Chromium, runs the suite with a report and the skip list, and
-uploads `results.xml` plus any failure screenshots as downloadable artifacts (kept 30 days). Only
-one run happens at a time, because the suite changes shared data on the target environment.
+Each run installs the tools and Chromium, runs the suite with the skip list, and uploads any
+failure screenshots as downloadable artifacts (kept 30 days). A green run has no screenshots and
+so uploads nothing, silently. Only one run happens at a time, because the suite changes shared
+data on the target environment.
 
 > [!NOTE]
 > It is **manual-trigger only** right now. A weekly schedule is written but commented out on

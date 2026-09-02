@@ -80,7 +80,15 @@ jobs:
     runs-on: ubuntu-latest
     # 45 was not enough for a first full run against cloud dev; raised so the
     # baseline can actually finish rather than being guillotined mid-suite.
-    timeout-minutes: 90
+    #
+    # 90 was not enough either, and fail-fast hid that for weeks: every run that
+    # fit inside it only fit because a failure aborted the tail. The first
+    # all-green run (33684417368) needed 89 minutes of test time alone and was
+    # killed 33s into verify-hr-reject-after-export with seven scripts still to
+    # go - including the teardown that clears the test data. An all-green run is
+    # the SLOWEST possible run, so the budget has to cover that, not the runs
+    # that got cut short. 150 leaves real headroom over today's ~90.
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v4
@@ -114,15 +122,22 @@ jobs:
           chmod +x ./run-tests.sh
           # No --verbose: failures already print their own output, and at 50
           # scripts the passing chatter buried the signal.
-          ./run-tests.sh --junit results.xml --skip-file ci-skip.txt
+          #
+          # No --junit either: nothing consumes results.xml. It is not rendered
+          # as a check annotation and no dashboard reads the artifact, so the
+          # step log is the only thing anyone actually looks at. Worse, the file
+          # is written only after the whole loop, so the one run where it would
+          # have paid off - a timeout - produced no file at all.
+          ./run-tests.sh --skip-file ci-skip.txt
 
-      - name: Upload results
+      # Screenshots only, and `ignore` rather than `warn`: a green run has no
+      # screenshots by definition, so warning about it is noise on exactly the
+      # runs that went well.
+      - name: Upload failure screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results
-          path: |
-            results.xml
-            *-failure.png
-          if-no-files-found: warn
+          name: e2e-failure-screenshots
+          path: "*-failure.png"
+          if-no-files-found: ignore
           retention-days: 30
