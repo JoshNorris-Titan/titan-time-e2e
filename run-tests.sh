@@ -373,6 +373,12 @@ for script in "${SCRIPTS[@]}"; do
 
   check_timeout_directive "$script"
 
+  # Attribution for tools/pw-trace, and inert without it. The profiling shim reads
+  # TT_PW_SPEC to label each playwright-cli launch with the step that made it; the
+  # step itself cannot do this, because the interesting calls come from lib/ helpers
+  # several frames down that have no idea who called them.
+  export TT_PW_SPEC="$name"
+
   t0=$(date +%s)
   out="$(run_one "$script")"; rc=$?
   t1=$(date +%s); dur=$((t1-t0))
@@ -409,6 +415,12 @@ for script in "${SCRIPTS[@]}"; do
     fi
   fi
 done
+
+# Whatever the runner itself does from here on - closing the shared session, taking
+# a screenshot - belongs to no step. Left set, TT_PW_SPEC would bill the session
+# close (~3.7s) to whichever step happened to run last, which is the one number in
+# a profiling baseline nobody would think to question.
+unset TT_PW_SPEC
 
 RUN_END=$(date +%s); TOTAL_TIME=$((RUN_END-RUN_START))
 TOTAL=$((PASSED+FAILED+SKIPPED+NOTRUN))

@@ -9,3 +9,10 @@
 *.txt   text eol=lf
 
 *.png   binary
+
+# The pw-trace profiling shim is deliberately EXTENSIONLESS: to shadow the real
+# binary on PATH it must be named exactly `playwright-cli`. That puts it outside
+# the *.sh rule above, so without this line it checks out on ubuntu-latest with
+# CRLF and dies as "$'\r': command not found" - the very failure that rule exists
+# to prevent.
+tools/pw-trace/playwright-cli   text eol=lf
