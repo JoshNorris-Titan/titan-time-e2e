@@ -115,15 +115,17 @@ FX_ASSIGNMENTS=(
   "E2E Consultant Two|E2E Sandbox|40"
 )
 
-# Matches the window every existing E2E assignment uses (Jul 01 2026 - Dec 31 2027).
+# Matches the window every existing E2E assignment uses (07/01/2026 - 12/31/2027).
 # The window must cover the weeks the tests drive, or the assignment exists but
 # renders zero rows — the failure mode seed-shakedown.sh was written to catch.
 #
-# FORMAT IS LOAD-BEARING: the date pickers advertise placeholder "mmm dd, yyyy".
-# "07/01/2026" is accepted into the DOM and then rejected by the widget with
-# "Invalid date", so the save fails while the field looks correctly filled.
-FX_START_DATE="${FX_START_DATE:-Jul 01, 2026}"
-FX_END_DATE="${FX_END_DATE:-Dec 31, 2027}"
+# FORMAT IS LOAD-BEARING: the date picker parses typed input with its own custom
+# date format, which TT-721 changed from "MMM dd, yyyy" to "MM/dd/yyyy". A value in
+# the wrong shape is accepted into the DOM and then rejected by the widget with
+# "Invalid date", so the save fails while the field looks correctly filled. If
+# dpStartDate/dpEndDate are ever reformatted again, these two must follow.
+FX_START_DATE="${FX_START_DATE:-07/01/2026}"
+FX_END_DATE="${FX_END_DATE:-12/31/2027}"
 FX_BUDGET_HOURS="${FX_BUDGET_HOURS:-400}"
 
 # Matches the sibling E2E projects already on dev, so a created project is
@@ -320,7 +322,7 @@ fx_consultant_assignments() {
 # fx_fill_date <selector> <value> — type a date the way a person would.
 #
 # `playwright-cli fill` writes straight to the DOM value, which the Mendix date
-# picker never parses: the field then reads "Jul 01, 2026" while the widget reports
+# picker never parses: the field then reads "07/01/2026" while the widget reports
 # "Invalid date" and silently refuses the save. Real keystrokes fire the events it
 # listens for. Blur by clicking another field rather than pressing Escape — Escape
 # closes the whole popup.
@@ -586,7 +588,7 @@ fx_reconcile_collect() {
 # consultantName|loginUser|project|weeksBack
 #
 # weeksBack must keep the target week inside the assignment window
-# (FX_START_DATE, Jul 01 2026). Main.SUB_Assignment_FilterActive only creates
+# (FX_START_DATE, 07/01/2026). Main.SUB_Assignment_FilterActive only creates
 # entries for assignments whose window spans the week, so a week before the
 # start renders zero rows and seeds nothing.
 FX_ENTRIES=(
