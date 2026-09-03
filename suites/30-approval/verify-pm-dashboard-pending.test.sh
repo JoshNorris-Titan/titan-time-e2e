@@ -7,9 +7,19 @@
 # Approve (that would consume the entry). Uses the stable post-naming selectors
 # galPMPendingEntries / btnPMApprove / btnPMApproveAll.
 #
-# Data dependency: the pending-approval assertions expect at least one submitted
-# E2E entry awaiting approval. The customer-approval test keeps a standing pool of
-# these (it never approves), so they are normally present.
+# Data dependency: the pending-approval assertions need one entry sitting at the
+# MANAGER-approval stage on a project e2e_pm manages, and this test seeds one when
+# the queue is empty. It never approves, so what it seeds stays standing.
+#
+# It used to rely on a pool it does not own, and the comment naming that pool was
+# wrong twice over. Main.DS_ApprovalHelper_PM feeds galPMPendingEntries from the
+# MANAGER stage; verify-customer-approval-flow's standing entries sit at the CLIENT
+# stage and never appear here at all. The only sibling that puts an entry in THIS
+# queue is verify-pm-approve-action, which seeds one and then approves it -- and it
+# runs first alphabetically, so it hands this test an empty queue by design.
+# Measured on dev 2026-09-02, both this gallery and HR's MANAGER APPROVAL tab held
+# zero cards: the queue really was empty, which is the answer the test should seed
+# its way out of rather than assert against.
 
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
@@ -21,16 +31,22 @@ tt_login "e2e_pm" "Project Manager Dashboard"
 
 # ------------------------------------------------------- managed-project card
 #
-# The card comes from Main.DS_ProjectsManaged through the gallery in
-# Main.SNIP_ProjectsDashboardView, and that gallery is VIRTUAL SCROLLING with a
-# page size of THREE. Main.DS_ProjectsManaged sorts createdDate DESCENDING, so the
-# cards on screen are the three NEWEST projects this PM manages. 'E2E Customer
-# Approval' is older than that, so it is not in the initial DOM at all.
+# The card comes from Main.DS_ProjectsManaged through the projects gallery, which
+# the snippet fold moved out of Main.SNIP_ProjectsDashboardView and into
+# Main.ProjectManagerDashboard under foldProjectsDashboardView. That gallery is
+# PAGED, and it has been paged two different ways: virtual scrolling with pageSize 3
+# until model commit b05c11d2 ("layout grid changes"), Load more with pageSize 25
+# since. Main.DS_ProjectsManaged sorts createdDate DESCENDING, so at pageSize 3 the
+# cards on screen were the three NEWEST projects this PM manages and 'E2E Customer
+# Approval' was not in the DOM at all.
 #
-# This test previously waited 20s for that text and the failure was read as a
-# rendering delay -- it never was one. Waiting cannot help; only scrolling the
-# gallery's own .widget-gallery-content box loads the next page. See the gallery
-# paging section of lib/_login.sh.
+# This test has now failed once for each mode, and neither failure was what it
+# looked like. First it waited 20s for that text and the timeout was read as a
+# rendering delay -- waiting could never have helped, only paging. Then the paging
+# helper hard-required the virtual-scrolling content box and died at its own guard
+# on a gallery that was already showing every card it had. tt_gallery_load_until_text
+# now pages whichever way the gallery offers; see the gallery paging section of
+# lib/_login.sh.
 #
 # SCOPING. The projects gallery widget is still auto-named (gallery1) and the suite
 # never depends on auto-generated names. galPMPendingEntries IS named, so scope by
@@ -77,9 +93,43 @@ tt_assert_all "PM dashboard: header" "Project Manager Dashboard"
 
 # ------------------------------------------------ pending-approval oversight
 #
-# Data-dependent on a standing pending entry, and asynchronously loaded like the
-# gallery above — wait before asserting.
+# Asynchronously loaded like the gallery above, so wait before asserting. Also PAGED
+# (Load more, pageSize 25), so page it in before reading it: an unpaged read answers
+# "is the entry on the first page", not "is it in the queue".
 tt_wait_text "Pending Approval" "pending-approval section on the PM dashboard"
+tt_wait_for ".mx-name-galPMPendingEntries" "PM pending-approval gallery"
+
+PENDING_PROJECT="E2E Manager Approval"
+
+# How many entries the PM's queue is currently offering to approve. Counting the
+# Approve buttons rather than the cards keeps this the same question the assertions
+# below ask.
+pm_pending_count() {
+  tt_gallery_load_all ".mx-name-galPMPendingEntries" "PM pending queue" >/dev/null
+  playwright-cli eval "() => String(document.querySelectorAll('.mx-name-galPMPendingEntries .mx-name-btnPMApprove').length)" 2>/dev/null | _tt_eval_str
+}
+
+pm_open_dashboard() {
+  tt_login "e2e_pm" "Project Manager Dashboard"
+  tt_wait_for ".mx-name-galPMPendingEntries" "PM pending-approval gallery"
+}
+
+# Seed one, the same way verify-pm-approve-action does and for the same reason:
+# nothing upstream guarantees this queue is non-empty. Workflow routing into it is
+# async, so poll rather than assert on the first look.
+if [ "$(pm_pending_count)" = "0" ]; then
+  echo "  [pm-dashboard pending] queue is empty -- seeding one '$PENDING_PROJECT' entry as the consultant"
+  tt_login "e2e_consultant" "My Timesheets"
+  tt_consultant_submit_project_row "$PENDING_PROJECT"
+  for _ in 1 2 3 4 5 6; do
+    pm_open_dashboard
+    [ "$(pm_pending_count)" != "0" ] && break
+    sleep 6
+  done
+fi
+
+[ "$(pm_pending_count)" != "0" ] \
+  || tt_fail "PM dashboard: the pending-approval queue is empty and seeding a '$PENDING_PROJECT' entry did not fill it. Check HR's MANAGER APPROVAL tab: if that is empty too the entry never routed to the manager stage (a submit/routing problem); if it holds the entry and this gallery does not, Main.DS_ApprovalHelper_PM is not returning it to e2e_pm."
 
 tt_assert_all "PM dashboard: pending approval" \
   "Pending Approval" \
