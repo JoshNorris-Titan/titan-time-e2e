@@ -151,8 +151,19 @@ jobs:
           # Profiling is opt-in per dispatch and off for the nightly. It must be
           # SOURCED, not run: it works by putting tools/pw-trace on PATH ahead of
           # the real playwright-cli, and a child process cannot change our PATH.
+          #
+          # The `||` block is not decoration. This block runs under `bash -e`, so
+          # a `return 1` out of a SOURCED file aborts the step immediately - before
+          # a single test runs - and all the log carries is enable.sh's one line of
+          # stderr followed by "Process completed with exit code 1", which reads
+          # like the suite failed. Stopping is the right call (a profiling dispatch
+          # that cannot profile should not spend three hours producing a baseline
+          # with no trace), but it has to say so.
           if [ "${{ inputs.trace }}" = "true" ]; then
-            source tools/pw-trace/enable.sh "$PWD/pw-trace.log"
+            source tools/pw-trace/enable.sh "$PWD/pw-trace.log" || {
+              echo "::error::pw-trace could not be enabled (see the message above); no tests were run. Re-dispatch with trace=false to run the suite untraced."
+              exit 1
+            }
           fi
 
           # GitHub runs `run:` blocks under `bash -e`, so a failing suite would
