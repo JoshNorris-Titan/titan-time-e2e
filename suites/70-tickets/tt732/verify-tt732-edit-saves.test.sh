@@ -81,8 +81,30 @@ case "$popup" in
 esac
 
 # Click the first assignment row to reach TitanManager_ConsultantAssignment_Popup.
-r="$(playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'NOMODAL'; const lv=d.querySelector('.mx-name-listView1') || d; const c=[...lv.querySelectorAll('*')].find(e=>getComputedStyle(e).cursor==='pointer' && (e.innerText||'').trim().length>0); if(!c) return 'NOROW'; c.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)"
-[ "$r" = "ok" ] || tt_fail "TT-732: no clickable assignment row for '$CONSULTANT' ($r) — the fixtures should give it at least one assignment"
+#
+# WHY li[role="button"] AND NOT cursor:pointer. The assignments sit in the popup's
+# auto-named listView1, which HAS an on-click (Mendix gives it .mx-listview-clickable
+# and renders each row as <li role="button" tabindex="0">) — but its computed cursor
+# is `default`, not `pointer`, because the list carries `listview-stylingless` and the
+# Titan theme never restores Atlas's clickable-row cursor rule. A cursor:pointer probe
+# therefore finds nothing in the whole dialog except the modal's own × button, and this
+# step reported NOROW on an environment where the consultant plainly had four
+# assignments. Verified against dev on 2026-09-03: 4 rows, all cursor `default`,
+# dialog pointerCount 1 (the × close button).
+#
+# The gallery probe in tt732_open_consultant above is NOT affected — galConsultants
+# renders real pointer cards — which is why the same predicate works ten lines up.
+#
+# NOROW is discriminated from NOLIST on purpose: "the list view is not there" and
+# "the list view is there and empty" are different failures, and only the second one
+# is the missing-fixture story the old message asserted unconditionally.
+r="$(playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'NOMODAL'; const lv=d.querySelector('.mx-listview-clickable') || d.querySelector('.mx-name-listView1'); if(!lv) return 'NOLIST'; const rows=[...lv.querySelectorAll('li[role=\"button\"]')].filter(e=>(e.innerText||'').trim().length>0); if(!rows.length) return 'NOROW:'+lv.querySelectorAll('li').length; rows[0].click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)"
+case "$r" in
+  ok) : ;;
+  NOROW:0) tt_fail "TT-732: '$CONSULTANT' has no assignment rows in the details popup — the 00-setup fixtures should give it at least one assignment" ;;
+  NOROW:*) tt_fail "TT-732: the assignment list rendered ${r#NOROW:} rows but none is clickable — listView1 lost its on-click action" ;;
+  *)       tt_fail "TT-732: could not reach an assignment row for '$CONSULTANT' ($r)" ;;
+esac
 sleep 4
 
 detail="$(tt732_modal_text)"
