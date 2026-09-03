@@ -55,6 +55,14 @@ only to the trace file — proven byte-identical against the real binary.
   binary's name, so a PATH lookup would find itself and fork forever. It also
   refuses to guess, because a profiler that quietly declines to profile yields a
   clean-looking baseline that is simply wrong.
+- **Two PATH edits have to stay in the right order.** `playwright-cli` is a *local*
+  dependency, so `enable.sh` resolves `node_modules/.bin/playwright-cli` itself
+  rather than trusting `PATH` — nothing has put it there yet when it is sourced.
+  `run-tests.sh` then does its own `node_modules/.bin` prepend, and **skips it when
+  `TT_PW_REAL` is set**: unguarded, it lands in front of this directory and every
+  call goes to the real binary, so the suite runs green and traces nothing. Both
+  halves broke the first traced CI dispatch — a runner has no global install to fall
+  back on, which is what hid both locally.
 - **Running `run-tests.sh` locally closes the `default` browser session** — the
   runner owns that session's lifecycle and closes it on the way out. Unrelated to
   this tool, but it surprises people mid-profiling.

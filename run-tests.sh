@@ -224,7 +224,16 @@ fi
 # happens to work only because the host has it installed globally. Exporting PATH
 # here also covers the test scripts, which invoke `playwright-cli` directly as
 # child processes of this runner.
-if [ -x "$HERE/node_modules/.bin/playwright-cli" ]; then
+#
+# SKIPPED WHEN pw-trace IS ON, and that is the whole point of the TT_PW_REAL
+# test. enable.sh has by then put tools/pw-trace on PATH so that bare
+# `playwright-cli` resolves to the profiling shim, and TT_PW_REAL holds the real
+# binary the shim execs. Prepending node_modules/.bin here would land in FRONT of
+# the shim and every call would go straight to the real binary: the suite would
+# run perfectly, write an empty trace file, and the workflow's `[ -s ... ]` guard
+# would then skip the report - a profiling run that silently profiled nothing.
+# PATH still resolves playwright-cli either way, so the guard below is unaffected.
+if [ -x "$HERE/node_modules/.bin/playwright-cli" ] && [ -z "${TT_PW_REAL:-}" ]; then
   PATH="$HERE/node_modules/.bin:$PATH"
   export PATH
 fi
