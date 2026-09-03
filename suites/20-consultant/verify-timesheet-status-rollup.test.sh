@@ -13,9 +13,12 @@
 #
 # WHAT IT ASSERTS
 #   A. No timesheet is in the dead state. ENUM_TimesheetStatus has five values but
-#      Awaiting_Export is referenced nowhere in the model — nothing sets it and
-#      nothing reads it. If a week ever turns up in it, something started writing
-#      a status that no code understands.
+#      nothing in the model ever WRITES Awaiting_Export. Two widgets now read it —
+#      txtWeekStatus and txtHistoryStatus on Main.ConsultantDashboard both map it to
+#      an "Awaiting export" pill — so the old wording here ("referenced nowhere")
+#      stopped being true on 2026-09-03. The assertion is unchanged and still sound:
+#      it is about the state being unreachable, not unmentioned. If a week ever turns
+#      up in it, something started writing a status that no code understands.
 #   B. Submitting a week moves that week's own status to Awaiting Approval. This
 #      is the rollup working, observed causally: read before, submit, read after.
 #

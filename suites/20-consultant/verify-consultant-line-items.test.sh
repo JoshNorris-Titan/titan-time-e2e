@@ -25,9 +25,23 @@ source "$TT_ROOT/lib/_login.sh"
 ROW=".mx-name-galAssignmentRows"
 
 # Dismiss a stray dialog (TT-692 rollup error) so it doesn't block the next step.
+#
+# This was a local helper doing document.querySelector('[role=dialog],.modal-dialog')
+# and clicking the first button it found. Both halves are wrong, and lib/_login.sh
+# documents why from a live DOM probe: nothing with role=dialog exists on this app
+# at all, and Mendix leaves CLOSED dialogs in the DOM with the stale one FIRST — so
+# querySelector handed back a corpse and clicked its dead buttons while the live
+# dialog stayed up. A live Mendix dialog's backdrop then eats every subsequent
+# click, which is how the delete loop below could burn all 6 tries deleting nothing
+# and still blame TT-692 delete flakiness for it. The regex accepting "close" was
+# the second trap — _login.sh notes that is how a CANCEL went unnoticed.
+#
+# tt_clear_dialogs takes the LAST VISIBLE dialog, walks the whole confirm chain,
+# and reports a dialog that offers no way forward instead of clicking Close on it.
+# Every other spec in the suite was migrated to it; this one was the straggler.
+DIALOG_BLOCKED=""
 dismiss_dialog() {
-  playwright-cli eval "() => { const d=document.querySelector('[role=dialog],.modal-dialog'); if(!d) return 'none'; const b=[...d.querySelectorAll('button')].find(x=>/^(ok|close|×|got it|dismiss)$/i.test(x.innerText.trim())) || d.querySelector('button'); if(b){b.click(); return 'closed';} return 'open'; }" >/dev/null 2>&1
-  sleep 1
+  tt_clear_dialogs 8 || DIALOG_BLOCKED="$TT_DIALOG_BLOCKED"
 }
 
 task_count() {
@@ -120,7 +134,17 @@ FINAL="$(task_count)"
 # hours on the project and skew later assertions, and this test runs EARLY
 # (20-consultant), so whatever it leaves behind is inherited by every suite after
 # it. A cleanup that did not clean up is a failure.
-[ "$FINAL" = "$N0" ] || tt_fail "cleanup left $FINAL task(s) (started $N0) — likely TT-692 delete flakiness. Left in place these skew every later test on this week; clear the week before re-running."
+#
+# Name the actual cause rather than defaulting to "TT-692 flakiness". The two are
+# distinguishable and only one of them is a product bug: a dialog that swallowed
+# the clicks is a TEST problem, a delete that ran and failed is a PRODUCT problem.
+# Guessing wrong here is what sent the last investigation at the wrong half.
+if [ "$FINAL" != "$N0" ]; then
+  if [ -n "$DIALOG_BLOCKED" ]; then
+    tt_fail "cleanup left $FINAL task(s) (started $N0) — a dialog blocked the deletes and offered no way forward: $DIALOG_BLOCKED. Left in place these skew every later test on this week; clear the week before re-running."
+  fi
+  tt_fail "cleanup left $FINAL task(s) (started $N0) — no dialog was blocking, so the delete itself did not take (TT-692). Left in place these skew every later test on this week; clear the week before re-running."
+fi
 tt_assert_no_unnamed_tasks "$ROW"
 
 echo "PASS: line-items add / recalc / update / second-task / delete ($WEEK)"
