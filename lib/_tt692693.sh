@@ -506,7 +506,12 @@ tt692693_hr_tab_state() {
 
 # tt692693_count_cards_here <consultant-display-name>
 # Count the cards in the CURRENTLY selected week whose first line is exactly the
-# consultant's name, paging the virtual-scrolling gallery in FIRST.
+# consultant's name, paging the gallery in FIRST.
+#
+# The in-page pager clicks Load more or scrolls the virtual-scrolling box, whichever
+# the gallery has -- the HR entries galleries moved from virtual scrolling to Load
+# more in model commit b05c11d2, and a pager that only knows how to scroll them goes
+# silently blind again. See the gallery-paging section of lib/_login.sh.
 #
 # THE SCROLL-AND-COUNT LOOP RUNS INSIDE ONE eval, DELIBERATELY. It used to be a bash
 # loop around tt_gallery_load_all, and every iteration of that loop spends a fresh
@@ -523,7 +528,7 @@ tt692693_hr_tab_state() {
 # a slow page fetch on a cloud environment gets an extra chance rather than fewer.
 tt692693_count_cards_here() {
   local who="$1"
-  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const box=gal&&gal.querySelector('.widget-gallery-content'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; if(box&&box.classList.contains('infinite-loading')){ let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); box.scrollTop=box.scrollHeight; box.dispatchEvent(new Event('scroll',{bubbles:true})); await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } const vs=[...document.querySelectorAll('$TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; const advance=()=>{ if(!gal) return false; const b=gal.querySelector('.widget-gallery-load-more-btn'); if(b){ b.click(); return true; } const c=gal.querySelector('.widget-gallery-content.infinite-loading'); if(c){ c.scrollTop=c.scrollHeight; c.dispatchEvent(new Event('scroll',{bubbles:true})); return true; } return false; }; { let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); if(!advance()) break; await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } const vs=[...document.querySelectorAll('$TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
 }
 
 # tt_hr_count_cards_for <consultant-display-name> [tab-caption]
@@ -532,11 +537,12 @@ tt692693_count_cards_here() {
 # Used to assert an entry reached a queue (C1/C2) and that it appears ONCE (C3).
 #
 # EVERY READ OF THE GALLERY GOES THROUGH tt692693_count_cards_here, WHICH PAGES IT IN
-# FIRST. Main.SNIP_HRDashboardTab's galTabEntries is virtual-scrolling with pageSize
-# 4: it renders four cards and fetches the rest only when its own
-# .widget-gallery-content box is scrolled. Reading the DOM without scrolling answers
-# "is this consultant in the first four cards", not "is this consultant in this
-# week" -- and the two are indistinguishable in the output.
+# FIRST. Main.SNIP_HRDashboardTab's galTabEntries was virtual-scrolling with pageSize
+# 4: it rendered four cards and fetched the rest only when its own
+# .widget-gallery-content box was scrolled. Reading the DOM without paging answers
+# "is this consultant on the first page", not "is this consultant in this week" --
+# and the two are indistinguishable in the output. The tabs are Load more with
+# pageSize 25 today, which widens that margin but does not remove it.
 #
 # This function's whole job is to let a caller conclude an entry is NOT in a queue,
 # which is exactly the conclusion an unpaged read cannot support. It is how

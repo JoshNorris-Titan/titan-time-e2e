@@ -60,11 +60,12 @@ TT647_GAL="$TT_HR_GAL_ENTRIES"
 # tt647_load_cards [label] -- page the entries gallery in fully, then echo how many
 # cards it holds.
 #
-# MANDATORY BEFORE ANY READ OF TT647_GAL. galTabEntries is a virtual-scrolling
-# gallery with pageSize 4: it renders four cards and fetches the rest only when its
-# own .widget-gallery-content box is scrolled. Reading .innerText without scrolling
-# therefore answers "is this row in the first four", not "is this row in this week",
-# and the two are indistinguishable in the output.
+# MANDATORY BEFORE ANY READ OF TT647_GAL. The entries gallery renders one page and
+# fetches the rest only when it is paged -- it was virtual scrolling with pageSize 4
+# and is Load more with pageSize 25 since model commit b05c11d2, and tt_gallery_load_all
+# handles either. Reading .innerText without paging therefore answers "is this row on
+# the first page", not "is this row in this week", and the two are indistinguishable
+# in the output.
 #
 # Measured on dev 2026-08-31: all five WEEKLY TO PROCESS weeks rendered 4 cards while
 # their heading read "Weekly Timesheets to Process (5)", and one scroll took the
