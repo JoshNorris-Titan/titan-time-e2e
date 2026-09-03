@@ -37,3 +37,6 @@ __pycache__/
 # Raw traces are per-run and large; the numbers that matter go in the PR body.
 tools/pw-trace/trace-*.log
 pw-trace.log
+
+# The theme lint's own output, same shape as .last-check.json above.
+quality/.last-theme-check.json
