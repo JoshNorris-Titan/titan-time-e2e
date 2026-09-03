@@ -131,9 +131,13 @@ Keep the token — you need it for everything below.
 
 **5.1** — `Submit my E2E Manager Approval timesheet for the week of 6 September 2026.`
 
-> If the week is under the expected hours it should **refuse** and report the
-> warning rather than submitting silently. If hours are exactly right it submits
-> straight away — also correct.
+> It should **refuse** and report the warning rather than submitting silently.
+>
+> Expect a refusal for the **current week or any future week regardless of hours**
+> (corrected 2026-08-31, TT-710): the not-ended warning now covers every day of the
+> in-progress week through Saturday, not just Sunday and future weeks, and
+> `ACT_MCP_SubmitWeek` returns `NOT_SUBMITTED` on any warning. A silent straight-through
+> submit is only correct for a week that has already **ended** and has the expected hours.
 
 **5.2** — `Yes, submit it anyway.`
 
