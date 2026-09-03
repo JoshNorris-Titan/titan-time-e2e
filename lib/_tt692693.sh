@@ -13,7 +13,7 @@
 #    and editability gating, which will very likely RENUMBER those. So every helper
 #    here targets the popup by CAPTION TEXT and by attribute semantics, never by
 #    generated .mx-name-textBoxN. Do not "optimise" these into fixed names.
-#  * The inline dashboard buttons btnReject/btnApprove/btnProcess are dead controls
+#  * The inline dashboard buttons btn<Tab>Reject/btn<Tab>Approve/btnProcessEntry are dead controls
 #    (no server call). The working reject path is View -> popup -> Reject + comment.
 
 # ---------------------------------------------------------------- popup helpers
@@ -144,7 +144,7 @@ tt_rejected_count() {
 # is a prefix of "E2E Consultant Two"/"Three", so substring matching picks the wrong row.
 tt_hr_click_view_for() {
   local who="$1"
-  playwright-cli eval "() => { const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); for(const v of vs){ let el=v; for(let k=0;k<10;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<400){ const first=t.split('\n')[0].trim(); if(first==='$who'){ v.click(); return 'clicked'; } } } } return 'notfound'; }" 2>/dev/null | sed -n '2p' | grep -q clicked
+  playwright-cli eval "() => { const vs=[...document.querySelectorAll('$TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); for(const v of vs){ let el=v; for(let k=0;k<10;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<400){ const first=t.split('\n')[0].trim(); if(first==='$who'){ v.click(); return 'clicked'; } } } } return 'notfound'; }" 2>/dev/null | sed -n '2p' | grep -q clicked
 }
 
 # tt_hr_reject_first <consultant-name> <tab-caption>
@@ -162,12 +162,12 @@ tt_hr_reject_first() {
   if tt_hr_click_view_for "$who"; then
     opened=1
   else
-    labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
+    labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
     labels="${labels%\"}"; labels="${labels#\"}"
     local IFS='|'
     for lbl in $labels; do
       [ -n "$lbl" ] || continue
-      playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
+      playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
       sleep 3
       if tt_hr_click_view_for "$who"; then opened=1; echo "  (rejecting in week $lbl)"; break; fi
     done
@@ -345,14 +345,14 @@ tt_hr_reject_card_for_project() {
   tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
   tt_try_click_text "$tab" || { echo "  (no '$tab' tab on the HR dashboard)"; return 1; }
   sleep 3
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+  labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
+    playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 3
-    card="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, .mx-name-btnView')].filter(b=>b.offsetParent!==null); const card=(b)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who') return el; } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
+    card="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, $TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView')].filter(b=>b.offsetParent!==null); const card=(b)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who') return el; } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
     if [ "$card" != "nf" ]; then
       opened=1; echo "  (rejecting '$proj' on $tab, week $lbl, via $card)"; break
     fi
@@ -486,20 +486,20 @@ tt_popup_day_inputs() {
 
 # TT692693_GAL -- the HR tab's entries gallery. Named once because EVERY read of it
 # must be preceded by tt_gallery_load_all; see below.
-TT692693_GAL=".mx-name-galTabEntries"
+TT692693_GAL="$TT_HR_GAL_ENTRIES"
 
 # tt692693_hr_tab_state <label> -- print what the HR tab is actually showing.
 #
 # Main.DS_EntriesForTab filters the retrieved entries by the tab's OWN dropdowns
 # (HRDashboardTab_Account / HRDashboardTab_Project), and Main.DS_WeeksForTab applies
-# the same two to the WEEK LIST. So a cbTabWeekConsultant or cbTabWeekProject left
+# the same two to the WEEK LIST. So a cb<Tab>Consultant or cb<Tab>Project left
 # set by an earlier test does not merely hide cards -- it can empty the week picker
 # outright, at which point every "walk the weeks" helper here concludes the entry is
 # in no queue at all. Cheap, and it runs on the happy path too: without it, "the
 # entry never routed" and "a filter is hiding it" are indistinguishable in the log.
 tt692693_hr_tab_state() {
   local label="${1:-tab state}" s
-  s="$(playwright-cli eval "() => { const val=n=>{ const w=document.querySelector('.mx-name-'+n); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('.mx-name-galTabAvailableWeeks'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; return 'consultantFilter=' + val('cbTabWeekConsultant') + ' | projectFilter=' + val('cbTabWeekProject') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)'); }" 2>/dev/null | sed -n '2p')"
+  s="$(playwright-cli eval "() => { const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('$TT_HR_GAL_WEEKS'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; return 'consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)'); }" 2>/dev/null | sed -n '2p')"
   s="${s%\"}"; s="${s#\"}"
   echo "  [tab] $label: $s" >&2
 }
@@ -523,7 +523,7 @@ tt692693_hr_tab_state() {
 # a slow page fetch on a cloud environment gets an extra chance rather than fewer.
 tt692693_count_cards_here() {
   local who="$1"
-  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const box=gal&&gal.querySelector('.widget-gallery-content'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; if(box&&box.classList.contains('infinite-loading')){ let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); box.scrollTop=box.scrollHeight; box.dispatchEvent(new Event('scroll',{bubbles:true})); await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } const vs=[...document.querySelectorAll('.mx-name-btnView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const box=gal&&gal.querySelector('.widget-gallery-content'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; if(box&&box.classList.contains('infinite-loading')){ let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); box.scrollTop=box.scrollHeight; box.dispatchEvent(new Event('scroll',{bubbles:true})); await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } const vs=[...document.querySelectorAll('$TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
 }
 
 # tt_hr_count_cards_for <consultant-display-name> [tab-caption]
@@ -551,7 +551,7 @@ tt_hr_count_cards_for() {
   local who="$1" tab="${2:-MANAGER APPROVAL}" labels lbl total=0 n
   tt_click_text "$tab" >/dev/null 2>&1; sleep 3
   tt692693_hr_tab_state "counting '$who' on '$tab'"
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
+  labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
   labels="${labels%\"}"; labels="${labels#\"}"
   if [ -z "$labels" ]; then
     # No week picker at all. Count whatever this tab is showing -- but say so, because
@@ -564,7 +564,7 @@ tt_hr_count_cards_for() {
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
+    playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 3
     n="$(tt692693_count_cards_here "$who")"
     total=$(( total + ${n:-0} ))
@@ -600,7 +600,7 @@ tt_hr_count_cards_for_week() {
   key="$(tt_week_key "$week")"; [ -n "$key" ] || key="$week"
   tt_click_text "$tab" >/dev/null 2>&1; sleep 3
   tt692693_hr_tab_state "counting '$who' on '$tab' for week '$key'"
-  sel="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$key')===0); if(!el) return 'absent'; el.click(); return 'ok'; }" 2>/dev/null | sed -n '2p' | tr -d '"')"
+  sel="$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$key')===0); if(!el) return 'absent'; el.click(); return 'ok'; }" 2>/dev/null | sed -n '2p' | tr -d '"')"
   case "$sel" in
     ok)
       sleep 3

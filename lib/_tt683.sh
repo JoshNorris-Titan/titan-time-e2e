@@ -128,7 +128,7 @@ tt683_zip_button_caption() {
 # puts them there: the TT-647 scenarios stop at ToProcess and the TT-654 ones
 # stop at Awaiting*Approval. The ToProcess -> AwaitingExport hop is HR pressing
 # "View & Process" on a To Process card and then "Process" on the page that
-# opens (Main.SNIP_HRDashboardTab btnProcess -> Main.NACT_ProcessEntry ->
+# opens (Main.HRDashboard btnProcessEntry -> Main.NACT_ProcessEntry ->
 # Main.AssignmentEntry_Process -> Main.ACT_AssignmentEntry_Process).
 #
 # verify-tt683-a0 drives these. They are here rather than in the test so a1/a2
@@ -258,7 +258,7 @@ tt683_zip_pdf_report() {
 
 # tt683_toprocess_weeks — the week labels offered on the currently-open tab.
 tt683_toprocess_weeks() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//'
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//'
 }
 
 # tt683_open_toprocess_tab — select the To Process tab WITHOUT dying if it is
@@ -273,7 +273,7 @@ tt683_open_toprocess_tab() {
 
 # tt683_select_week <label> — click a week in the picker of the open tab.
 tt683_select_week() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok
   sleep 4
 }
 
@@ -335,10 +335,10 @@ tt683_process_one() {
   local skip="${1:-0}" label i owned
   owned="$(_tt683_owned_js)"
 
-  label=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return ''; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+  label=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return ''; const bs=[...g.querySelectorAll('$TT_HR_BTN_PROCESS')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('$TT_HR_BTN_PROCESS').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   [ -n "$label" ] || return 1
 
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('.mx-name-btnProcess')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('.mx-name-btnProcess').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('$TT_HR_BTN_PROCESS')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('$TT_HR_BTN_PROCESS').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
   sleep 4
 
   # Main.AssignmentEntry_Process opens with a footer 'Process' button whose widget
@@ -388,7 +388,7 @@ tt683_process_all_toprocess() {
   local max="${1:-6}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0
   tt_login "e2e_hr" "$TT683_TAB_TOPROCESS"
   tt_click_text "$TT683_TAB_TOPROCESS" "HR To Process tab"
-  tt_wait_for ".mx-name-galTabAvailableWeeks" "To Process available-weeks list"
+  tt_wait_for "$TT_HR_GAL_WEEKS" "To Process available-weeks list"
 
   labels="$(tt683_toprocess_weeks)"
   [ -n "$labels" ] || return 0

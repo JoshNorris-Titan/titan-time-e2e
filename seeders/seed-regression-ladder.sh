@@ -515,7 +515,7 @@ _card_js() {
 wait_entries() {
   local i
   for i in $(seq 1 12); do
-    [ "$(pw "() => { const g=document.querySelector('.mx-name-galTabEntries'); return String(!!g && (g.innerText||'').trim().length > 10); }")" = "true" ] && return 0
+    [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return String(!!g && (g.innerText||'').trim().length > 10); }")" = "true" ] && return 0
     sleep 2
   done
   return 1
@@ -524,23 +524,27 @@ wait_entries() {
 select_week() {
   local i
   for i in 1 2 3; do
-    [ "$(pw "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'Y';} return 'N'; }")" = "Y" ] && { sleep 3; wait_entries || true; return 0; }
+    [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'Y';} return 'N'; }")" = "Y" ] && { sleep 3; wait_entries || true; return 0; }
     sleep 2
   done
   return 1
 }
 
-# owned_with <btn-name> — owned cards still exposing the control. <btn-name> is the BARE
-# widget name; the "mx-name-" prefix is added HERE.
+# owned_with <btn-selector> — owned cards still exposing the control.
 #
-# THE PREFIX IS NOT COSMETIC. Passing it through unprefixed makes every selector
-# '.btnApprove', which matches nothing, so every count is 0 and every stage cheerfully
-# reports "approved 0" while the tab is visibly full of approvable cards. That is exactly
-# how an entire HR pass silently did nothing.
+# TAKES A FULL SELECTOR, not a bare widget name. It used to take the bare name and add
+# the "mx-name-" prefix here, which stopped working when the TT-724 phase 4 fold gave
+# each HR tab its own copy of every button: there is no single name to prefix any more.
+# Pass TT_HR_BTN_APPROVE / TT_HR_BTN_PROCESS / TT_HR_BTN_REJECT.
+#
+# THE PREFIX WAS NOT COSMETIC, and neither is this. An unprefixed or misspelled selector
+# matches nothing, so every count is 0 and every stage cheerfully reports "approved 0"
+# while the tab is visibly full of approvable cards. That is exactly how an entire HR
+# pass silently did nothing.
 owned_with() {
   local c try
   for try in 1 2 3; do
-    c="$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'NOGAL'; let n=0; for(const b of [...g.querySelectorAll('.mx-name-$1')]){ if(card(b)) n++; } return String(n); }")"
+    c="$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'NOGAL'; let n=0; for(const b of [...g.querySelectorAll('$1')]){ if(card(b)) n++; } return String(n); }")"
     case "$c" in NOGAL|''|*[!0-9]*) wait_entries || true ;; *) echo "$c"; return 0 ;; esac
   done
   echo 0
@@ -563,7 +567,7 @@ confirm_dialog() {
   return 0
 }
 
-# act_on_week <btn-name> <confirm-regex> — click the control on every owned card, one at
+# act_on_week <btn-selector> <confirm-regex> — click the control on every owned card, one at
 # a time, requiring the owned count to DROP before continuing. A decreasing count cannot
 # be faked by a click that did nothing, which a text match can.
 act_on_week() {
@@ -571,7 +575,7 @@ act_on_week() {
   while [ "$n" -lt 30 ]; do
     before="$(owned_with "$btn")"
     [ "$before" = "0" ] && break
-    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('.mx-name-$btn')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
+    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$btn')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
     sleep 2
     confirm_dialog "$re"
     sleep 2
@@ -586,7 +590,7 @@ act_on_week() {
     if [ "$after" -lt "$before" ] 2>/dev/null; then
       n=$((n + 1))
     else
-      log "      !! a card did not leave after .mx-name-$btn ($before still owned) — moving on"
+      log "      !! a card did not leave after $btn ($before still owned) — moving on"
       break
     fi
   done
@@ -598,9 +602,9 @@ act_on_week() {
 reject_owned() {
   local n=0 before after i
   while [ "$n" -lt 30 ]; do
-    before="$(owned_with btnReject)"
+    before="$(owned_with "$TT_HR_BTN_REJECT")"
     [ "$before" = "0" ] && break
-    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('.mx-name-btnReject')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
+    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$TT_HR_BTN_REJECT')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
     sleep 3
     pw "() => { const vis=[...document.querySelectorAll('.mx-window-content,.mx-dialog-content,.modal-content,[role=dialog]')].filter(d=>d.offsetParent!==null); const scope=vis.length? vis[vis.length-1] : document; const f=[...scope.querySelectorAll('textarea,input[type=text]')].filter(e=>e.offsetParent!==null && !e.disabled && !e.readOnly)[0]; if(!f) return 'NOFIELD'; const set=Object.getOwnPropertyDescriptor(f.constructor.prototype,'value').set; set.call(f,'Seeded rejection for regression testing'); f.dispatchEvent(new Event('input',{bubbles:true})); f.dispatchEvent(new Event('change',{bubbles:true})); f.blur(); return 'TYPED'; }" >/dev/null
     sleep 2
@@ -609,7 +613,7 @@ reject_owned() {
     seed_force_clear >/dev/null 2>&1 || true
     after="$before"
     for i in $(seq 1 10); do
-      after="$(owned_with btnReject)"
+      after="$(owned_with "$TT_HR_BTN_REJECT")"
       [ "$after" -lt "$before" ] 2>/dev/null && break
       sleep 2
     done
@@ -627,13 +631,13 @@ hr_drive_week() {
   case "$stage" in
     export|process|approve_all|approve_mgr|reject)
       if seed_click_tab "MANAGER APPROVAL" && select_week "$label"; then
-        got="$(act_on_week btnApprove '^approve$')"; log "    MANAGER APPROVAL: approved $got"
+        got="$(act_on_week "$TT_HR_BTN_APPROVE" '^approve$')"; log "    MANAGER APPROVAL: approved $got"
       else log "    MANAGER APPROVAL: '$label' not offered"; fi ;;
   esac
   case "$stage" in
     export|process|approve_all|reject)
       if seed_click_tab "CLIENT APPROVAL" && select_week "$label"; then
-        got="$(act_on_week btnApprove '^approve$')"; log "    CLIENT APPROVAL: approved $got"
+        got="$(act_on_week "$TT_HR_BTN_APPROVE" '^approve$')"; log "    CLIENT APPROVAL: approved $got"
       else log "    CLIENT APPROVAL: '$label' not offered"; fi ;;
   esac
   case "$stage" in
@@ -643,7 +647,7 @@ hr_drive_week() {
       else log "    WEEKLY TO PROCESS: '$label' not offered"; fi ;;
     process|export)
       if seed_click_tab "WEEKLY TO PROCESS" && select_week "$label"; then
-        got="$(act_on_week btnProcess '^(process|view & process|yes|confirm|ok|approve)$')"
+        got="$(act_on_week "$TT_HR_BTN_PROCESS" '^(process|view & process|yes|confirm|ok|approve)$')"
         log "    WEEKLY TO PROCESS: processed $got"
       else log "    WEEKLY TO PROCESS: '$label' not offered"; fi ;;
   esac

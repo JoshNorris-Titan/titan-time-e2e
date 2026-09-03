@@ -109,7 +109,7 @@ fi
 
 # ------------------------------------------------------------------ 3) assert
 [ "$N" -ge 1 ] \
-  || tt_fail "nothing reached AwaitingExport — the export tests have no data to work on. Check that '$CONSULTANT' has assignments on ${SEED_PROJECTS}, that HR can approve them, and that the To Process cards expose a 'View & Process' button (Main.SNIP_HRDashboardTab btnProcess)."
+  || tt_fail "nothing reached AwaitingExport — the export tests have no data to work on. Check that '$CONSULTANT' has assignments on ${SEED_PROJECTS}, that HR can approve them, and that the To Process cards expose a 'View & Process' button (Main.HRDashboard btnProcessEntry)."
 
 [ "$N" -ge 2 ] \
   || tt_fail "only $N consultant/project pairing reached AwaitingExport, so verify-tt683-a1 cannot prove the SPLIT — it would pass having only shown that an export produces a ZIP. Assign '$CONSULTANT' to at least two projects (an Assignment IS the consultant+project pairing), or set TT683_SEED_PROJECTS to two projects they are on."

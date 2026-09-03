@@ -181,7 +181,7 @@ SEEN="$(cw_wait_dialog)"
 # to the two-popup chain has to be caught here or not at all.
 case "$SEEN" in
   *"Are you Sure"*)
-    tt_fail "Submit on '$WEEK' opened the old 'Are you Sure?' popup instead of the warning. Main.SNIP_Timesheet's btnSubmit should call Main.ACT_Timesheet_Submit_Start, which evaluates the warnings and opens ONE popup - it should never show Main.Confirmation_timesheet. Dialog read: \"$SEEN\"" ;;
+    tt_fail "Submit on '$WEEK' opened the old 'Are you Sure?' popup instead of the warning. Main.ConsultantDashboard's btnSubmit should call Main.ACT_Timesheet_Submit_Start, which evaluates the warnings and opens ONE popup - it should never show Main.Confirmation_timesheet. Dialog read: \"$SEEN\"" ;;
 esac
 
 printf '%s' "$SEEN" | grep -Fq -- "$WARNING" \
