@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# playwright-cli — PROFILING SHIM. Not the real thing.
+#
+# WHY THIS EXISTS. Almost all of this suite's wall clock is `node` process startup,
+# not the app: measured against about:blank on a 12-core host, a `playwright-cli
+# eval "() => 1+1"` costs ~1.2s and a `click` ~1.5s with zero app work involved.
+# Against Mendix Cloud dev from a GitHub runner the same call is ~2.6s. The suite
+# makes on the order of 1,600 of them per full run, so roughly 70 of the 89 minutes
+# is process startup. That number is DERIVED, though - inferred from static call
+# sites and the measured per-call floor. This shim replaces it with a measurement.
+#
+# WHY A PATH SHIM AND NOT A pw() WRAPPER IN lib/. Two reasons, both about trusting
+# the baseline:
+#
+#   1. COVERAGE. There are 559 `playwright-cli` call sites across lib/, suites/ and
+#      seeders/, many inside loops. A wrapper only measures the sites converted to
+#      call it, so a partial rollout produces a baseline that undercounts by an
+#      unknown amount - which is exactly the error this is meant to eliminate.
+#      A shim on PATH sees every call, including ones nobody remembered.
+#
+#   2. STDOUT IS LOAD-BEARING. Every `eval` call site parses the response BY LINE
+#      NUMBER (`_tt_eval_str` reads line 2). A wrapper that ever wrote a byte to
+#      stdout - a stray echo, a debug line - would silently shift that line and
+#      corrupt reads across the whole suite. This shim writes only to the trace
+#      file, and passes the child's stdout, stderr, stdin and exit code straight
+#      through untouched.
+#
+# ENABLE IT (never on by default):
+#   source tools/pw-trace/enable.sh
+#   ./run-tests.sh --base-url ...
+#   tools/pw-trace/report.sh
+#
+# HARD-FAILS RATHER THAN GUESSING. If TT_PW_REAL is not set, this exits non-zero
+# instead of trying to find the real binary on PATH. It cannot search PATH safely -
+# it IS on PATH, under the real binary's name, so a naive lookup finds itself and
+# forks until the machine gives up. And a profiler that quietly declines to profile
+# is worse than one that breaks: it yields a clean-looking baseline that is simply
+# wrong, and every later "we saved N%" is measured against it.
+set -uo pipefail
+
+if [ -z "${TT_PW_REAL:-}" ]; then
+  echo "pw-trace shim: TT_PW_REAL is not set - refusing to run." >&2
+  echo "  This directory is on PATH ahead of the real playwright-cli, so without" >&2
+  echo "  TT_PW_REAL the shim cannot find the real binary without recursing." >&2
+  echo "  Run:  source tools/pw-trace/enable.sh" >&2
+  exit 127
+fi
+
+TRACE="${TT_PW_TRACE_FILE:-}"
+
+# The subcommand is the first argument that is not an option. It is usually $1,
+# because the suite calls playwright-cli bare - but not always: the runner's own
+# failure screenshot and anything using a named session pass `-s=<name>` first, and
+# labelling every one of those calls "-s=whatever" would put them all in one
+# meaningless bucket in the report. Sharding the suite across sessions later would
+# make that bucket the entire trace.
+pwt_sub="?"
+for pwt_a in "$@"; do
+  case "$pwt_a" in
+    -*) ;;
+    *)  pwt_sub="$pwt_a"; break ;;
+  esac
+done
+
+# EPOCHREALTIME is a bash 5 builtin - free, unlike $(date), which would add two
+# forks to every single traced call and inflate the very thing being measured.
+# The decimal separator is LOCALE-DEPENDENT (a comma under e.g. de_DE), so strip
+# either character rather than assuming a dot; the result is microseconds.
+t0="${EPOCHREALTIME/[.,]/}"
+
+"$TT_PW_REAL" "$@"
+rc=$?
+
+if [ -n "$TRACE" ]; then
+  t1="${EPOCHREALTIME/[.,]/}"
+  # One printf under O_APPEND. Writes this short are not interleaved by the kernel,
+  # which matters because the suite may one day run several sessions at once.
+  printf '%s|%s|%s|%s\n' \
+    "${TT_PW_SPEC:-?}" "$pwt_sub" "$(( (t1 - t0) / 1000 ))" "$rc" >> "$TRACE" 2>/dev/null || true
+fi
+
+exit $rc

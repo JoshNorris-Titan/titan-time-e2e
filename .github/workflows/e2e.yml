@@ -18,6 +18,16 @@ on:
         description: "App origin to test against (blank = the TT_BASE_URL secret)"
         required: false
         type: string
+      trace:
+        description: "Profile playwright-cli process cost (tools/pw-trace)"
+        required: false
+        default: false
+        type: boolean
+      no_fail_fast:
+        description: "Run every step even after a failure (KEEPS WRITING - read the note in run-tests.sh)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "0 7 * * *"   # 02:00 CDT (roughly Mar-Nov)
     - cron: "0 8 * * *"   # 02:00 CST (roughly Nov-Mar)
@@ -138,7 +148,51 @@ jobs:
           # step log is the only thing anyone actually looks at. Worse, the file
           # is written only after the whole loop, so the one run where it would
           # have paid off - a timeout - produced no file at all.
-          ./run-tests.sh --skip-file ci-skip.txt
+          # Profiling is opt-in per dispatch and off for the nightly. It must be
+          # SOURCED, not run: it works by putting tools/pw-trace on PATH ahead of
+          # the real playwright-cli, and a child process cannot change our PATH.
+          if [ "${{ inputs.trace }}" = "true" ]; then
+            source tools/pw-trace/enable.sh "$PWD/pw-trace.log"
+          fi
+
+          # GitHub runs `run:` blocks under `bash -e`, so a failing suite would
+          # abort the step here and the report below would never print - on
+          # exactly the runs where it is most useful. Hold the exit code instead
+          # and re-raise it after reporting.
+          # Fail-fast is right for a normal run and wrong for a profiling one: the
+          # first failure aborts the tail, so a trace taken while the suite is red
+          # covers only the steps before it. On 2026-09-03 that was 34 of 77, none
+          # of them the ones being optimised.
+          #
+          # It stays OPT-IN because the cost is real - run-tests.sh's own note says
+          # it plainly: a run that keeps going keeps WRITING, against a state nobody
+          # designed. Teardown still runs either way.
+          FF=""
+          if [ "${{ inputs.no_fail_fast }}" = "true" ]; then
+            FF="--no-fail-fast"
+            echo "NOTE: fail-fast disabled - later steps run against post-failure state."
+          fi
+
+          rc=0
+          ./run-tests.sh --skip-file ci-skip.txt $FF || rc=$?
+
+          if [ -s "${TT_PW_TRACE_FILE:-}" ]; then
+            echo
+            echo "================ playwright-cli process cost ================"
+            tools/pw-trace/report.sh "$TT_PW_TRACE_FILE" || true
+          fi
+          exit $rc
+
+      # The raw trace, for diffing one run against another. The report above is
+      # in the step log, but comparing two runs needs the lines themselves.
+      - name: Upload pw-trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-pw-trace
+          path: pw-trace.log
+          if-no-files-found: ignore
+          retention-days: 30
 
       # Screenshots only, and `ignore` rather than `warn`: a green run has no
       # screenshots by definition, so warning about it is noise on exactly the
