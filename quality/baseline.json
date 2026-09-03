@@ -13,7 +13,7 @@
     "warnings:CW0040": 2,
     "warnings:CW0094": 7
   },
-  "suppressed": 79,
+  "suppressed": 85,
   "totals": {
     "best-practice": 26,
     "deprecations": 7,

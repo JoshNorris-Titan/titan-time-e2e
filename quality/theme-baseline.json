@@ -1,0 +1,19 @@
+{
+  "total": 170,
+  "counts": {
+    "_ConsultantDashboard.scss|no-duplicate-selectors": 6,
+    "_avatar.scss|declaration-no-important": 1,
+    "_badge.scss|no-duplicate-selectors": 1,
+    "_buttons.scss|declaration-no-important": 38,
+    "_buttons.scss|no-duplicate-selectors": 2,
+    "_demo-user-switcher.scss|length-zero-no-unit": 1,
+    "_demo-user-switcher.scss|shorthand-property-no-redundant-values": 1,
+    "_input.scss|length-zero-no-unit": 1,
+    "_legacy-rules.scss|declaration-no-important": 51,
+    "_legacy-rules.scss|no-duplicate-selectors": 54,
+    "_navigation-bar.scss|declaration-no-important": 1,
+    "_responsive.scss|declaration-no-important": 1,
+    "custom.scss|declaration-no-important": 8,
+    "custom.scss|no-duplicate-selectors": 4
+  }
+}

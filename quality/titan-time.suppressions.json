@@ -9,24 +9,6 @@
     },
     {
       "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
-      "documentId": "0aba7754-2e7a-4597-8e2e-af0043d57645",
-      "errorCode": "CW0055",
-      "_note": "Review_TimesheetAttachment - 1 inert action buttons used as field labels above their value"
-    },
-    {
-      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
-      "documentId": "ba770f16-58aa-4544-8758-7ba96b0a65aa",
-      "errorCode": "CW0055",
-      "_note": "Snip_AssignmentEntry_ExpenseAttachment - 1 inert action buttons used as field labels above their value"
-    },
-    {
-      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
-      "documentId": "0230f45e-7da0-4564-a71e-2c9c23f1119e",
-      "errorCode": "CW0055",
-      "_note": "Snip_AssignmentEntry_Header - 6 inert action buttons used as field labels above their value"
-    },
-    {
-      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
       "documentId": "b28df461-9cdb-46ab-99f0-01332a664383",
       "errorCode": "CW0094",
       "_note": "Main.WFA_ManagerOrHR - the Workflow parameter is required by the workflow engine for this slot; it cannot be removed"
@@ -36,6 +18,30 @@
       "documentId": "efc4dcff-76ca-4801-a520-6914925c591b",
       "errorCode": "CW0094",
       "_note": "Core.WFA_TargetAccount - the Workflow parameter is required by the workflow engine for this slot; it cannot be removed"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "56dab889-a403-4465-9730-a63e04a2e06a",
+      "errorCode": "CW0055",
+      "_note": "AssignmentEntry_Details - 2 inert action buttons used as field labels above their value (actionButton2/3) - inherited from the folded snippets Review_TimesheetAttachment and Snip_AssignmentEntry_ExpenseAttachment (TT-724 ph3, 2026-09-02)"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "edea24aa-1af5-4b03-bb6b-0c16997a9eaf",
+      "errorCode": "CW0055",
+      "_note": "ReviewTimesheetEntry - 2 inert action buttons used as field labels above their value (actionButton1/2) - inherited from the folded snippets Review_TimesheetAttachment and Snip_AssignmentEntry_ExpenseAttachment (TT-724 ph3, 2026-09-02)"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "86b9f09d-e105-4524-9aa0-1969ae087db8",
+      "errorCode": "CW0055",
+      "_note": "Customer_ReviewTimesheetEntry - 2 inert action buttons used as field labels above their value (actionButton1/2) - inherited from the folded snippets Review_TimesheetAttachment and Snip_AssignmentEntry_ExpenseAttachment (TT-724 ph3, 2026-09-02)"
+    },
+    {
+      "moduleId": "16747dc6-b6b7-42ae-aabf-255dca2aeeaf",
+      "documentId": "0dc7bad0-0e3c-45b5-b9fb-77615c3b7a56",
+      "errorCode": "CW0055",
+      "_note": "AssignmentEntry_Process - 8 inert action buttons used as field labels above their value - 2 inherited from Review_TimesheetAttachment and Snip_AssignmentEntry_ExpenseAttachment (TT-724 ph3), plus 6 inherited from Snip_AssignmentEntry_Header, folded in an earlier phase whose suppression was never re-homed either"
     }
   ],
   "suppressAppStoreWarnings": true,
