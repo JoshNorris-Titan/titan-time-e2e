@@ -27,11 +27,6 @@
 # locally instead - it is fast and needs nothing deployed.
 verify-scheduled-event-config.test.sh
 
-# Forgot password was REMOVED from the login page for now (2026-08-31), so
-# btnForgotPassword no longer exists and every case in this test fails. Skipped
-# rather than deleted - restore this line when the feature comes back.
-verify-forgot-password-link.test.sh
-
 # verify-mirrored-regions runs the comparator that lives in the MODEL repo
 # (tools/check_mirrors.py), which is not checked out beside this one in CI. Same
 # shape as verify-scheduled-event-config above. The test deliberately fails rather

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tier 0 smoke test (anonymous, NON-DESTRUCTIVE) — the "Forgot password?" link.
 #
-# WHAT THIS COVERS. The self-service password reset added on 2026-08-26:
-# btnForgotPassword on Core.Login calls Core.ACT_Password_Forgot with the login
-# form's LoginHelper. This drives the two paths that change nobody's password:
+# WHAT THIS COVERS. The self-service password reset, rebuilt on 2026-09-02 by
+# TT-731: btnForgotPassword on Core.Login calls Core.ACT_Password_Forgot_Request
+# with the login form's LoginHelper. This drives the request half of the flow:
 #
 #   1. the control is present and reachable WITHOUT a session;
 #   2. clicking it with an empty username gives field-level validation and does
@@ -12,20 +12,25 @@
 #      confirmation does not echo the submitted identifier back.
 #
 # WHY 3 IS THE POINT. Core.Login is the anonymous home page, so this form is
-# reachable by anyone on the internet. ACT_Password_Forgot deliberately shows the
+# reachable by anyone on the internet. The request flow deliberately shows the
 # SAME message whether or not an account matched — otherwise the form becomes a
 # username-and-email oracle: submit an address, read the response, learn whether
 # that person has an account. The flow being silent about misses is the security
 # property, and it is the one a well-meaning "helpful error message" change would
 # quietly remove.
 #
-# WHAT THIS DOES NOT COVER, deliberately. The found-account path — password
-# replaced, ForceReset flagged, mail queued. Proving that end to end through the
-# UI requires resetting a real account's password, which would break every later
-# test in the run (they all sign in with TT_ROLE_PASS) and cannot be undone,
-# because the new password only exists in an email this suite cannot read. That
-# half is covered by the unit tests in Core's "995. Unit Tests/Password", which
-# roll back. See also verify-email-templates-present, which proves the
+# WHAT THIS DOES NOT COVER. The redeem half — opening the emailed link, setting a
+# new password, and the link then being refused a second time. That needs the
+# token, which only exists in an email this suite cannot read.
+#
+# NOTE THE REASON CHANGED WITH TT-731. This used to say the found-account path was
+# untestable because requesting a reset REPLACED a real account's password, which
+# would break every later test in the run (they all sign in with TT_ROLE_PASS) and
+# could not be undone. That is no longer true: a request now only mints a token and
+# changes no password, so submitting a KNOWN identifier here is safe. It is still
+# not asserted, because what the request produces is an email; a fixture account
+# plus a way to read the token would close it. See the unit tests in Core's
+# "995. Unit Tests/Password", and verify-email-templates-present, which proves the
 # ForgotPassword template row exists so the send is not skipped silently.
 #
 # No login, no writes, nothing to clean up.
@@ -45,10 +50,11 @@ BASE="${TT_BASE_URL:-http://localhost:8080}"
 # half of the flow's "Name or Email" lookup rather than only the username half.
 UNKNOWN="ut-nobody-9f83ka@titan.test"
 
-# A distinctive fragment of the confirmation ACT_Password_Forgot shows. Matching a
+# A distinctive fragment of the confirmation the request flow shows. Matching a
 # fragment rather than the whole sentence means rewording the middle of the message
-# does not fail the test, but removing it entirely does.
-CONFIRM_RE="temporary password has been sent"
+# does not fail the test, but removing it entirely does. TT-731 changed this from
+# "temporary password has been sent" — the email now carries a link, not a password.
+CONFIRM_RE="reset link has been sent"
 
 # ------------------------------------------------------------------- helpers
 
@@ -113,7 +119,7 @@ fi
 
 # The important half: it must not ALSO claim to have sent something.
 if [ "$(fp_body_matches "$CONFIRM_RE")" = "true" ]; then
-  tt_fail "an empty username produced the 'temporary password has been sent' confirmation. The flow is reporting a send it cannot have made."
+  tt_fail "an empty username produced the 'reset link has been sent' confirmation. The flow is reporting a send it cannot have made."
 fi
 
 echo "  empty username -> field validation, and no false claim of a send"
@@ -136,7 +142,7 @@ fi
 # And the confirmation must not hand the submitted value back. Echoing it is not
 # an oracle by itself, but it is how one creeps in - the next step from echoing
 # the input is qualifying it.
-echoed="$(playwright-cli eval "() => { const all=[...document.querySelectorAll('div,p,span')].filter(e => /temporary password/i.test(e.innerText||'')); const el=all[all.length-1]; if(!el) return 'nomessage'; return (el.innerText||'').indexOf('$UNKNOWN') >= 0 ? 'echoed' : 'clean'; }" 2>/dev/null | _tt_eval_str)"
+echoed="$(playwright-cli eval "() => { const all=[...document.querySelectorAll('div,p,span')].filter(e => /reset link/i.test(e.innerText||'')); const el=all[all.length-1]; if(!el) return 'nomessage'; return (el.innerText||'').indexOf('$UNKNOWN') >= 0 ? 'echoed' : 'clean'; }" 2>/dev/null | _tt_eval_str)"
 
 case "$echoed" in
   clean) ;;
