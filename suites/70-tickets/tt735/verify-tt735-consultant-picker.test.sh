@@ -7,7 +7,17 @@
 # row: HR got an unlabelled-looking dropdown in effectively arbitrary order.
 #
 # THE FIX. Label "Consultant", placeholder "Select Consultant", sorted on
-# Administration.Account.FullName ASCENDING, and constrained to [Active].
+# Administration.Account.FullName ASCENDING.
+#
+# TT-735 also added an [Active] XPath constraint to the picker's source, to keep
+# deactivated people out of the list. That was REMOVED on 2026-09-03, and this test is
+# what caught it. Active is System.User.Active, an inherited member; Main.HR is the only
+# role allowed on Main.CreateTimesheet and cannot read it; and Mendix returns zero rows
+# for an XPath constraint on a member the current user cannot read -- silently, HTTP 200
+# with an empty object list and nothing in the runtime log. HR saw "no options" and could
+# not create a timesheet for anybody. Do not reinstate that constraint, and do not add one
+# on any other inherited System.User member (Active, Blocked, Name). See the Documentation
+# on Main.CreateTimesheet for the full account.
 #
 # WHAT THIS ASSERTS
 #   1. The picker renders and its own text says "Consultant", not "Account". Both the
@@ -26,9 +36,11 @@
 # still come back looking ordered on a small enough account list. The same caveat applies
 # to the TT-667 test this is modelled on. It is a real check, not a complete one.
 #
-# NOT ASSERTED: the [Active] constraint. Proving it needs a deactivated account to exist,
-# and the 00-setup fixtures do not create one — inventing a deactivated account here would
-# write user data the bookend clear does not know how to undo.
+# NOT ASSERTED: that the source stays unconstrained. This checks the OUTCOME -- at least
+# two options, in order -- not the widget's configuration, so a constraint that still
+# leaves two or more accounts visible to HR would slip past. That is the right trade:
+# the failure mode worth guarding is the one that actually happened, a picker emptied to
+# zero, and this catches that on the option count.
 #
 # Read-only: opens the dropdown, dismisses it, submits nothing.
 # Env: TT_BASE_URL, TT_ROLE_PASS.

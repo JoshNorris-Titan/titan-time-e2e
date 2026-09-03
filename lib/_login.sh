@@ -987,15 +987,46 @@ tt_gallery_titles() {
 # items in ascending (case-insensitive) order, then clicks <dismiss-css> — a neutral
 # field on the same form — to close the dropdown WITHOUT closing the popup.
 # (Escape closes the whole popup, so we never use it.)
+#
+# THE TWO FAILURE MODES ARE REPORTED SEPARATELY, deliberately. This used to emit one
+# message for both -- "not sorted ascending (or fewer than 2 options)" -- and on
+# 2026-09-03 a completely EMPTY picker was reported as a sorting regression: the
+# Create Timesheet consultant picker (cbCreateForAccount) had an [Active] XPath
+# constraint that returned zero rows for the HR role, because Active is an inherited
+# System.User member HR cannot read and Mendix silently returns nothing for a
+# constraint on an unreadable member. Fifteen seconds of triage went to the sort.
+# The two causes have nothing in common: an empty list is a data-source, XPath or
+# entity-access problem, and a full list in the wrong order is a sort-key problem.
+# Say which one it is.
+#
+# The eval result is read from line 2 via _tt_eval_str, never grepped out of the whole
+# output: playwright-cli echoes the SOURCE it ran, so a grep for a literal appearing in
+# the snippet matches that echo rather than the return value, and passes no matter what
+# actually happened.
 tt_combobox_sorted() {
-  local cb="$1" dismiss="$2" label="$3"
+  local cb="$1" dismiss="$2" label="$3" r n ordered rendered
   playwright-cli click "$cb" >/dev/null 2>&1
   sleep 1
-  if ! playwright-cli eval "() => { const o=[...document.querySelectorAll('[role=option]')].map(e=>e.innerText.trim()).filter(Boolean); const sorted=o.every((n,i)=>i===0||o[i-1].toLowerCase().localeCompare(n.toLowerCase())<=0); return String(o.length>=2 && sorted); }" 2>/dev/null | grep -qiw true; then
-    playwright-cli click "$dismiss" >/dev/null 2>&1
-    tt_fail "$label: dropdown options are not sorted ascending (or fewer than 2 options)"
-  fi
+  # "<count>|<true|false>|<the options, comma separated>"
+  r="$(playwright-cli eval "() => { const o=[...document.querySelectorAll('[role=option]')].map(e=>e.innerText.trim()).filter(Boolean); const s=o.every((n,i)=>i===0||o[i-1].toLowerCase().localeCompare(n.toLowerCase())<=0); return o.length + '|' + s + '|' + o.join(', '); }" 2>/dev/null | _tt_eval_str)"
   playwright-cli click "$dismiss" >/dev/null 2>&1
+
+  n="${r%%|*}"
+  ordered="${r#*|}"; ordered="${ordered%%|*}"
+  rendered="${r#*|*|}"
+
+  case "$n" in
+    ''|*[!0-9]*)
+      tt_fail "$label: could not read the dropdown's options at all -- the eval returned '$r'. The combobox probably never opened." ;;
+  esac
+
+  if [ "$n" -lt 2 ]; then
+    tt_fail "$label: the dropdown rendered $n option(s), expected at least 2 -- it came back empty or near-empty. This is NOT an ordering problem. Check the data source's XPath constraint, and whether the role this test logs in as can READ every attribute that constraint names: a constraint on an unreadable member returns zero rows with no error. Rendered: ${rendered:-(nothing)}"
+  fi
+
+  if [ "$ordered" != "true" ]; then
+    tt_fail "$label: dropdown options are not in ascending order. Rendered: $rendered"
+  fi
   sleep 1
 }
 
