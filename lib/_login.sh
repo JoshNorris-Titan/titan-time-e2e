@@ -50,13 +50,23 @@ TT_PASS="${TT_ROLE_PASS:-E2ETest123!}"
 # always page-level rather than snippet-level, so their names did not change and
 # the old `galTabEntries` never matched them either: Invoice has galInvoiceEntries
 # / galAvailableMonths / btnInvoiceView / btnInvoiceReject / btnExportAll, and
-# Pending has galPending / galAvailableWeeks / cbWeekConsultant / btnRemind.
+# Pending has galPending / galAvailableWeeks / cbWeekConsultant /
+# btnSubmitZeroHours / btnRemind.
 #
 # THAT LAST ONE IS THE TRAP. `.mx-name-btnRemind` still exists — it is the
 # Pending card's "remind this consultant to submit" button, which is a different
 # button from the per-entry Remind that used to share its name. A helper left on
 # the bare name does not error; it silently scans the wrong cards and reports
 # "no pending entry". Use TT_HR_BTN_REMIND.
+#
+# btnSubmitZeroHours (added 2026-09-03) is the Pending card's second button: it
+# closes a consultant's outstanding week at 0 hours. It does NOT act on click —
+# it opens the popup page Main.HR_ConfirmZeroHours, so a spec has to press
+# .mx-name-btnConfirmZeroSubmit (or .mx-name-btnConfirmZeroCancel) afterwards.
+# That is a real page, not an inline confirm dialog, so tt_clear_dialogs will
+# not dismiss it. A row closed this way then renders
+# .mx-name-txtProcessZeroByHR on the To Process card, which is the cheapest
+# thing to assert the close actually happened.
 TT_HR_GAL_ENTRIES='.mx-name-galManagerEntries, .mx-name-galClientEntries, .mx-name-galProcessEntries, .mx-name-galSentEntries'
 TT_HR_GAL_WEEKS='.mx-name-galManagerAvailableWeeks, .mx-name-galClientAvailableWeeks, .mx-name-galProcessAvailableWeeks, .mx-name-galSentAvailableWeeks'
 TT_HR_CB_CONSULTANT='.mx-name-cbManagerConsultant, .mx-name-cbClientConsultant, .mx-name-cbProcessConsultant, .mx-name-cbSentConsultant'
