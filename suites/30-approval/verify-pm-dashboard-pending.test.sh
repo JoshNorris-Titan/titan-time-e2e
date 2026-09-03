@@ -96,8 +96,14 @@ tt_assert_all "PM dashboard: header" "Project Manager Dashboard"
 # Asynchronously loaded like the gallery above, so wait before asserting. Also PAGED
 # (Load more, pageSize 25), so page it in before reading it: an unpaged read answers
 # "is the entry on the first page", not "is it in the queue".
-tt_wait_text "Pending Approval" "pending-approval section on the PM dashboard"
-tt_wait_for ".mx-name-galPMPendingEntries" "PM pending-approval gallery"
+#
+# NOTHING IS ASSERTED ABOUT THE SECTION UNTIL THE QUEUE IS KNOWN NON-EMPTY. Since
+# 2026-09-03 the dashboard hides the whole awaiting-approval component -- heading
+# included -- when the manager has nothing pending. This file used to wait for the
+# "Pending Approval" text and the gallery right here, which meant an empty queue
+# killed the test roughly twenty lines BEFORE the seeding block written to handle
+# exactly that case. The seeding path could never run. Both assertions moved below,
+# where a missing section is genuinely wrong rather than merely early.
 
 PENDING_PROJECT="E2E Manager Approval"
 
@@ -105,13 +111,25 @@ PENDING_PROJECT="E2E Manager Approval"
 # Approve buttons rather than the cards keeps this the same question the assertions
 # below ask.
 pm_pending_count() {
+  # Ask first, and page only when there is something to page. tt_gallery_load_all
+  # on a gallery the app has hidden clicks Load more at nothing, and the count
+  # after it reads an element that is not there.
+  local n
+  n="$(tt_pm_pending_rows)"
+  case "$n" in
+    ERR:*) tt_fail "PM dashboard never rendered while counting the pending queue ($n)" ;;
+    0)     echo 0; return 0 ;;
+  esac
   tt_gallery_load_all ".mx-name-galPMPendingEntries" "PM pending queue" >/dev/null
   playwright-cli eval "() => String(document.querySelectorAll('.mx-name-galPMPendingEntries .mx-name-btnPMApprove').length)" 2>/dev/null | _tt_eval_str
 }
 
 pm_open_dashboard() {
+  # No gallery wait: this runs inside the retry loop below, where the queue is
+  # still empty on every attempt but the last, and an empty queue no longer
+  # renders a gallery to wait for. A hard wait here failed the whole test on the
+  # first poll instead of letting the loop do its job.
   tt_login "e2e_pm" "Project Manager Dashboard"
-  tt_wait_for ".mx-name-galPMPendingEntries" "PM pending-approval gallery"
 }
 
 # Seed one, the same way verify-pm-approve-action does and for the same reason:
@@ -131,6 +149,9 @@ fi
 [ "$(pm_pending_count)" != "0" ] \
   || tt_fail "PM dashboard: the pending-approval queue is empty and seeding a '$PENDING_PROJECT' entry did not fill it. Check HR's MANAGER APPROVAL tab: if that is empty too the entry never routed to the manager stage (a submit/routing problem); if it holds the entry and this gallery does not, Main.DS_ApprovalHelper_PM is not returning it to e2e_pm."
 
+# Safe to assert the section now, and only now: the queue is confirmed non-empty
+# above, so the component the app hides when empty must be on screen.
+tt_wait_text "Pending Approval" "pending-approval section on the PM dashboard"
 tt_assert_all "PM dashboard: pending approval" \
   "Pending Approval" \
   "E2E Consultant"

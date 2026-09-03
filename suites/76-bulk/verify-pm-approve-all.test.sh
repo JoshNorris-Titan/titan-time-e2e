@@ -35,9 +35,13 @@ source "$TT_ROOT/lib/_login.sh"
 
 PM="${TT_PM_USER:-e2e_pm}"
 
-pa_rows() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPMPendingEntries'); if(!g) return 'NOGALLERY'; return String(g.querySelectorAll('.mx-name-btnPMApprove').length); }" 2>/dev/null | _tt_eval_str
-}
+# The success condition of this whole test is an EMPTY queue, and since 2026-09-03
+# the dashboard hides the pending component when the queue is empty. This used to
+# return the literal 'NOGALLERY' in that state, which the numeric guard below then
+# rejected -- so Approve All doing its job perfectly reported as "could not re-count
+# the pending rows". tt_pm_pending_rows reports the hidden-because-empty case as 0,
+# which is what the polling loop is actually waiting for.
+pa_rows() { tt_pm_pending_rows "${1:-12}"; }
 
 # pa_stage_totals — the six HR stage counters as "manager|total". Read from the HR
 # dashboard, which sees the whole pipeline rather than one manager's slice.
@@ -47,11 +51,10 @@ pa_stage_totals() {
 
 # ------------------------------------------------------ A. there is work to do
 tt_login "$PM" "Project Manager Dashboard"
-tt_wait_for ".mx-name-galPMPendingEntries" "PM pending gallery"
 
 before="$(pa_rows)"
 case "$before" in
-  NOGALLERY)   tt_fail "no PM pending gallery on '$PM' dashboard" ;;
+  ERR:*)       tt_fail "'$PM' dashboard never rendered ($before), so there is no queue to read" ;;
   ''|*[!0-9]*) tt_fail "could not count the pending rows (got [$before])" ;;
 esac
 
@@ -73,7 +76,6 @@ esac
 
 # ----------------------------------------------------------- B. press the button
 tt_login "$PM" "Project Manager Dashboard"
-tt_wait_for ".mx-name-galPMPendingEntries" "PM pending gallery"
 
 playwright-cli click ".mx-name-btnPMApproveAll" >/dev/null 2>&1
 tt_clear_dialogs 8 "Approve" \
@@ -90,6 +92,7 @@ for _ in $(seq 1 10); do
 done
 
 case "$after" in
+  ERR:*)       tt_fail "the '$PM' dashboard never rendered while re-counting after Approve All ($after), so the queue could not be read. This is NOT evidence that Approve All failed." ;;
   ''|*[!0-9]*) tt_fail "could not re-count the pending rows after Approve All (got [$after])" ;;
 esac
 

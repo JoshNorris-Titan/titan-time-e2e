@@ -73,12 +73,18 @@ echo "  control: '$PM_A' has $admin entr(ies) awaiting manager approval"
 
 # --------------------------------------------- B. PM B's dashboard is not theirs
 tt_login "$PM_B" "Project Manager Dashboard"
-tt_wait_for ".mx-name-galPMPendingEntries" "PM pending gallery for '$PM_B'"
 
-rows="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPMPendingEntries'); if(!g) return 'NOGALLERY'; return String(g.querySelectorAll('.mx-name-btnPMApprove').length); }" 2>/dev/null | _tt_eval_str)"
+# '$PM_B' manages no projects, so its queue is empty BY DESIGN -- which is exactly
+# the state the dashboard stopped rendering a gallery for on 2026-09-03. This used
+# to wait for .mx-name-galPMPendingEntries and then treat its absence as a failure,
+# so the correct empty state timed out and took the rest of the CI run with it.
+# tt_pm_pending_rows reports an absent gallery on a loaded dashboard as 0, and only
+# says ERR when the dashboard itself never arrived -- the one case where a zero here
+# would be meaningless.
+rows="$(tt_pm_pending_rows)"
 
 case "$rows" in
-  NOGALLERY)   tt_fail "'$PM_B' has no pending gallery at all, so the dashboard could not be checked" ;;
+  ERR:*)       tt_fail "'$PM_B' dashboard never rendered ($rows), so step B could not be checked. A zero would not have meant anything, so this step will not report one." ;;
   ''|*[!0-9]*) tt_fail "could not count '$PM_B' pending rows (got [$rows])" ;;
 esac
 
