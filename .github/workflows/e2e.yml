@@ -87,8 +87,18 @@ jobs:
     # killed 33s into verify-hr-reject-after-export with seven scripts still to
     # go - including the teardown that clears the test data. An all-green run is
     # the SLOWEST possible run, so the budget has to cover that, not the runs
-    # that got cut short. 150 leaves real headroom over today's ~90.
-    timeout-minutes: 150
+    # that got cut short. 150 left real headroom over that ~90.
+    #
+    # Raised to 210 for the Dev Review coverage wave (TT-721/729/732/735/737 and
+    # the TT-738 queue-drain check still to come). Those add roughly 40 minutes,
+    # most of it one deliberate wait: proving the 2-minute email queue actually
+    # drains costs ~12 minutes of wall clock on its own and cannot be hurried.
+    # At 150 an all-green run would have sat around 130 with ~13% headroom, and
+    # the failure mode is not a lost minute - it is the run being guillotined
+    # before 99-teardown, which leaves e2e test data on the target environment
+    # for the next run to trip over. 210 restores roughly the headroom ratio 150
+    # gave 89. An unused ceiling costs nothing; billing is actual runtime.
+    timeout-minutes: 210
 
     steps:
       - uses: actions/checkout@v4
