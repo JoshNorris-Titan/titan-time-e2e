@@ -98,31 +98,36 @@ tt_open_testdata_admin() {
 # Matches the row on an EXACT name equality — "E2E Consultant" is a prefix of
 # "E2E Consultant Two", so substring matching would hit the wrong row.
 tt_clear_consultant_testdata() {
-  local who="$1" i
+  local who="$1"
 
   playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-containerConsultantRow')]; for (const r of rows) { const n=r.querySelector('.mx-name-txtConsultantRowName'); const b=r.querySelector('.mx-name-btnClearConsultantTestData'); if (n && b && (n.innerText||'').trim()==='$who') { b.click(); return 'ok'; } } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "no 'Clear' control for consultant '$who' on the Test Data page (is the account missing, or not in the Consultant user role?)"
-  sleep 2
 
+  # No sleep here: tt_wait_for polls for the popup, so a fixed wait before it only
+  # ever delays the common case where the popup is already up.
   tt_wait_for ".mx-name-btnConfirmClearConsultant" "clear-confirm popup for '$who'"
   playwright-cli click ".mx-name-btnConfirmClearConsultant" >/dev/null 2>&1
 
   # The delete walks workflows and file documents, so give it room. The flow ends
   # with `close page` + an Information message naming the consultant.
-  local done=""
-  for i in $(seq 1 45); do
-    if playwright-cli eval "() => String(document.body.innerText.indexOf('Clearing test data is disabled') >= 0)" 2>/dev/null | grep -qiw true; then
+  #
+  # This used to be 45 bash rounds of TWO evals plus `sleep 2` - up to 90 processes
+  # and ~324s of real patience per consultant, despite the failure message below
+  # claiming 90s. Both conditions read the same document.innerText, so they are one
+  # look, not two, and the waiting belongs in the page. Now at most 9 processes.
+  #
+  # Waiting on "cleared OR refused" rather than just "cleared" keeps the fast,
+  # specific failure the two-eval version had: a wrong-environment refusal is
+  # reported as itself instead of as a generic timeout three minutes later.
+  if _tt_poll_in_page "document.body && (document.body.innerText.indexOf('Test data cleared for $who') >= 0 || document.body.innerText.indexOf('Clearing test data is disabled') >= 0)" 45; then
+    if [ "$(playwright-cli eval "() => String(document.body.innerText.indexOf('Clearing test data is disabled') >= 0)" 2>/dev/null | _tt_eval_str)" = "true" ]; then
       tt_fail "clear for '$who' was refused: Core.CONST_IsTestEnv is false in this environment"
     fi
-    if playwright-cli eval "() => String(document.body.innerText.indexOf('Test data cleared for $who') >= 0)" 2>/dev/null | grep -qiw true; then
-      done=1; break
-    fi
-    sleep 2
-  done
-  [ -n "$done" ] || tt_fail "clear for '$who' did not confirm within ~90s (no 'Test data cleared for $who' message)"
+  else
+    tt_fail "clear for '$who' did not confirm within ~180s (no 'Test data cleared for $who' message)"
+  fi
 
   tt_dismiss_dialog
-  sleep 1
   tt_wait_for ".mx-name-lvTestDataConsultants" "Test Data page after clearing '$who'"
 }
 

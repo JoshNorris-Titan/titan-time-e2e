@@ -450,16 +450,70 @@ _tt_eval_str() {
   printf '%b\n' "$raw"
 }
 
-# tt_wait_for <css-selector> [label] — wait up to ~20s for the selector to appear.
+# _tt_poll_in_page <js-condition> <legacy-rounds>
+#
+# Wait for a condition to come true IN THE PAGE. Returns 0 as soon as it does, 1 if
+# the budget runs out. <js-condition> is a JS expression evaluated in the page; it
+# may throw or reference a missing node, which counts as "not yet".
+#
+# WHY THIS EXISTS. A bash polling loop pays a whole process per look. Measured
+# against about:blank with zero app work, one `playwright-cli eval` is ~1,210ms
+# locally and ~2,600ms from a CI runner against cloud dev - so `eval; sleep 1` in a
+# loop costs ~3.6s per iteration and can only ever poll that coarsely. Twenty
+# rounds is 20 processes to answer one question. In-page, the same twenty seconds
+# is ONE process polling every 250ms, so it also notices the condition sooner than
+# a bash loop structurally can. See tools/pw-trace/README.md for the measurements.
+#
+# WHY OUTER ROUNDS SURVIVE AT ALL. A single long in-page wait would be the obvious
+# fold, and it is wrong here: if the page NAVIGATES mid-wait, the execution context
+# is destroyed, the eval rejects, and a wait that would have succeeded against the
+# new document instead fails. The bash loop got navigation resilience for free by
+# re-evaluating each round. So the budget is split into 20-second in-page rounds:
+# a navigation costs the remainder of one round, and the next round runs against the
+# document that replaced it. 20 rounds of bash become at most 4 processes.
+#
+# BUDGET IS PRESERVED IN WALL CLOCK, NOT IN ROUND COUNT. <legacy-rounds> is the
+# bound the bash loop used, and each of those rounds really cost ~3.6s (a call plus
+# its sleep), so `20` meant roughly 72 seconds of patience, not 20. Translating it
+# as 20 seconds would quietly make every caller 3.6x less patient and show up later
+# as flake in unrelated tests. Four seconds per legacy round keeps the original
+# patience with a little margin; being MORE patient is free on a call that passes
+# and only spends time on one that was going to fail anyway.
+#
+# NEVER `grep` THIS. The result comes back through _tt_eval_str (line 2). Piping the
+# raw output to grep would match the echoed snippet - the sentinel below is a
+# literal in the source - and the wait could never fail. That is the trap
+# verify-no-echo-trap.test.sh exists to catch; the sentinels are 'Y'/'N' rather than
+# 'true'/'false' so that even a careless future grep has nothing plausible to hit.
+_tt_poll_in_page() {
+  local cond="$1" legacy="${2:-20}" remaining iters r
+  remaining=$(( legacy * 4 ))
+  [ "$remaining" -ge 1 ] || remaining=1
+
+  # The per-round iteration count is DERIVED from what is left of the budget, not
+  # fixed. A hardcoded 80 (20s) would make the last round overrun, and any caller
+  # passing a small count - tt_wait_text takes one - would wait the full 20s instead
+  # of its own budget. At 250ms a step, 4 iterations is one second.
+  while [ "$remaining" -gt 0 ]; do
+    iters=$(( remaining < 20 ? remaining * 4 : 80 ))
+    remaining=$(( remaining - iters / 4 ))
+    r="$(playwright-cli eval "async () => {
+      const sleep = ms => new Promise(res => setTimeout(res, ms));
+      for (let k = 0; k < $iters; k++) {
+        try { if ($cond) return 'Y'; } catch (e) { /* mid-render or navigating */ }
+        await sleep(250);
+      }
+      return 'N';
+    }" 2>/dev/null | _tt_eval_str)"
+    [ "$r" = "Y" ] && return 0
+  done
+  return 1
+}
+
+# tt_wait_for <css-selector> [label] — wait for the selector to appear.
 tt_wait_for() {
   local sel="$1" label="${2:-$1}"
-  local _
-  for _ in $(seq 1 20); do
-    if playwright-cli eval "() => String(!!document.querySelector('$sel'))" 2>/dev/null | grep -qiw true; then
-      return 0
-    fi
-    sleep 1
-  done
+  _tt_poll_in_page "document.querySelector('$sel')" 20 && return 0
   tt_fail "timed out waiting for: $label"
 }
 
@@ -775,13 +829,12 @@ _tt_login_interactive() {
 # reach for tt_gallery_load_until_text below instead -- a text wait against a paged
 # list fails after the full timeout and reads exactly like slow data.
 tt_wait_text() {
-  local needle="$1" label="${2:-$1}" tries="${3:-20}" i
-  for i in $(seq 1 "$tries"); do
-    if playwright-cli eval "() => String(document.body.innerText.indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
-      return 0
-    fi
-    sleep 1
-  done
+  local needle="$1" label="${2:-$1}" tries="${3:-20}"
+  # document.body can be null for a moment during a navigation, and the guard has
+  # to be inside the condition rather than around it: _tt_poll_in_page treats a
+  # throw as "not yet", so without it a wait spanning a page load would burn its
+  # whole budget on exceptions instead of looking at the new document.
+  _tt_poll_in_page "document.body && document.body.innerText.indexOf('$needle') >= 0" "$tries" && return 0
   tt_fail "timed out waiting for text: $label"
 }
 

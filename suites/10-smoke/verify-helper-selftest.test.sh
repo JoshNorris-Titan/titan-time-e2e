@@ -78,8 +78,50 @@ else
   note "4 tt_fail exits non-zero"
 fi
 
+# ------------------------------------------------------- 5. _tt_poll_in_page
+# The waiting primitive behind tt_wait_for and tt_wait_text, and so behind ~39 call
+# sites. It replaced a bash polling loop with a single in-page async loop, which
+# moved the sentinel INTO the snippet - `return 'Y'` is now a literal in the source
+# playwright-cli echoes back. Decoded through _tt_eval_str that is fine; grepped raw
+# it would match the echo and the wait could never fail, which is precisely the bug
+# tests 2 and 3 above exist for. So assert the property directly, on the primitive.
+#
+# Budgets here are deliberately tiny (1 legacy round = 4s) to keep this cheap: the
+# point is that the two outcomes are reachable, not how patient the default is.
+if _tt_poll_in_page "true" 1; then
+  note "5a _tt_poll_in_page returns success on a condition that is already true"
+else
+  bad "5a _tt_poll_in_page FAILED on a trivially true condition - every tt_wait_* call is now broken"
+fi
+
+# The headline half. If this ever reports success, tt_wait_for and tt_wait_text can
+# no longer fail and every wait in the suite is decoration.
+if _tt_poll_in_page "false" 1; then
+  bad "5b _tt_poll_in_page SUCCEEDED on a condition that is never true - it cannot" \
+      "fail, so tt_wait_for/tt_wait_text are blind (see lib/_login.sh)"
+else
+  note "5b _tt_poll_in_page fails on a condition that never comes true"
+fi
+
+# Returning EARLY is the whole reason for polling in-page rather than sleeping. A
+# version that ignored the condition and always burned its budget would satisfy 5a
+# and 5b both, so check the timing too: true at ~2s must not take the 4s budget.
+playwright-cli eval "() => { window.__ttPollMark = Date.now(); return 'set'; }" >/dev/null 2>&1
+_poll_t0=$(date +%s%N)
+_tt_poll_in_page "window.__ttPollMark && (Date.now() - window.__ttPollMark) > 2000" 1
+_poll_rc=$?
+_poll_ms=$(( ($(date +%s%N) - _poll_t0) / 1000000 ))
+# Upper bound allows one process launch (~1.2s local, ~2.6s from CI) on top of the
+# 2s the condition itself needs; the 4s in-page budget would land well past it.
+if [ "$_poll_rc" -eq 0 ] && [ "$_poll_ms" -ge 2000 ] && [ "$_poll_ms" -lt 8000 ]; then
+  note "5c _tt_poll_in_page returns when the condition comes true (${_poll_ms}ms), not at the budget"
+else
+  bad "5c _tt_poll_in_page rc=$_poll_rc after ${_poll_ms}ms - expected success between 2000 and 8000ms;" \
+      "it is not reacting to the condition"
+fi
+
 # ------------------------------------------------------------------------- cleanup
-playwright-cli eval "() => { const d=document.getElementById('ttSelfTest'); if(d) d.remove(); window.__ttSelfTestClicked=undefined; return 'removed'; }" >/dev/null 2>&1
+playwright-cli eval "() => { const d=document.getElementById('ttSelfTest'); if(d) d.remove(); window.__ttSelfTestClicked=undefined; window.__ttPollMark=undefined; return 'removed'; }" >/dev/null 2>&1
 
 if [ "$fails" -ne 0 ]; then
   echo "FAIL: verify-helper-selftest — $fails helper propert$([ "$fails" -eq 1 ] && echo y || echo ies) not satisfied."
@@ -88,4 +130,4 @@ if [ "$fails" -ne 0 ]; then
   exit 1
 fi
 
-echo "PASS: verify-helper-selftest — decoder, click helper (positive + negative) and tt_fail all behave"
+echo "PASS: verify-helper-selftest — decoder, click helper (positive + negative), tt_fail and the wait primitive all behave"
