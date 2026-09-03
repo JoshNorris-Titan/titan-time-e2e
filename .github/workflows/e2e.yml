@@ -23,6 +23,11 @@ on:
         required: false
         default: false
         type: boolean
+      no_fail_fast:
+        description: "Run every step even after a failure (KEEPS WRITING - read the note in run-tests.sh)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "0 7 * * *"   # 02:00 CDT (roughly Mar-Nov)
     - cron: "0 8 * * *"   # 02:00 CST (roughly Nov-Mar)
@@ -154,8 +159,22 @@ jobs:
           # abort the step here and the report below would never print - on
           # exactly the runs where it is most useful. Hold the exit code instead
           # and re-raise it after reporting.
+          # Fail-fast is right for a normal run and wrong for a profiling one: the
+          # first failure aborts the tail, so a trace taken while the suite is red
+          # covers only the steps before it. On 2026-09-03 that was 34 of 77, none
+          # of them the ones being optimised.
+          #
+          # It stays OPT-IN because the cost is real - run-tests.sh's own note says
+          # it plainly: a run that keeps going keeps WRITING, against a state nobody
+          # designed. Teardown still runs either way.
+          FF=""
+          if [ "${{ inputs.no_fail_fast }}" = "true" ]; then
+            FF="--no-fail-fast"
+            echo "NOTE: fail-fast disabled - later steps run against post-failure state."
+          fi
+
           rc=0
-          ./run-tests.sh --skip-file ci-skip.txt || rc=$?
+          ./run-tests.sh --skip-file ci-skip.txt $FF || rc=$?
 
           if [ -s "${TT_PW_TRACE_FILE:-}" ]; then
             echo
