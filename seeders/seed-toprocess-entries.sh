@@ -312,7 +312,7 @@ kpi() {
 }
 
 tab_weeks() {
-  pw "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }"
+  pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }"
 }
 
 # wait_entries — block until the entries gallery has actually re-rendered.
@@ -325,7 +325,7 @@ tab_weeks() {
 wait_entries() {
   local i
   for i in $(seq 1 15); do
-    [ "$(pw "() => { const g=document.querySelector('.mx-name-galTabEntries'); return String(!!g && (g.innerText||'').trim().length > 10); }")" = "true" ] && return 0
+    [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return String(!!g && (g.innerText||'').trim().length > 10); }")" = "true" ] && return 0
     sleep 2
   done
   return 1
@@ -347,7 +347,7 @@ wait_sel() {
 }
 
 select_week() {
-  [ "$(pw "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'Y';} return 'N'; }")" = "Y" ] || return 1
+  [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'Y';} return 'N'; }")" = "Y" ] || return 1
   sleep 2
   wait_entries || true
 }
@@ -369,7 +369,7 @@ select_week() {
 owned_approvable() {
   local c try
   for try in 1 2; do
-    c="$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'NOGAL'; let n=0; for(const b of [...g.querySelectorAll('.mx-name-btnApprove')]){ if(card(b)) n++; } return String(n); }")"
+    c="$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'NOGAL'; let n=0; for(const b of [...g.querySelectorAll('$TT_HR_BTN_APPROVE')]){ if(card(b)) n++; } return String(n); }")"
     case "$c" in
       NOGAL|'') wait_entries || true ;;
       *[!0-9]*) wait_entries || true ;;
@@ -411,7 +411,7 @@ approve_owned_on_week() {
     before="$(owned_approvable)"
     [ "$before" = "0" ] && break
 
-    if [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('.mx-name-btnApprove')]){ const c=card(b); if(c){ b.click(); return 'Y'; } } return 'N'; }")" != "Y" ]; then
+    if [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$TT_HR_BTN_APPROVE')]){ const c=card(b); if(c){ b.click(); return 'Y'; } } return 'N'; }")" != "Y" ]; then
       break
     fi
     sleep 2
@@ -458,7 +458,7 @@ hr_approve_round() {
     IFS="$OLD"
     click_text_soft "$tab" || { log "    $tab: tab not clickable - skipped"; IFS='|'; continue; }
     sleep 2
-    wait_sel ".mx-name-galTabAvailableWeeks" 12 || { log "    $tab: no weeks list rendered - skipped"; IFS='|'; continue; }
+    wait_sel "$TT_HR_GAL_WEEKS" 12 || { log "    $tab: no weeks list rendered - skipped"; IFS='|'; continue; }
     weeks="$(tab_weeks)"
     log "    $tab: weeks [$weeks]"
     local IFS2='|'
@@ -489,14 +489,14 @@ count_toprocess() {
   log "    KPIs: pending=$(kpi cardKpiPending) manager=$(kpi cardKpiManager) client=$(kpi cardKpiCustomer) toprocess=$(kpi cardKpiProcess) invoice=$(kpi cardKpiInvoice) sent=$(kpi cardKpiSent)"
   click_text_soft "WEEKLY TO PROCESS" || true
   sleep 2
-  wait_sel ".mx-name-galTabAvailableWeeks" 12 || { log "    (no To Process weeks list rendered)"; echo 0; return 0; }
+  wait_sel "$TT_HR_GAL_WEEKS" 12 || { log "    (no To Process weeks list rendered)"; echo 0; return 0; }
   weeks="$(tab_weeks)"
   OLD="$IFS"; IFS='|'
   for w in $weeks; do
     IFS="$OLD"
     [ -n "$w" ] || continue
     select_week "$w" || { IFS='|'; continue; }
-    n="$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return '0'; let c=0; for(const b of [...g.querySelectorAll('.mx-name-btnProcess')]){ if(card(b)) c++; } return String(c); }")"
+    n="$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return '0'; let c=0; for(const b of [...g.querySelectorAll('$TT_HR_BTN_PROCESS')]){ if(card(b)) c++; } return String(c); }")"
     case "$n" in ''|*[!0-9]*) n=0 ;; esac
     [ "$n" != "0" ] && log "    $w -> $n"
     total=$((total + n))

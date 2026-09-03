@@ -265,5 +265,5 @@ seed_click_tab() {
 }
 
 seed_tab_weeks() {
-  pw "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; return [...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))].join('|'); }"
+  pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; return [...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))].join('|'); }"
 }

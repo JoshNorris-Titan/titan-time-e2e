@@ -32,7 +32,7 @@ done
 pw "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='WEEKLY TO PROCESS' && getComputedStyle(e).cursor==='pointer'); if(el){el.click(); return 'Y';} return 'N'; }" >/dev/null
 sleep 3
 
-WEEKS="$(pw "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }")"
+WEEKS="$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }")"
 
 echo
 echo "WEEKLY TO PROCESS, per week (cards owned by e2e consultants):"
@@ -41,9 +41,9 @@ OLD="$IFS"; IFS='|'
 for w in $WEEKS; do
   IFS="$OLD"
   [ -n "$w" ] || continue
-  pw "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$w')===0); if(el){el.click(); return 'Y';} return 'N'; }" >/dev/null
+  pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$w')===0); if(el){el.click(); return 'Y';} return 'N'; }" >/dev/null
   sleep 3
-  N="$(pw "() => { const card=$CARD; const g=document.querySelector('.mx-name-galTabEntries'); if(!g) return '0'; let n=0; for(const b of [...g.querySelectorAll('.mx-name-btnProcess')]){ if(card(b)) n++; } return String(n); }")"
+  N="$(pw "() => { const card=$CARD; const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return '0'; let n=0; for(const b of [...g.querySelectorAll('$TT_HR_BTN_PROCESS')]){ if(card(b)) n++; } return String(n); }")"
   case "$N" in ''|*[!0-9]*) N=0 ;; esac
   printf '  %-26s %s\n' "$w" "$N"
   TOTAL=$((TOTAL + N))

@@ -89,9 +89,13 @@
 # delivered. Only that a template exists and a message was raised for every type
 # the Email Tester can send. Delivery needs the send event, which runs on its own
 # schedule. And it proves NOTHING about the three types the tester cannot send —
-# including ForgotPassword, whose missing row is the worst of the twelve
-# (Core.ACT_Password_Forgot has already replaced the password by the time the send
-# is skipped). Covering those needs a branch for them in Main.ACT_SendTemplate1,
+# including ForgotPassword, whose missing row is the worst of the twelve: it is the
+# only mail a locked-out user has no other way to receive. (It used to be worse
+# still - Core.ACT_Password_Forgot replaced the password before the send, so a
+# missing row locked the account for good. TT-731 rebuilt that on 2026-09-02: the
+# request now only mints a reset token and the mail carries a link, so a skipped
+# send costs the user a retry rather than their account.) Covering those needs a
+# branch for them in Main.ACT_SendTemplate1,
 # or a different route to the template list; the step says so rather than
 # pretending.
 #
@@ -154,10 +158,11 @@ source "$TT_ROOT/lib/_login.sh"
 # If someone adds a thirteenth, this list is what makes the step notice.
 #
 # ForgotPassword was the twelfth, added 2026-08-26 with the self-service password
-# reset. It is the type most likely to be missing on an environment restored from
-# before that date, and the one whose absence is worst: ACT_Password_Forgot has
-# already replaced the user's password by the time the send is skipped, so a
-# missing row locks them out with no way back in.
+# reset, and kept by TT-731's 2026-09-02 rebuild - that changed what the mail
+# CARRIES (a reset link, not a temporary password) but not which enum value keys
+# it, so this list is still twelve. It is the type most likely to be missing on an
+# environment restored from before 2026-08-26, and the one whose absence hurts
+# most: a locked-out user has no other route to the reset link.
 #
 # These are the enum value NAMES, which is what keys each type's recipient
 # address. They are not necessarily what the dropdown displays - it displays
@@ -585,8 +590,9 @@ if [ -n "$nobranch" ]; then
   echo "      exactly these three."
   echo "      THIS IS NOT A MISSING TEMPLATE ROW, and it is not a defect in this step."
   echo "      Nothing was sent, so nothing can be concluded about whether the rows exist -"
-  echo "      including ForgotPassword, whose absence would lock a user out after"
-  echo "      Core.ACT_Password_Forgot has already replaced their password. Fix by adding a"
+  echo "      including ForgotPassword, whose absence leaves a locked-out user with no"
+  echo "      way to receive the reset link Core.ACT_Password_Forgot_Request minted for"
+  echo "      them. Fix by adding a"
   echo "      branch and a tester popup per type in Main.ACT_SendTemplate1; until then"
   echo "      these types are untested here."
   # Compared as a sorted set: the accumulated list is in TYPES order, which only

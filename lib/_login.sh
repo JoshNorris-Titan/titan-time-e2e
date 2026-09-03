@@ -17,6 +17,61 @@
 TT_BASE="${TT_BASE_URL:-http://localhost:8080}"
 TT_PASS="${TT_ROLE_PASS:-E2ETest123!}"
 
+# ---------------------------------------------------------------------------
+# HR dashboard tab selectors — TT-724 phase 4 retired Main.SNIP_HRDashboardTab.
+#
+# WHAT CHANGED. Four of the HR dashboard's tabs (Manager Approval, Client
+# Approval, To Process, Sent) used to render ONE shared snippet, so every widget
+# in them carried one tab-agnostic name and a bare `.mx-name-galTabEntries`
+# addressed whichever tab was open. The snippet was inlined into Main.HRDashboard
+# on 2026-09-02 and the four copies were renamed apart, per tab:
+#
+#   galTabEntries        -> galManagerEntries / galClientEntries
+#                           galProcessEntries / galSentEntries
+#   galTabAvailableWeeks -> gal{Manager,Client,Process,Sent}AvailableWeeks
+#   cbTabWeekConsultant  -> cb{Manager,Client,Process,Sent}Consultant
+#   cbTabWeekProject     -> cb{Manager,Client,Process,Sent}Project
+#   btnApprove           -> btnManagerApprove / btnClientApprove
+#   btnRemind            -> btnManagerRemind  / btnClientRemind
+#   btnView              -> btnManagerView    / btnClientView
+#   btnProcess           -> btnProcessEntry
+#   btnReject            -> btnProcessReject
+#   textApprovedBy1/2    -> txtProcessManagerApprover / txtProcessClientApprover
+#
+# WHY A UNION AND NOT FOUR CODE PATHS. Selecting a tab flips
+# HRDashboardHelper/DashboardSelected, which UNRENDERS the previous pane and
+# builds the new one from scratch — so at most one of the four is in the DOM at
+# any moment. A comma-joined selector therefore matches exactly what the single
+# old name matched, and every helper below keeps working on "whatever tab is
+# open" without being told which one that is. Naming the tabs explicitly in each
+# helper would have been a much larger change for no extra assurance.
+#
+# THE INVOICE AND PENDING TABS ARE NOT IN THESE UNIONS, on purpose. Both were
+# always page-level rather than snippet-level, so their names did not change and
+# the old `galTabEntries` never matched them either: Invoice has galInvoiceEntries
+# / galAvailableMonths / btnInvoiceView / btnInvoiceReject / btnExportAll, and
+# Pending has galPending / galAvailableWeeks / cbWeekConsultant / btnRemind.
+#
+# THAT LAST ONE IS THE TRAP. `.mx-name-btnRemind` still exists — it is the
+# Pending card's "remind this consultant to submit" button, which is a different
+# button from the per-entry Remind that used to share its name. A helper left on
+# the bare name does not error; it silently scans the wrong cards and reports
+# "no pending entry". Use TT_HR_BTN_REMIND.
+TT_HR_GAL_ENTRIES='.mx-name-galManagerEntries, .mx-name-galClientEntries, .mx-name-galProcessEntries, .mx-name-galSentEntries'
+TT_HR_GAL_WEEKS='.mx-name-galManagerAvailableWeeks, .mx-name-galClientAvailableWeeks, .mx-name-galProcessAvailableWeeks, .mx-name-galSentAvailableWeeks'
+TT_HR_CB_CONSULTANT='.mx-name-cbManagerConsultant, .mx-name-cbClientConsultant, .mx-name-cbProcessConsultant, .mx-name-cbSentConsultant'
+TT_HR_CB_PROJECT='.mx-name-cbManagerProject, .mx-name-cbClientProject, .mx-name-cbProcessProject, .mx-name-cbSentProject'
+TT_HR_BTN_APPROVE='.mx-name-btnManagerApprove, .mx-name-btnClientApprove'
+TT_HR_BTN_REMIND='.mx-name-btnManagerRemind, .mx-name-btnClientRemind'
+TT_HR_BTN_VIEW='.mx-name-btnManagerView, .mx-name-btnClientView'
+TT_HR_BTN_PROCESS='.mx-name-btnProcessEntry'
+TT_HR_BTN_REJECT='.mx-name-btnProcessReject'
+TT_HR_TXT_APPROVER1='.mx-name-txtProcessManagerApprover'
+TT_HR_TXT_APPROVER2='.mx-name-txtProcessClientApprover'
+# The per-entry CARD inside the entries gallery. Was the snippet's generated
+# container13, which is why a rename could never have been noticed by name alone.
+TT_HR_CARD='.mx-name-containerManagerCard, .mx-name-containerClientCard, .mx-name-containerProcessCard, .mx-name-containerSentCard'
+
 # tt_fail — report and stop. Writes to STDERR, deliberately.
 #
 # It used to write to stdout, which meant any helper that failed inside a command
@@ -844,7 +899,7 @@ _tt_gallery_has_text() {
 #
 # WHY THE TT-647 HELPERS NEEDED IT. Main.SNIP_HRDashboardTab's galTabEntries is
 # virtual-scrolling with pageSize 4, and every tt647_* helper read
-# .mx-name-galTabEntries innerText straight out of the DOM. Measured on dev
+# .mx-name-galTabEntries (as it then was) innerText straight out of the DOM. Measured on dev
 # 2026-08-31, every week on WEEKLY TO PROCESS rendered exactly 4 cards while its own
 # heading said "Weekly Timesheets to Process (5)"; one scroll of the content box took
 # the count 4 -> 5. So the FIFTH entry in any week was invisible to the suite.
@@ -965,7 +1020,7 @@ tt_combobox_select_text() {
 # Those point at completely different causes and were indistinguishable before.
 _tt_hr_tab_state() {
   local label="${1:-tab state}" s
-  s="$(playwright-cli eval "() => { const val=n=>{ const w=document.querySelector('.mx-name-'+n); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('.mx-name-galTabAvailableWeeks'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('.mx-name-galTabEntries'); return 'weekPicker=' + (wk?'present':'ABSENT') + ' | entriesGallery=' + (g?'present':'ABSENT') + ' | consultantFilter=' + val('cbTabWeekConsultant') + ' | projectFilter=' + val('cbTabWeekProject') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | remindCards=' + document.querySelectorAll('.mx-name-btnRemind').length; }" 2>/dev/null | _tt_eval_str)"
+  s="$(playwright-cli eval "() => { const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('$TT_HR_GAL_WEEKS'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return 'weekPicker=' + (wk?'present':'ABSENT') + ' | entriesGallery=' + (g?'present':'ABSENT') + ' | consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | remindCards=' + document.querySelectorAll('$TT_HR_BTN_REMIND').length; }" 2>/dev/null | _tt_eval_str)"
   echo "  [hr-tab] $label: $s" >&2
 }
 
@@ -997,13 +1052,13 @@ tt_hr_remind_e2e_entry() {
   # queue is a legitimate outcome the caller handles by creating an entry. A hard
   # failure here would break the "is there a standing entry?" probe.
   for i in $(seq 1 20); do
-    playwright-cli eval "() => String(!!document.querySelector('.mx-name-galTabAvailableWeeks'))" 2>/dev/null | grep -qiw true && break
+    playwright-cli eval "() => String(!!document.querySelector('$TT_HR_GAL_WEEKS'))" 2>/dev/null | grep -qiw true && break
     sleep 1
   done
 
   # playwright-cli wraps eval results in a JSON string, so a returned array would
   # arrive double-encoded; return a pipe-joined line instead and split in bash.
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); if(!g) return ''; const set=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - [A-Z][a-z]{2} \\d{2}/.test(t)))]; return set.join('|'); }" 2>/dev/null | sed -n '2p')
+  labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const set=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - [A-Z][a-z]{2} \\d{2}/.test(t)))]; return set.join('|'); }" 2>/dev/null | sed -n '2p')
   labels="${labels%\"}"; labels="${labels#\"}"   # strip the wrapper quotes
   local IFS='|'
   for lbl in $labels; do
@@ -1011,13 +1066,13 @@ tt_hr_remind_e2e_entry() {
     # $(seq ...) splits on IFS, and IFS is '|' here — without this the counter
     # below collapses into a single token and the poll runs exactly once.
     unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTabAvailableWeeks'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
+    playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     # POLL, rather than looking once four seconds after the click. Selecting a week
     # reloads the entries gallery, and an entry submitted moments ago reaches the
     # queue ASYNCHRONOUSLY — tt647_wait_for_card polls up to 60s for that same
     # reason. Looking once is what made a slow reload read as an absent entry.
     for i in $(seq 1 8); do
-      if playwright-cli eval "() => { const rs=[...document.querySelectorAll('.mx-name-btnRemind')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
+      if playwright-cli eval "() => { const rs=[...document.querySelectorAll('$TT_HR_BTN_REMIND')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
         echo "$lbl"
         return 0
       fi
