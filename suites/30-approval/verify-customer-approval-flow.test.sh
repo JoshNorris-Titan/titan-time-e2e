@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
+# tt-timeout: 8m
 # Customer-approval-via-email-link flow (the anonymous token journey).
+#
+# BUDGET. Measured 184s against the 4m default — 56 seconds of headroom, and CI has
+# already shown this spec swinging between 74s (a pending entry was standing) and the
+# slow path where it submits one itself. Declared with its two neighbours so the whole
+# token trio has room for its slow path.
 #
 # Idempotent end-to-end check:
 #   1. As HR, on the Client Approval tab, trigger "Remind" on a pending entry for
