@@ -194,6 +194,14 @@ seed_materialise_weeks() {
 # because each step has to be verified — a loop of 34 prev-clicks with a 1s settle
 # advanced the week only 4 times, the rest swallowed mid-render. The gallery lists only
 # CURRENT and PAST weeks, so a future week needs the arrow fallback.
+# EQUALITY, not substring, and deliberately different from the substring match in
+# seeders/seed-toprocess-entries.sh. The difference is the INPUT CONTRACT, not an
+# inconsistency: <label> here is a WHOLE week label (both callers read it straight
+# out of seed_week_list, i.e. the history gallery), for which tt_week_key is the
+# identity, so equality is exact and strictly sharper than the substring test it
+# replaced. SEED_START_WEEK over there is a user-supplied FRAGMENT ("Sep 27"), which
+# only a substring test can honour. Do not "unify" these without changing what one
+# of them accepts.
 seed_goto_week() {
   local want="$1" i j before after wantkey
   wantkey="$(tt_week_key "$want")"; [ -n "$wantkey" ] || wantkey="$want"

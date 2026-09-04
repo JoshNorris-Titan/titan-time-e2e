@@ -93,7 +93,12 @@ week_caption() {
 }
 
 # week_key — the same week as a canonical "Mmm DD - Mmm DD" (see tt_week_key in
-# lib/_login.sh). Use it to ask WHICH week this is. The caption no longer contains
+# lib/_login.sh). Use it to ask WHICH week this is.
+#
+# Matched as a SUBSTRING here, unlike seed_goto_week in lib/_seed.sh, which compares
+# whole keys for equality. That is the input contract differing, not a rule nobody
+# tidied: SEED_START_WEEK is a user-supplied fragment ("Sep 27"), while seed_goto_week
+# is handed a complete label off the history gallery. The caption no longer contains
 # a bare date range (TT-745), so matching SEED_START_WEEK against it directly
 # stopped working — and it failed by never finding the start week rather than by
 # erroring, which is the expensive kind of silence in an hour-long seeder.
