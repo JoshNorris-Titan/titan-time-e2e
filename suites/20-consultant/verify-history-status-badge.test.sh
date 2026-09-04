@@ -42,6 +42,23 @@
 # range) and imgHistoryDelete (the trash-can icon). Nothing else in the model, the
 # suite or docs/ referenced either name.
 #
+# THE DELETE ICON NOW DEPENDS ON HOURS AS WELL AS STATUS (2026-09-04, finding T3).
+# imgHistoryDelete used to fire a raw client-side Delete with no confirmation and no
+# undo, about 20px from the row that OPENS a week. It now calls a microflow that puts
+# a confirmation dialog in front of the delete, and its conditional visibility moved
+# from an enum condition list on Status to an expression combining that same status
+# set with TotalHours = 0 -- so a misclick can only ever destroy a week that holds
+# nothing. Assertion 5 below therefore couples the icon to the pill AND to the hours.
+#
+# A third widget in the row was named for this: txtHistoryHours, the "{1} hrs" text,
+# formerly the auto-generated text21. Note WHICH hours it renders -- it is bound to
+# Main.TimesheetHelper.TotalHours, summed per row at render time by
+# Main.DS_Timesheet_TotalHours, while the icon's visibility expression reads the
+# STORED Main.Timesheet.TotalHours. Nothing in the model keeps those two in step.
+# Assertion 5 asserts against the number the CONSULTANT CAN SEE, which is the whole
+# point: if the stored total ever drifts from the entry sum, this test is what says
+# so, by catching a bin offered on a row that reads a non-zero number.
+#
 # PAGING. galTimesheetHistory is "Load more" with pageSize 25, not virtual scrolling,
 # so a consultant with more than 25 weeks has the rest outside the DOM entirely.
 # tt_gallery_load_all pages the whole list in first; without it "every row carries a
@@ -70,7 +87,8 @@ LOADED="$(tt_gallery_load_all ".mx-name-galTimesheetHistory" "timesheet history"
 # compare a history row against a week that is no longer on screen.
 #
 # Record format, one row per entry:
-#   <date>|<pill-present>|<pill-text>|<pill-classes>|<delete-icon-present>
+#   <date>|<pill-present>|<pill-text>|<pill-classes>|<hours-text>|<delete-icon-present>
+# Hours go BEFORE the icon flag so the icon stays the last field the parser splits on.
 # with the week badge's caption and the week's date range in the FIRST entry, as
 #   WEEK|<week-badge-caption>|<txtWeekRange text>
 # Entries are joined with '~~' because _tt_eval_str reads a single line.
@@ -87,11 +105,13 @@ REPORT="$(playwright-cli eval "() => {
     const d = row.querySelector('.mx-name-txtHistoryWeek');
     const b = row.querySelector('.mx-name-txtHistoryStatus');
     const i = row.querySelector('.mx-name-imgHistoryDelete');
+    const h = row.querySelector('.mx-name-txtHistoryHours');
     lines.push([
       d ? (d.innerText || '').trim() : '',
       b ? 'yes' : 'no',
       b ? (b.innerText || '').trim() : '',
       b ? (b.className || '') : '',
+      h ? (h.innerText || '').trim() : '',
       i ? 'yes' : 'no'
     ].join('|'));
   }
@@ -129,7 +149,8 @@ for PART in "${PARTS[@]}"; do
   DATE="${PART%%|*}";    REST="${PART#*|}"
   PRESENT="${REST%%|*}"; REST="${REST#*|}"
   TEXT="${REST%%|*}";    REST="${REST#*|}"
-  CLASSES="${REST%%|*}"
+  CLASSES="${REST%%|*}"; REST="${REST#*|}"
+  HOURS="${REST%%|*}"
   DEL="${REST##*|}"
 
   ROWS=$((ROWS+1))
@@ -168,21 +189,39 @@ for PART in "${PARTS[@]}"; do
     *) tt_fail "timesheet history row '$DATE' disagrees with itself: caption '$TEXT' should carry '$WANT' but classes are '$CLASSES'" ;;
   esac
 
-  # --- Assertion 5: the pill agrees with the delete affordance ---------------
-  # Independent signal, same enum, separate settings: imgHistoryDelete's visibility
-  # is an enum condition list that ticks Draft and (empty) and nothing else -- which
-  # is exactly the set of weeks whose pill should read "Draft". If the pill's
-  # fall-through branch ever stops covering the empty case, these two split apart.
-  case "$TEXT" in
-    "Draft") EXPECT_DEL="yes" ;;
-    *)       EXPECT_DEL="no" ;;
+  # --- Assertion 5: the pill and the hours agree with the delete affordance --
+  # Independent signals, separate settings. imgHistoryDelete's visibility expression
+  # ticks Draft/(empty) status AND a zero total, so the icon must appear on exactly
+  # the rows whose pill reads "Draft" and whose hours read zero -- and nowhere else.
+  # Three ways this drifts: the pill's fall-through branch stops covering the empty
+  # status; the visibility expression loses one of its two halves; or the stored
+  # Main.Timesheet.TotalHours drifts from the per-row sum this row displays. All
+  # three land here.
+  if [ -z "$HOURS" ]; then
+    tt_fail "timesheet history row '$DATE' has no hours text: .mx-name-txtHistoryHours is absent, so the delete icon's zero-hours condition cannot be checked (was the widget renamed, or did its data view fail to load?)"
+  fi
+
+  # "0.00 hrs" -> "0.00". The template is "{1} hrs" at 2dp, but do not assume the
+  # precision: accept any spelling of zero and treat everything else as non-zero.
+  HOURS_NUM="${HOURS%% *}"
+  case "$HOURS_NUM" in
+    0|0.|0.0|0.00|0.000|-0|-0.0|-0.00) ZERO_HOURS="yes" ;;
+    *)                                 ZERO_HOURS="no" ;;
   esac
+
+  if [ "$TEXT" = "Draft" ] && [ "$ZERO_HOURS" = "yes" ]; then
+    EXPECT_DEL="yes"
+  else
+    EXPECT_DEL="no"
+  fi
 
   if [ "$DEL" != "$EXPECT_DEL" ]; then
     if [ "$EXPECT_DEL" = "yes" ]; then
-      tt_fail "timesheet history row '$DATE' reads 'Draft' but has no delete icon — the pill and the row's own edit affordance disagree about whether this week is still the consultant's"
-    else
+      tt_fail "timesheet history row '$DATE' reads 'Draft' and $HOURS but has no delete icon — an empty draft week the consultant is allowed to remove offers no way to remove it"
+    elif [ "$TEXT" != "Draft" ]; then
       tt_fail "timesheet history row '$DATE' reads '$TEXT' (a submitted or finished week) but still offers a delete icon — a consultant can delete a week the pill calls finished"
+    else
+      tt_fail "timesheet history row '$DATE' reads 'Draft' with $HOURS on it but still offers a delete icon — the icon is meant to appear only on weeks totalling zero, so either its visibility expression lost the hours condition or the stored total disagrees with the hours this row displays"
     fi
   fi
 
