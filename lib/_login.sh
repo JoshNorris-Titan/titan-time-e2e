@@ -1154,9 +1154,17 @@ _tt_hr_tab_state() {
 # pending entry comes first, and dev carries several client-approval projects for
 # the same consultant on DIFFERENT customers (E2E ClientApproval B/C/D/E ->
 # Walmart/Yamaha/Rapidappwerks/Thomas Inc., alongside E2E Customer Approval ->
-# Costco). The approval token is per PROJECT, so reminding an unscoped entry emails
-# a token for some other customer, and a caller asserting a fixed customer name on
-# the token page fails on data selection rather than on anything the product did.
+# Costco), so reminding an unscoped entry acts on some other customer's queue and a
+# caller asserting on a fixed project fails on data selection rather than on
+# anything the product did.
+#
+# WHAT THE TOKEN IS SCOPED TO CHANGED (model commit 8ca78e2e, TT-741). It used to be
+# one token per PROJECT; it is now one token per APPROVER EMAIL, and the landing page
+# lists everything that approver has waiting across all of their projects. So the
+# project argument no longer narrows what the token page shows — it only decides
+# which pending entry gets reminded (and therefore which mail carries the link).
+# A caller that needs to act on a specific project's entry must identify that entry
+# on the page itself; see tt_token_popup_text below.
 tt_hr_remind_e2e_entry() {
   local who="$1" proj="${2:-}" labels lbl i
   # WAIT FOR THE PANE, don't assume it is up. Selecting a tab flips
@@ -1273,6 +1281,58 @@ tt_token_open_row() {
 tt_token_row_present() {
   local js; js="$(_tt_token_row_js "$1")"
   playwright-cli eval "() => { $js const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return 'false'; return String(views().some(v=>{ const r=rowOf(v); return !!r && txt(r).indexOf('$2')>=0; })); }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_token_rows_all_actionable — 'true' when EVERY row on the token page offers an
+# Approve button, i.e. every listed entry is actually awaiting this client's
+# decision. btnApprove's conditional visibility on Customer_Approval is
+# ApprovalHelper.AEStatus = AwaitingCustomerApproval, so a row without one is an
+# entry in some other state that has leaked onto an anonymous page.
+#
+# Echoes 'true', 'false', or 'norows' — 'norows' is NOT true, so a caller cannot
+# satisfy this by looking at an empty list.
+tt_token_rows_all_actionable() {
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return 'norows'; const rows=[...g.querySelectorAll('.widget-gallery-item')]; if(!rows.length) return 'norows'; return String(rows.every(r=>{ const b=r.querySelector('.mx-name-btnApprove'); return !!b && b.offsetParent!==null; })); }" 2>/dev/null | _tt_eval_str
+}
+
+# ---------------------------------------------------------------------------
+# The review popup (Main.Customer_ReviewTimesheetEntry), reached with View.
+#
+# WHY THESE EXIST. Model commit 8ca78e2e rewrote Main.Customer_Approval: the
+# Customer/Project header rows were replaced by one static heading, and the row
+# template became '{ConsultantName} - {ProjectName} ({Customer})'. The landing page
+# therefore no longer names the project or the customer anywhere in its own text —
+# and, because Main.DS_ApprovalHelper_Customer never sets ApprovalHelper/ProjectName
+# or ApprovalHelper/Customer, those two placeholders currently render EMPTY, so the
+# row reads 'E2E Consultant - ()'. See the header of
+# suites/30-approval/verify-customer-approval-flow.test.sh.
+#
+# The Entry Details panel inside the review popup DOES name the project (labelled
+# 'Consultant', 'Project', 'Week Range', 'Submitted'), so that popup is the only
+# surface on the anonymous journey where an entry's project can be asserted. Every
+# test that needs to know WHICH entry it is looking at reads it from here.
+# ---------------------------------------------------------------------------
+
+# tt_token_popup_text — the whole review popup as one line, or '(no popup)'.
+tt_token_popup_text() {
+  playwright-cli eval "() => { const d=document.querySelector('.mx-window-active, .modal-dialog, [role=dialog]'); if(!d) return '(no popup)'; return (d.innerText||'').replace(/ /g,' ').replace(/\s+/g,' ').trim(); }" 2>/dev/null | _tt_eval_str
+}
+
+# tt_token_popup_close — dismiss the review popup with Cancel and WAIT for it to go.
+# Echoes closed | open | missing, and returns non-zero unless it actually closed.
+# Cancel is the only exit that leaves the entry pending, which is what
+# verify-customer-approval-flow's repeatability depends on.
+tt_token_popup_close() {
+  local i state
+  state="$(playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnCustomerCancel'); if(!b) return 'missing'; b.click(); return 'clicked'; }" 2>/dev/null | _tt_eval_str)"
+  if [ "$state" != "clicked" ]; then echo "missing"; return 1; fi
+  for i in $(seq 1 10); do
+    if [ "$(playwright-cli eval "() => String(!document.querySelector('.mx-name-btnCustomerApprove'))" 2>/dev/null | _tt_eval_str)" = "true" ]; then
+      echo "closed"; return 0
+    fi
+    sleep 1
+  done
+  echo "open"; return 1
 }
 
 # ---------------------------------------------------------------------------
