@@ -992,6 +992,49 @@ tt_gallery_titles() {
   playwright-cli eval "() => [...document.querySelectorAll('$1 .widget-gallery-item')].map(e => (((e.innerText || '').split('\n').find(s => s.trim())) || '(blank)').trim()).join(', ') || '(no cards)'" 2>/dev/null | _tt_eval_str
 }
 
+# tt_pm_pending_rows [settle-seconds] — how many approvable rows the CURRENT
+# session has in the PM pending-approval queue. Echoes a count, or ERR:<why>.
+#
+# WHY THIS IS NOT `tt_wait_for .mx-name-galPMPendingEntries` FOLLOWED BY A COUNT,
+# which is what all three callers used to do. As of 2026-09-03 (model commit
+# c5b00326, "Hiding awating approval component for pm's when there isn't any")
+# the PM dashboard HIDES the whole awaiting-approval component when the manager
+# has nothing pending. An absent gallery is now the app working correctly: it
+# means ZERO. The old shape turned that into two different false failures --
+# a tt_wait_for timeout, and a raw NOGALLERY hitting a numeric-parse guard --
+# and both are in this suite's history, one of them aborting a whole CI run with
+# 49 steps left unrun.
+#
+# The distinction that still has to hold is EMPTY vs NOT LOADED YET. A missing
+# gallery means zero only once the dashboard itself is on screen; read too early
+# it means nothing at all, and reporting 0 for a manager with a full queue is the
+# silent-pass failure this suite exists to avoid. So this anchors on the page
+# heading, which renders either way and sits outside the hidden component, and
+# calls a missing gallery zero only after the settle window elapsed with the
+# heading present.
+#
+# Note the asymmetry, which is deliberate: a gallery that IS there answers
+# immediately, so the common non-empty path costs one round trip. Only the zero
+# case pays the full settle. The poll runs IN THE PAGE rather than as a bash
+# loop -- each playwright-cli call is ~2.6s of node startup against cloud dev,
+# so a bash poll would cost more than the thing it is waiting for.
+TT_PM_DASH_ANCHOR="${TT_PM_DASH_ANCHOR:-Project Manager Dashboard}"
+
+tt_pm_pending_rows() {
+  local secs="${1:-12}"
+  playwright-cli eval "() => new Promise(res => {
+    const deadline = Date.now() + $secs * 1000;
+    const tick = () => {
+      const g = document.querySelector('.mx-name-galPMPendingEntries');
+      if (g) return res(String(g.querySelectorAll('.mx-name-btnPMApprove').length));
+      const up = (document.body.innerText || '').indexOf('$TT_PM_DASH_ANCHOR') >= 0;
+      if (Date.now() >= deadline) return res(up ? '0' : 'ERR:dashboard-never-rendered');
+      setTimeout(tick, 500);
+    };
+    tick();
+  })" 2>/dev/null | _tt_eval_str
+}
+
 # tt_combobox_sorted <combobox-css> <dismiss-css> <label>
 # Opens the (Mendix pluggable) combobox, asserts its rendered option list has >=2
 # items in ascending (case-insensitive) order, then clicks <dismiss-css> — a neutral

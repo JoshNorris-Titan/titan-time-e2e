@@ -32,7 +32,11 @@ mgr_ordinal() {
   playwright-cli eval "() => { const btns=[...document.querySelectorAll('.mx-name-galPMPendingEntries .mx-name-btnPMApprove')]; for(let n=0;n<btns.length;n++){ let el=btns[n]; for(let k=0;k<12;k++){el=el.parentElement; if(!el)break; if(/$PROJECT/.test(el.innerText||'')&&(el.innerText||'').length<200) return String(n+1);} } return '0'; }" 2>/dev/null | sed -n '2p' | tr -d '\"'
 }
 
-pm_login_dash() { tt_login "e2e_pm" "Project Manager Dashboard"; tt_wait_for ".mx-name-galPMPendingEntries" "PM pending gallery"; }
+# No gallery wait. This is called BEFORE the seeding block below and again inside
+# its retry loop, so an empty queue is an expected state on most calls -- and
+# since 2026-09-03 an empty queue renders no gallery to wait for. Waiting here
+# hard-failed the test before the seeding it guards could ever run.
+pm_login_dash() { tt_login "e2e_pm" "Project Manager Dashboard"; }
 
 # 1) Ensure a pending manager-approval entry exists.
 pm_login_dash
