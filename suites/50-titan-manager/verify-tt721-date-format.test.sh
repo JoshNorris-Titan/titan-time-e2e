@@ -87,7 +87,15 @@ echo "  ok: Consultant Details popup period is MM/DD/YYYY"
 # Its two date widgets are auto-named (text9 / text10), which is exactly the kind of
 # name that renumbers when the page is edited, so this anchors on the STATIC labels
 # next to them instead.
-r="$(playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'NOMODAL'; const lv=d.querySelector('.mx-name-listView1') || d; const c=[...lv.querySelectorAll('*')].find(e=>getComputedStyle(e).cursor==='pointer' && (e.innerText||'').trim().length>0); if(!c) return 'NOROW'; c.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)"
+#
+# Find the row by ROLE, not by cursor. A Mendix clickable list-view row renders as
+# <li role="button"> with an onclick and a computed cursor of *default* — Atlas puts
+# the pointer on gallery CARDS, not on list-view rows. The cursor==='pointer' probe
+# that opens the consultant popup a few lines up works for exactly that reason, and
+# copying it down here found nothing: the four assignment rows are present and
+# clickable, but the only pointer element in the whole modal is not a row. That is
+# what NOROW was reporting, on every run since this test was written.
+r="$(playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'NOMODAL'; const lv=d.querySelector('.mx-name-listView1') || d; const c=[...lv.querySelectorAll('li[role=button]')].find(e=>e.offsetParent!==null && (e.innerText||'').trim().length>0); if(!c) return 'NOROW'; c.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)"
 [ "$r" = "ok" ] || tt_fail "TT-721: no clickable assignment row in the Consultant Details popup ($r)"
 sleep 4
 
