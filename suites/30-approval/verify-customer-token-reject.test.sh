@@ -105,9 +105,9 @@ playwright-cli goto "$LINK" >/dev/null 2>&1
 tt_wait_for ".mx-name-galPendingEntries" "customer-approval pending list"
 
 # Log every row the token page is offering, whole — consultant, hours and period.
-# The token page is scoped to ONE PROJECT (the token resolves to a single Project
-# and the gallery is constrained to it), so what distinguishes rows here is the
-# consultant and the week, and this is the evidence for a failed match.
+# A row carries no project or customer text since model commit 8ca78e2e (TT-741 —
+# see the header of verify-customer-approval-flow), so what distinguishes rows here
+# is the consultant and the week, and this is the evidence for a failed match.
 tt_token_log_rows "$CONSULTANT_NAME"
 
 opened="$(tt_token_open_row "$CONSULTANT_NAME" "$WEEKFRAG")"
@@ -118,6 +118,19 @@ case "$opened" in
 esac
 
 tt_wait_for ".mx-name-btnCustomerReject" "client Reject button on the review popup"
+
+# CONFIRM THE PROJECT BEFORE REJECTING ANYTHING. Since 8ca78e2e the token is scoped
+# to the APPROVER's email rather than to one project, so the page lists every project
+# that approver is the contact on — and both 'E2E Customer Approval' and 'E2E Dual
+# Approval' carry a client stage for this same consultant. Consultant + week can
+# therefore match more than one row. The review popup's Entry Details panel is the
+# only surface on the anonymous journey that names the project, so read it here,
+# before a rejection that bounces a timesheet back to a consultant.
+POPUP="$(tt_token_popup_text)"
+case "$POPUP" in
+  *"$PROJECT"*) echo "review popup confirms project '$PROJECT'" ;;
+  *) tt_fail "the opened entry is not on '$PROJECT' — refusing to reject it: $POPUP" ;;
+esac
 
 # The comment box lives in the shared details snippet; if it is not rendered here
 # the guard below cannot be satisfied at all, which is worth saying plainly.
@@ -158,11 +171,9 @@ sleep 3
 # The entry must leave the client's queue. Poll — the workflow commits asynchronously.
 #
 # MATCH ON WEEK + CONSULTANT, which is all a row carries. Do NOT add the project:
-# the row does not render it (it is a heading above the gallery, out of reach of
-# the row walk), so requiring it makes this poll false on its first iteration and
-# the step passes instantly whether or not anything was rejected. Scoping is not
-# lost by leaving it out — the token resolves to one project and the gallery is
-# constrained to that project, so no other project's entry can appear here.
+# the row does not render it, so requiring it makes this poll false on its first
+# iteration and the step passes instantly whether or not anything was rejected.
+# The project is already pinned, on the popup, immediately before the click above.
 gone=""
 for _ in $(seq 1 10); do
   still="$(tt_token_row_present "$CONSULTANT_NAME" "$WEEKFRAG")"
