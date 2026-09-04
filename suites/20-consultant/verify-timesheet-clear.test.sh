@@ -270,9 +270,25 @@ if [ "$sentinel_ok" = "1" ]; then
   hc_save_and_refetch || true
 
   ORD="$(hc_row_any)"
+  # BOTH SIDES NORMALISED, because they come from different readers: $WEEK is the
+  # RAW caption (tt_goto_fresh_week returns tt_week_label) while tt_current_week
+  # returns a canonical tt_week_key. TT-745 made those two forms disjoint -- the
+  # caption became "This week · Sep 6 – 12" and the key is "Sep 06 - Sep 12" -- so
+  # the old substring test could not match on any week, and this guard would have
+  # fired on every run. Comparing keys is also stricter than the substring test it
+  # replaces: a caption that merely CONTAINS the expected range no longer passes.
+  #
+  # An unparseable week is a third answer and must not be reported as a moved one,
+  # so the comparison is skipped (loudly) rather than guessed at.
   shown="$(tt_current_week)"
-  if [ -n "$shown" ] && [ "${WEEK#*"$shown"}" = "$WEEK" ]; then
-    bad "B the grid moved to week '$shown' while case B was written against '$WEEK', so the re-read would have been of the wrong week"
+  want="$(tt_week_key "$WEEK")"
+  # A note, NOT a branch of the chain below. Making it one would skip the row and
+  # sentinel checks that carry case B's actual assertion.
+  if [ -z "$shown" ] || [ -z "$want" ]; then
+    echo "  (B could not resolve a week key to compare -- on screen '${shown:-}', expected from '$WEEK'; the moved-week guard is inert this run)"
+  fi
+  if [ -n "$shown" ] && [ -n "$want" ] && [ "$shown" != "$want" ]; then
+    bad "B the grid moved to week '$shown' while case B was written against '$want' (from '$WEEK'), so the re-read would have been of the wrong week"
   elif [ "$ORD" = "0" ]; then
     bad "B the '$PROJECT' row vanished after saving a draft, so the zero could not be re-read"
   else

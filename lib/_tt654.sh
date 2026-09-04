@@ -91,38 +91,49 @@ tt654_row_ordinal() {
   echo "0"
 }
 
-# tt654_week_start_iso — the Sunday of the week on screen, as yyyy-MM-dd.
+# tt654_week_start_iso [caption] — the Sunday of the week on screen, as yyyy-MM-dd.
 # The MCP tools take WeekStartDate in exactly that format, so seeding and MCP
-# calls can be pointed at the same week. Best-effort: returns "" if the week
-# range caption cannot be parsed, and callers report that rather than guessing.
+# calls can be pointed at the same week. Best-effort: returns "" when the week
+# cannot be resolved, and callers report that rather than guessing.
 #
-# Two caption shapes are handled. The original only understood a caption
-# carrying an explicit year; dev renders the range WITHOUT one — e.g.
-# "E2E Aug 09 - Aug 15" — so the parse returned "" and verify-tt654-a4 aborted
-# with "could not parse a yyyy-MM-dd week start". For the year-less shape the
-# FIRST date in the range is the week start, and the year is chosen as whichever
-# of last/this/next year puts that date nearest today. That is unambiguous for
-# any week within ~6 months, which is the only range these tests navigate.
+# Pass the caption if you have already read it — tt654_find_editable_row has —
+# because reading it again costs another ~2.6s node startup.
+#
+# THE CAPTION IS NOT PARSED HERE. It goes through tt_week_key (lib/_login.sh)
+# first, which is the one place that knows every shape this suite meets. That
+# matters because the shape has now changed twice: it once carried an explicit
+# year, then dev rendered "E2E Aug 09 - Aug 15" without one (which returned ""
+# and aborted verify-tt654-a4), and TT-745 made it "This week · Aug 9 – 15".
+# Reaching into the caption from here is what made those regressions silent.
+#
+# The key's first token is the week's Sunday, but carries no year, so the year is
+# whichever of last/this/next year puts that date on a SUNDAY — nearest-to-today
+# alone is not enough, because "Jan 04" is ~5 months away in 2027 and ~7 in 2026
+# yet only 2026 is a Sunday. The setDate snap-back is kept as a belt-and-braces
+# guard for the case where no candidate year lands on a Sunday.
 tt654_week_start_iso() {
-  local iso
+  local cap key start iso
+  if [ "$#" -ge 1 ]; then
+    cap="$1"
+  else
+    cap="$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()" 2>/dev/null | sed -n '2p' | tr -d '"')"
+  fi
+  key="$(tt_week_key "$cap")"
+  if [ -z "$key" ]; then
+    echo ""
+    return 0
+  fi
+  start="${key%% - *}"
   iso=$(playwright-cli eval "() => {
-    const t=((document.querySelector('.mx-name-txtWeekRange')||{}).innerText)||'';
     const p=n=>String(n).padStart(2,'0');
     const iso=d=>{ d.setDate(d.getDate()-d.getDay()); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); };
-    let m=t.match(/([A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4})|(\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4})/);
-    if(m){ const d=new Date(m[0]); if(!isNaN(d.getTime())) return iso(d); }
-    m=t.match(/([A-Za-z]{3,9})\\s+(\\d{1,2})/);
-    if(!m) return '';
     const now=new Date();
     const cands=[];
     for(const y of [now.getFullYear()-1, now.getFullYear(), now.getFullYear()+1]){
-      const d=new Date(m[1]+' '+m[2]+', '+y);
+      const d=new Date('$start' + ', ' + y);
       if(!isNaN(d.getTime())) cands.push(d);
     }
     if(!cands.length) return '';
-    // Titan weeks start on Sunday, so the year that makes the first date a
-    // Sunday is the right one. Nearest-to-today alone is not enough: 'Jan 04'
-    // is ~5 months away in 2027 and ~7 in 2026, but only 2026 is a Sunday.
     const sundays=cands.filter(d=>d.getDay()===0);
     const pool=sundays.length?sundays:cands;
     pool.sort((a,b)=>Math.abs(a.getTime()-now.getTime())-Math.abs(b.getTime()-now.getTime()));
@@ -152,7 +163,8 @@ tt654_find_editable_row() {
     if [ -n "$ord" ] && [ "$ord" != "0" ]; then
       TT654_ORD="$ord"
       TT654_WEEK=$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'')" 2>/dev/null | sed -n '2p')
-      TT654_WEEK_START="$(tt654_week_start_iso)"
+      # Hand the caption over rather than letting it be read a second time.
+      TT654_WEEK_START="$(tt654_week_start_iso "$TT654_WEEK")"
       return 0
     fi
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1

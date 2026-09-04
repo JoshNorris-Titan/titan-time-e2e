@@ -115,6 +115,15 @@ seed_whoami() { pw "() => { let n=''; try{ n=mx.session.userObject.jsonData.attr
 
 seed_week_caption() { pw "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()"; }
 
+# seed_week_key — the same week as a canonical tt_week_key (lib/_login.sh), or ''.
+#
+# Compare weeks with THIS, never with the raw caption. The caption is worded
+# differently from the history-gallery label the seeders resolve their weeks from
+# (TT-745 made it "This week · Sep 7 – 13" against the gallery's "Sep 07 - Sep 13"),
+# so a raw comparison matches nothing. seed_week_caption is still the right reader
+# for "did the week change at all", where the exact wording does not matter.
+seed_week_key() { tt_week_key "$(seed_week_caption)"; }
+
 # seed_week_list — one line per week the consultant's history gallery offers, as
 # "<label>|<projects>|<hours>", newest first.
 #
@@ -185,15 +194,24 @@ seed_materialise_weeks() {
 # because each step has to be verified — a loop of 34 prev-clicks with a 1s settle
 # advanced the week only 4 times, the rest swallowed mid-render. The gallery lists only
 # CURRENT and PAST weeks, so a future week needs the arrow fallback.
+# EQUALITY, not substring, and deliberately different from the substring match in
+# seeders/seed-toprocess-entries.sh. The difference is the INPUT CONTRACT, not an
+# inconsistency: <label> here is a WHOLE week label (both callers read it straight
+# out of seed_week_list, i.e. the history gallery), for which tt_week_key is the
+# identity, so equality is exact and strictly sharper than the substring test it
+# replaced. SEED_START_WEEK over there is a user-supplied FRAGMENT ("Sep 27"), which
+# only a substring test can honour. Do not "unify" these without changing what one
+# of them accepts.
 seed_goto_week() {
-  local want="$1" i j before after
-  case "$(seed_week_caption)" in *"$want"*) return 0 ;; esac
+  local want="$1" i j before after wantkey
+  wantkey="$(tt_week_key "$want")"; [ -n "$wantkey" ] || wantkey="$want"
+  [ "$(seed_week_key)" = "$wantkey" ] && return 0
 
   for i in 1 2; do
     [ "$(pw "() => { const g=document.querySelector('.mx-name-galTimesheetHistory'); if(!g) return 'N'; const it=[...g.querySelectorAll('.widget-gallery-clickable')].find(e=>(e.innerText||'').trim().indexOf('$want')===0); if(it){ it.click(); return 'Y'; } return 'N'; }")" = "Y" ] || break
     for j in $(seq 1 8); do
       sleep 2
-      case "$(seed_week_caption)" in *"$want"*) return 0 ;; esac
+      [ "$(seed_week_key)" = "$wantkey" ] && return 0
     done
   done
 
@@ -207,7 +225,7 @@ seed_goto_week() {
       [ -n "$after" ] && [ "$after" != "$before" ] && break
     done
     [ "$after" = "$before" ] && return 1
-    case "$after" in *"$want"*) return 0 ;; esac
+    [ "$(tt_week_key "$after")" = "$wantkey" ] && return 0
   done
   return 1
 }
