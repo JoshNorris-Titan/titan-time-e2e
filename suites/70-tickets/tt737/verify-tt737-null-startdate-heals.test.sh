@@ -84,6 +84,17 @@ if [ "$before" -ge 25 ]; then
   tt_fail "TT-737: this consultant already shows $before history rows, at or past the gallery's 25-row page size, so the filter assertion cannot distinguish 'excluded' from 'on page 2'. Point TT737 at a consultant with a shorter history."
 fi
 
+# The same objection at the other end. An empty gallery renders nothing at all, so at zero
+# rows the count cannot tell "the dateless row was filtered out" from "the gallery only
+# started rendering once a row existed" — and it reports the latter as assertion B failing,
+# which reads exactly like a missing StartDate constraint in the product. That cost a real
+# investigation: run this spec straight after 00-setup, which clears the consultant's
+# timesheets, and it fails claiming galTimesheetHistory has no 'StartDate != empty'
+# constraint. It does. Run 20-consultant first (as the full suite does) and this passes.
+if [ "$before" -eq 0 ]; then
+  tt_fail "TT-737: this consultant has no timesheet history, so assertion B cannot distinguish 'the dateless row was excluded' from 'the gallery had nothing to render until it existed'. Run suites/20-consultant first (the full suite does) instead of this spec straight after 00-setup."
+fi
+
 # ------------------------------------------------------- create the dateless row
 #
 # StartDate and EndDate are left unset — that IS the fixture. The account association is
@@ -106,7 +117,19 @@ grid="$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-dvT
 
 # The grid element can survive while its data source failed, so also require the columns
 # to have rendered — the same shape verify-consultant-timesheet.test.sh asserts.
-tt_assert_all "TT-737 consultant timesheet grid" "Project" "Client" "Total"
+#
+# "Client" USED TO BE IN THIS LIST. It was dropped from the sibling spec when the grid's
+# Client column heading was removed from Main.ConsultantDashboard on 2026-09-02 (the
+# customer name is still bound in the row, only the heading went) — see the header of
+# suites/20-consultant/verify-consultant-timesheet.test.sh. This copy was missed and went
+# on asserting it, which is what failed run 33883215468.
+#
+# It is not merely stale. Several fixture customers are named "E2E ClientApproval ...", so
+# a "Client" needle can be satisfied by a CUSTOMER NAME in a row rather than by a column
+# heading, passing or failing on which projects the signed-in consultant happens to hold
+# that week. Replaced with the day and total headings, which nothing else on the page
+# renders — a strictly stronger check on "the columns came up" than the needle it drops.
+tt_assert_all "TT-737 consultant timesheet grid" "Project" "Sun" "Sat" "Total"
 
 if playwright-cli console 2>/dev/null | grep -qiE "addDays|MicroflowException|/xas/.*560|\"result\":560|internal server error"; then
   tt_fail "TT-737: the browser console reports a server error after a dateless Timesheet row appeared — DS_Timesheet_Get's 'StartDate missing?' guard is not holding. Run with --verbose and read the console output."
