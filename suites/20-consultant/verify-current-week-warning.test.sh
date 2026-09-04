@@ -126,12 +126,21 @@ cw_row_ordinal() {
 
 # ------------------------------------------------------------- the current week
 
-# The week label renders its days as "Aug 30 - Sep 05", so match on the Sunday.
-# %w is 0 on Sunday, which makes "-0 days" today and keeps the boundary right.
+# Match on the week's SUNDAY. %w is 0 on Sunday, which makes "-0 days" today and
+# keeps the boundary right.
+#
+# The needle is compared against tt_week_key, not against the caption. The caption
+# no longer contains a bare date range at all -- TT-745 made it
+# "This week · Aug 30 – Sep 5", with no zero padding -- so a raw match on the
+# "%b %d" form ("Aug 30") still works by luck for two-digit days and fails for
+# every single-digit one. The key is zero-padded, which is what date(1) produces.
 DOW="$(date +%w)"
 SUNDAY="$(date -d "-${DOW} days" +'%b %d' 2>/dev/null || true)"
 [ -n "$SUNDAY" ] \
   || tt_fail "could not compute this week's Sunday with date(1); without it this test cannot tell the current week from any other and would assert nothing the old code did not already satisfy"
+
+# cw_week_key -- the week on screen as a canonical "Mmm DD - Mmm DD".
+cw_week_key() { tt_week_key "$(tt_week_label)"; }
 
 tt_login "$CUSER" "My Timesheets"
 
@@ -139,18 +148,18 @@ tt_login "$CUSER" "My Timesheets"
 # Scan outward anyway rather than trusting that: a landing-week change would
 # otherwise turn this into a test of a DIFFERENT week that still passes.
 on_current=""
-case "$(tt_week_label)" in *"$SUNDAY"*) on_current=1 ;; esac
+case "$(cw_week_key)" in *"$SUNDAY"*) on_current=1 ;; esac
 if [ -z "$on_current" ]; then
   for _ in $(seq 1 8); do
     playwright-cli click ".mx-name-btnWeekPrev" >/dev/null 2>&1; sleep 2
-    case "$(tt_week_label)" in *"$SUNDAY"*) on_current=1; break ;; esac
+    case "$(cw_week_key)" in *"$SUNDAY"*) on_current=1; break ;; esac
   done
 fi
 if [ -z "$on_current" ]; then
   tt_login "$CUSER" "My Timesheets" >/dev/null 2>&1
   for _ in $(seq 1 12); do
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1; sleep 2
-    case "$(tt_week_label)" in *"$SUNDAY"*) on_current=1; break ;; esac
+    case "$(cw_week_key)" in *"$SUNDAY"*) on_current=1; break ;; esac
   done
 fi
 [ -n "$on_current" ] \

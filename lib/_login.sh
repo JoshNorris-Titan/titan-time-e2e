@@ -313,9 +313,52 @@ tt_fill_cell() {
 # leaving the week. tt654_refetch_week has done this since TT-654; it is here so
 # every test can, and so the reason is written down once.
 
-# tt_current_week — the week range the grid is showing right now, or ''.
+# ---------------------------------------------------------------------------
+# tt_week_key <text> — the canonical "Mmm DD - Mmm DD" key for a week, or ''.
+#
+# THE PROBLEM THIS SOLVES. Four surfaces name the same week four different ways,
+# and half this suite identifies a week by matching one against another:
+#
+#   .mx-name-txtWeekRange   "This week · Sep 7 – 13"   (TT-745; en dash, no
+#                                                       trailing month, no zero pad)
+#   .mx-name-txtWeekRange   "E2E Sep 06 - Sep 12"      (the pre-TT-745 caption,
+#                                                       prefixed with the account's
+#                                                       first name)
+#   galTimesheetHistory row "Sep 06 - Sep 12"
+#   HR week picker          "Oct 04 - Oct 10, 2026"
+#
+# Matching any of those against another verbatim never hits, so every comparison
+# goes through this function first. It accepts ALL FOUR shapes deliberately: the
+# model half of TT-745 ships separately from this suite, so between the PR landing
+# and the deploy reaching cloud dev the consultant grid still renders the old
+# caption. A key-based comparison is green on both sides of that deploy; a regex
+# tuned to one caption is red on the other.
+#
+# Rules: any prefix is discarded, en/em dashes count as the separator, a missing
+# trailing month is inherited from the start of the range, days are zero-padded,
+# and a trailing ", 2026" is dropped.
+#
+# Prints NOTHING and still returns 0 when the text holds no week range at all —
+# one caller runs under `set -e`, and the established contract is that callers
+# test for an empty result (`[ -n "$key" ] || key="$week"`). A partial range is
+# not a week: "Sep 7" alone yields '' rather than a guess.
+#
+# suites/80-platform/verify-week-key-contract.test.sh pins every row above.
+tt_week_key() {
+  local s="$1"
+  s="${s//$'\xe2\x80\x93'/-}"        # en dash
+  s="${s//$'\xe2\x80\x94'/-}"        # em dash
+  local re='([A-Z][a-z][a-z])[[:space:]]+([0-9][0-9]?)[[:space:]]*-[[:space:]]*(([A-Z][a-z][a-z])[[:space:]]+)?([0-9][0-9]?)([^0-9]|$)'
+  [[ $s =~ $re ]] || return 0
+  local m1="${BASH_REMATCH[1]}" d1="${BASH_REMATCH[2]}"
+  local m2="${BASH_REMATCH[4]}" d2="${BASH_REMATCH[5]}"
+  [ -n "$m2" ] || m2="$m1"
+  printf '%s %02d - %s %02d\n' "$m1" "$((10#$d1))" "$m2" "$((10#$d2))"
+}
+
+# tt_current_week — the week the grid is showing right now, as a tt_week_key, or ''.
 tt_current_week() {
-  playwright-cli eval "() => { const t=((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim(); const m=t.match(/[A-Z][a-z]{2}\s+\d{1,2}\s*-\s*[A-Z][a-z]{2}\s+\d{1,2}/); return m ? m[0] : ''; }" 2>/dev/null | _tt_eval_str
+  tt_week_key "$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()" 2>/dev/null | _tt_eval_str)"
 }
 
 # tt_refetch_week — re-query the week the grid is showing, staying on it.
@@ -1694,13 +1737,12 @@ tt_consultant_submit_project_row() {
   done
   { [ -n "$ord" ] && [ "$ord" != "0" ]; } || tt_fail "consultant: no editable week with a '$proj' row found"
 
-  # Record WHICH week is being submitted, in the "MMM DD - MMM DD" form the HR
-  # dashboard uses. Callers need it to find the entry they just created rather
-  # than any card that happens to mention the same project — see
-  # tt647_select_exact_week. The consultant caption is "E2E Oct 04 - Oct 10";
-  # the HR week picker renders "Oct 04 - Oct 10, 2026". Stripping the prefix
-  # and keeping the day range makes them comparable.
-  TT_SUBMITTED_WEEK=$(playwright-cli eval "() => { const t=((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim(); const m=t.match(/[A-Z][a-z]{2}\\s+\\d{1,2}\\s*-\\s*[A-Z][a-z]{2}\\s+\\d{1,2}/); return m ? m[0] : ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
+  # Record WHICH week is being submitted, as a canonical tt_week_key. Callers need
+  # it to find the entry they just created rather than any card that happens to
+  # mention the same project — see tt647_select_exact_week. The consultant caption
+  # and the HR week picker word the same week differently ("This week · Oct 4 – 10"
+  # against "Oct 04 - Oct 10, 2026"), so the key is what makes them comparable.
+  TT_SUBMITTED_WEEK="$(tt_current_week)"
   export TT_SUBMITTED_WEEK
 
   for d in Mon Tues Wed Thurs Fri; do

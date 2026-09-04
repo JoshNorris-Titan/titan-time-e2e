@@ -623,15 +623,13 @@ tt_hr_count_cards_for_week() {
   esac
 }
 
-# tt_week_key <week-label> -- the bare "Mmm DD - Mmm DD" part of a week label.
-#
-# The consultant grid's own .mx-name-txtWeekRange renders an environment prefix on
-# this data set ("E2E Sep 06 - Sep 12"), while the timesheet-history rows and the HR
-# week picker both render the range alone ("Sep 06 - Sep 12"). Matching one against
-# the other verbatim therefore never hits. Normalise before comparing.
-tt_week_key() {
-  printf '%s' "$1" | sed -n 's/.*\([A-Z][a-z][a-z] [0-9][0-9] - [A-Z][a-z][a-z] [0-9][0-9]\).*/\1/p'
-}
+# tt_week_key now lives in lib/_login.sh, which every library and spec sources
+# before this one. It was moved there by TT-745: the consultant caption became
+# "This week · Sep 7 – 13", which has no trailing month and no zero padding, so the
+# old sed here (which required "Mmm DD - Mmm DD" verbatim) returned '' for every
+# week and silently stopped matching. The version in _login.sh normalises all four
+# week shapes this suite meets. Do not redefine it here -- this file is sourced
+# AFTER _login.sh, so a definition here would shadow it.
 
 # tt_consultant_history_load -- page the consultant's timesheet-history gallery in
 # fully and echo its text (newlines flattened).

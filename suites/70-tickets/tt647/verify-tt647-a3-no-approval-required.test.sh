@@ -56,9 +56,10 @@ seed_zero_hour_week() {
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnSubmit'))" 2>/dev/null | grep -qiw true \
     || tt_fail "$CUSER: no editable week with a Submit button found to seed a zero-hour entry"
 
-  # The consultant caption reads "E2E Aug 30 - Sep 05"; the HR picker renders
-  # "Aug 30 - Sep 05, 2026". Keep the day range so the two are comparable.
-  week=$(playwright-cli eval "() => { const t=((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim(); const m=t.match(/[A-Z][a-z]{2}\s+\d{1,2}\s*-\s*[A-Z][a-z]{2}\s+\d{1,2}/); return m ? m[0] : ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
+  # The consultant caption and the HR week picker word the same week differently
+  # ("This week · Aug 30 – Sep 5" against "Aug 30 - Sep 05, 2026"), so take the
+  # canonical key -- tt647_select_exact_week prefix-matches it against the picker.
+  week="$(tt_current_week)"
   [ -n "$week" ] || tt_fail "$CUSER: could not read the week label off .mx-name-txtWeekRange to seed against"
   TT_A3_SEEDED_WEEK="$week"
   echo "  seeding zero hours into week '$week'"

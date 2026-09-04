@@ -110,6 +110,7 @@ IFS="$OLD_IFS"
 
 WEEK_TEXT=""
 WEEK_RANGE=""
+WEEK_RANGE_KEY=""
 ROWS=0
 CHECKED=0
 SEEN=""
@@ -122,6 +123,9 @@ for PART in "${PARTS[@]}"; do
       REST="${PART#WEEK|}"
       WEEK_TEXT="${REST%%|*}"
       WEEK_RANGE="${REST#*|}"
+      # Normalised once here rather than per row: the badge names one week, and
+      # every row below is asked whether it is that same week.
+      WEEK_RANGE_KEY="$(tt_week_key "$WEEK_RANGE")"
       continue
       ;;
   esac
@@ -190,17 +194,27 @@ for PART in "${PARTS[@]}"; do
   # txtWeekRange/txtWeekStatus describe ONE week; if that week is also in the
   # history list, the two pills are describing the same Timesheet row and must say
   # the same word. This is the assertion that keeps the two widgets from drifting.
-  # txtWeekRange renders "<FirstName> MMM dd - MMM dd" while the history row renders
-  # "MMM dd - MMM dd", so match on the suffix.
-  if [ -n "$WEEK_TEXT" ] && [ -n "$DATE" ]; then
-    case "$WEEK_RANGE" in
-      *"$DATE")
-        if [ "$TEXT" != "$WEEK_TEXT" ]; then
-          tt_fail "the same week is labelled two different ways: history row '$DATE' says '$TEXT' but the week badge above the grid says '$WEEK_TEXT'"
-        fi
-        CHECKED=$((CHECKED+1))
-        ;;
-    esac
+  #
+  # The two widgets word the week differently -- txtWeekRange reads
+  # "This week · Sep 7 – 13" (TT-745) while the history row reads "Sep 07 - Sep 12"
+  # -- so both go through tt_week_key and the keys are compared. This used to be a
+  # SUFFIX match on the raw caption, which the TT-745 caption satisfies for no week
+  # at all.
+  #
+  # NOTHING HERE FAILS WHEN CHECKED STAYS 0, and that is deliberate rather than an
+  # oversight: the history gallery's data source is evaluated at page render, so on a
+  # freshly cleared database it can legitimately come back without the current week
+  # (Main.DS_Timesheet_Get creates that row during the same render -- see
+  # seed_materialise_weeks in lib/_seed.sh). A hard assertion here would fail on data
+  # state rather than on drift. The diagnostic printed after the loop is what keeps a
+  # silent zero legible, which is what a caption change would look like.
+  if [ -n "$WEEK_TEXT" ] && [ -n "$DATE" ] && [ -n "$WEEK_RANGE_KEY" ]; then
+    if [ "$(tt_week_key "$DATE")" = "$WEEK_RANGE_KEY" ]; then
+      if [ "$TEXT" != "$WEEK_TEXT" ]; then
+        tt_fail "the same week is labelled two different ways: history row '$DATE' says '$TEXT' but the week badge above the grid says '$WEEK_TEXT'"
+      fi
+      CHECKED=$((CHECKED+1))
+    fi
   fi
 
   case "$SEEN" in
@@ -217,6 +231,11 @@ done
 # empty and every assertion above unreachable.
 if [ "$ROWS" -eq 0 ]; then
   tt_fail "timesheet history is empty for e2e_consultant — nothing to assert (tt_gallery_load_all reported ${LOADED:-0} card(s)). Run the suite through run-tests.sh so the seeders run first; if it is still empty, the seed for this account did nothing."
+fi
+
+if [ "$CHECKED" = "0" ]; then
+  echo "  NOTE: assertion 6 compared nothing -- the week badge names '${WEEK_RANGE_KEY:-?}' (from '${WEEK_RANGE:-}') and no history row resolved to that key."
+  echo "        Expected on a freshly cleared database; if the gallery clearly DOES list that week, tt_week_key (lib/_login.sh) has stopped matching one of the two captions."
 fi
 
 echo "PASS: all $ROWS timesheet-history row(s) carry a themed status pill whose caption, colour and delete affordance agree; $CHECKED row(s) cross-checked against the week badge; captions seen: ${SEEN:-none}"

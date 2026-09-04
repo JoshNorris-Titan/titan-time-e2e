@@ -37,6 +37,11 @@ source tests/lib/_login.sh
 
 TARGET="${SEED_TARGET:-50}"
 START_WEEK="${SEED_START_WEEK:-Sep 27}"
+# Matched against week_key, which zero-pads the day, so pad the needle too:
+# "Sep 7" would otherwise never match the key "Sep 07 - Sep 13".
+if [[ $START_WEEK =~ ^([A-Z][a-z][a-z])[[:space:]]+([0-9])$ ]]; then
+  START_WEEK="${BASH_REMATCH[1]} 0${BASH_REMATCH[2]}"
+fi
 MAX_WEEKS="${SEED_MAX_WEEKS:-14}"
 
 # Densest consultant first so the target is reached in the fewest weeks, but each
@@ -81,10 +86,18 @@ click_text_soft() {
 
 # ---------------------------------------------------------------- consultant side
 
-# week_caption — the current week caption, e.g. "E2E Sep 27 - Oct 03".
+# week_caption — the current week caption, verbatim ("This week · Sep 27 – Oct 3").
+# Use it to detect that the week CHANGED, where the wording does not matter.
 week_caption() {
   playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()" 2>/dev/null | sed -n '2p' | tr -d '"'
 }
+
+# week_key — the same week as a canonical "Mmm DD - Mmm DD" (see tt_week_key in
+# lib/_login.sh). Use it to ask WHICH week this is. The caption no longer contains
+# a bare date range (TT-745), so matching SEED_START_WEEK against it directly
+# stopped working — and it failed by never finding the start week rather than by
+# erroring, which is the expensive kind of silence in an hour-long seeder.
+week_key() { tt_week_key "$(week_caption)"; }
 
 # open_row_ordinals — 1-based ordinals (into the full txtDayMon list) of rows that
 # are editable on this week. Locked rows still render an input, so the ordinal has
@@ -210,11 +223,10 @@ seed_consultant() {
 
   # advance to the common start week
   for i in $(seq 1 "$MAX_WEEKS"); do
-    wk="$(week_caption)"
-    case "$wk" in *"$START_WEEK"*) break ;; esac
+    case "$(week_key)" in *"$START_WEEK"*) break ;; esac
     advance_week || break
   done
-  case "$(week_caption)" in
+  case "$(week_key)" in
     *"$START_WEEK"*) : ;;
     *) log "    !! never reached a week matching '$START_WEEK' (now: $(week_caption))" ;;
   esac
