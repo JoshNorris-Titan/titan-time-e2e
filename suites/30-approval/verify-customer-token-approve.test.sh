@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
+# tt-timeout: 8m
 # verify-customer-token-approve.test.sh
+#
+# BUDGET. Measured 130s against the 4m default. It has more headroom than its two
+# neighbours but sits on the same slow path (submit a fresh entry when the pending
+# pool is empty), so it is declared alongside them rather than left one bad run away
+# from the same cap.
 #
 # The client actually APPROVES from the emailed token link.
 #

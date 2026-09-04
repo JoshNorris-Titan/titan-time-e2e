@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
+# tt-timeout: 8m
 # verify-customer-token-reject.test.sh
+#
+# BUDGET. Measured 225s against the 4m default — it passed with 15 seconds to spare
+# locally and was killed outright in CI run 33878322663. This is the third of three
+# token specs in this folder, so by the time it runs the two ahead of it have taken
+# the pending entries and it must submit a fresh one as the consultant, which is the
+# slow path. Not a hang: the run log shows it reaching "reminded newly-created entry"
+# and being cut off mid-flow. 8m matches the budget the other slow specs declare.
 #
 # The client REJECTS from the emailed token link (state transition T12,
 # AwaitingCustomerApproval -> Rejected), and the comment guard that protects it.
