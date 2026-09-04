@@ -352,7 +352,19 @@ tt_hr_reject_card_for_project() {
     unset IFS
     playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
     sleep 3
-    card="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, $TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView')].filter(b=>b.offsetParent!==null); const card=(b)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who') return el; } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
+    # SCOPE THE CARD TO ONE CARD. This walks up from a button looking for an ancestor whose
+    # text holds the project name, and it used to accept the first such ancestor. Walk far
+    # enough and that ancestor spans SEVERAL cards, so a button on the wrong card matches
+    # because a SIBLING card mentions the project — and we click the wrong entry's Reject.
+    # That is not hypothetical: run 33895309295 asked to reject 'E2E Sandbox' and the
+    # rejected list came back holding "Titan - E2E EmailTest" with this helper's own comment
+    # string on it. It depends on row order, which is why it passes on some runs.
+    #
+    # So an ancestor only counts as the card if it holds no OTHER button OF THE SAME KIND.
+    # Same kind matters: WEEKLY TO PROCESS cards carry "View & Process" AND "Reject" side by
+    # side, so rejecting anything that shares an ancestor with a View button would match
+    # nothing at all on that tab and break rejection there outright.
+    card="$(playwright-cli eval "() => { const btns=[...document.querySelectorAll('button, .mx-button, $TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView')].filter(b=>b.offsetParent!==null); const card=(b,rx)=>{ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; const t=(el.innerText||''); if(t.length>10 && t.length<500 && t.indexOf('$proj')>=0 && t.split('\n')[0].trim()==='$who'){ const others=[...el.querySelectorAll('button, .mx-button')].filter(x=>x!==b && rx.test((x.innerText||'').trim())); return others.length===0 ? el : null; } } return null; }; for(const b of btns){ if(/^reject\$/i.test((b.innerText||'').trim()) && card(b,/^reject\$/i)){ b.click(); return 'reject'; } } for(const b of btns){ if(/^view/i.test((b.innerText||'').trim()) && card(b,/^view/i)){ b.click(); return 'view'; } } return 'nf'; }" 2>/dev/null | _tt_eval_str)"
     if [ "$card" != "nf" ]; then
       opened=1; echo "  (rejecting '$proj' on $tab, week $lbl, via $card)"; break
     fi
