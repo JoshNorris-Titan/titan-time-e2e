@@ -28,17 +28,22 @@
 #   Main.Consultant_OverWeeklyHours  "You have entered more than the {1} hour
 #                                     weekly limit for {2}", CLOSE ONLY.
 #                                     This is the over-budget block.
-#   Main.Consultant_OverFortyHours   btnWarningCancel + btnWarningSubmitAnyway,
-#                                     dynamic WarningMessage, calls
-#                                     ACT_Timesheet_SubmitAnyway. Despite the
-#                                     name this is the GENERIC submit
-#                                     confirmation - it is what appears for
-#                                     UNDER 40 hours and "this week has not
-#                                     ended yet".
+#   Main.Consultant_OverFortyHours   btnWarningCancel + btnConfirmSubmit, an
+#                                     always-on summary block, a conditional
+#                                     lstWarnings driven by WarningMessage, and
+#                                     ACT_Timesheet_SubmitAnyway behind the one
+#                                     submit button. Despite the name this is
+#                                     the GENERIC submit confirmation - it is
+#                                     what appears for UNDER 40 hours and "this
+#                                     week has not ended yet".
+#                                     (Its button was btnWarningSubmitAnyway
+#                                     until the 2026-09-04 consultant rework
+#                                     merged the warned and clean states into
+#                                     one layout with a single Submit.)
 #
 # So the page called OverFortyHours is not the over-40 dialog, and the over-40
 # dialog is the one called OverWeeklyHours. This file originally read those
-# names the obvious way, looked for btnWarningSubmitAnyway on the over-40 path,
+# names the obvious way, looked for the override button on the over-40 path,
 # did not find it, and reported "Consultant_OverFortyHours never appeared" about
 # a warning the app plainly does raise. Nothing had been removed.
 #
@@ -110,13 +115,21 @@ hv_row_editable() {
   [ "$(hv_row_ordinal)" != "0" ] && echo "true" || echo "false"
 }
 
+# hv_warning_open — is the merged submit popup up AND showing a warning?
+#
+# It used to be enough to find btnWarningSubmitAnyway, because that button only
+# existed on the warned state of the popup. Since the 2026-09-04 rework there is
+# one state and one button (btnConfirmSubmit), which is also what a week with
+# nothing wrong shows — so the button alone no longer distinguishes "it warned"
+# from "it asked". Require a rendered warning row as well, which is the thing
+# case B is actually about.
 hv_warning_open() {
-  playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnWarningSubmitAnyway'))" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnConfirmSubmit'); const w=[...document.querySelectorAll('.mx-name-lstWarnings .tt-warning-item')].filter(e=>e.offsetParent!==null); return String(!!b && w.length>0); }" 2>/dev/null | _tt_eval_str
 }
 
 # hv_complained — did ANYTHING object? A popup, a validation message, or a dialog.
 hv_complained() {
-  playwright-cli eval "() => { const v=[...document.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).length; const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); const w=document.querySelector('.mx-name-btnWarningSubmitAnyway'); return String(v>0 || !!d || !!w); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const v=[...document.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).length; const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); const w=document.querySelector('.mx-name-btnConfirmSubmit'); return String(v>0 || !!d || !!w); }" 2>/dev/null | _tt_eval_str
 }
 
 hv_submit() {
@@ -258,7 +271,7 @@ else
       if [ "$(hv_warning_open)" = "true" ]; then
         b_before="$(tt_draft_count "$PROJECT" "$CUSER")"
         case "$b_before" in ERR:*|''|*[!0-9]*) b_before="" ;; esac
-        playwright-cli click ".mx-name-btnWarningSubmitAnyway" >/dev/null 2>&1
+        playwright-cli click ".mx-name-btnConfirmSubmit" >/dev/null 2>&1
         sleep 4
         tt_clear_dialogs 6 >/dev/null 2>&1 || true
         # Poll the DATA LAYER, not the row: a submitted row can keep looking
@@ -288,7 +301,7 @@ else
       fi
     fi
   else
-    bad "B submitting 20 hours offered no Submit Anyway override (.mx-name-btnWarningSubmitAnyway never appeared). Dialog on screen: \"$(hv_dialog_text)\""
+    bad "B submitting 20 hours raised no under-40 warning offering an override (no .tt-warning-item row inside .mx-name-lstWarnings beside .mx-name-btnConfirmSubmit). Dialog on screen: \"$(hv_dialog_text)\""
     tt_clear_dialogs 8 >/dev/null 2>&1 || true
   fi
 fi
