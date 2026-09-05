@@ -31,18 +31,32 @@
 #
 # ONE POPUP, NOT TWO. The "Are you Sure?" step (Main.Confirmation_timesheet) was
 # folded into the same page: btnSubmit now calls Main.ACT_Timesheet_Submit_Start,
-# which evaluates the warnings FIRST and opens a single popup — the warning list
-# plus "Submit Anyway" when something fired, or a plain "Submit Timesheet?"
-# confirm when nothing did. Case A below asserts that merge directly, because a
-# regression to the two-popup chain would otherwise still satisfy A's text check.
+# which evaluates the warnings FIRST and opens a single popup. Case A below
+# asserts that merge directly, because a regression to the two-popup chain would
+# otherwise still satisfy A's text check.
+#
+# AND THEN THE POPUP ITSELF WAS MERGED A SECOND TIME. Until 2026-09-04 that one
+# page still held two alternative STATES — a warning list with "Submit Anyway",
+# or a plain "Submit Timesheet?" confirm — switched by conditional visibility on
+# $TimesheetHelper/WarningMessage. The consultant dashboard rework (model commit
+# fc029c2c) collapsed them into a single layout: a summary block (week, total,
+# and per-project lines from Main.DS_Timesheet_SubmitSummary) that ALWAYS
+# renders, lstWarnings as the only conditional half, and two buttons —
+# btnWarningCancel and btnConfirmSubmit, the latter calling
+# Main.ACT_Timesheet_SubmitAnyway on the warned and the clean path alike.
+# btnWarningSubmitAnyway and txtConfirmBody no longer exist anywhere in the
+# model, so an assertion naming them can only ever be red. A3 and B below were
+# rewritten for that layout.
 #
 # WHAT IT ASSERTS
 #   A. Submitting the current week raises the warning popup FIRST — no "Are you
 #      Sure?" step — and the popup TEXT contains "This week has not ended yet".
 #   A2. The warning renders as a real list row (lstWarnings / .tt-warning-item),
 #      not as a run-on paragraph, and a lone warning carries no "1." number.
-#   B. Submit Anyway on that popup still submits the week — the warning is a
-#      confirm, not a block.
+#   A3. The merged popup shows its summary AND its warnings together and offers
+#      exactly one submit button — one popup, one way out.
+#   B. Submit on that popup still submits the week — the warning is a confirm,
+#      not a block.
 #
 # It asserts on dialog TEXT, not on a widget name: Consultant_OverFortyHours is
 # one parameterised page that carries all the warnings, so its presence alone
@@ -217,20 +231,43 @@ else
   note "A2 $ITEMS warning rows, all numbered"
 fi
 
-# ------------------------------- A3. the confirm state is NOT showing as well
+# ------------------------------------------------- A3. one popup, one way out
 #
-# Both halves of the merged popup live on the same page, switched by conditional
-# visibility on $TimesheetHelper/WarningMessage. A broken condition would render
-# BOTH - the warning list AND the "are you sure" confirm with its plain Submit
-# button - which still passes every check above. This is the only assertion that
-# would notice.
-CLEAN_SHOWING="$(playwright-cli eval "() => { const vis=s=>{const e=document.querySelector(s); return !!(e && e.offsetParent!==null);}; return String(vis('.mx-name-btnConfirmSubmit') || vis('.mx-name-txtConfirmBody')); }" 2>/dev/null | _tt_eval_str)"
-[ "$CLEAN_SHOWING" != "true" ] \
-  || tt_fail "the warning popup on '$WEEK' ALSO rendered the no-warning confirm (btnConfirmSubmit / txtConfirmBody are visible). The two states are switched by conditional visibility on \$TimesheetHelper/WarningMessage in Main.Consultant_OverFortyHours - a warned week should show the warning list and Submit Anyway only."
-note "A3 the no-warning confirm state is correctly hidden"
+# This step used to assert that the no-warning confirm state was NOT rendered
+# alongside the warning list, back when the page carried both and switched
+# between them on $TimesheetHelper/WarningMessage. That split is gone (see the
+# header): the summary half renders unconditionally now and there is a single
+# submit button, so the old assertion could only fail.
+#
+# The other half of the same worry survives, and this is still the only step
+# that looks at it. A warned week must show the WHOLE merged popup - the summary
+# block and its per-project lines as well as the warnings - and must offer
+# exactly ONE submit button. A regression that re-splits the page fails here:
+# hiding the summary behind a warning reads as 0 lines, and a second confirm
+# button reappearing beside the first reads as 2.
+cw_popup_shape() {
+  local d; d="$(_tt_dialog_js)"
+  playwright-cli eval "() => { const dlg=$d; if(!dlg) return 'nodialog'; const vis=e=>!!(e&&e.offsetParent!==null); const sum=dlg.querySelector('.mx-name-containerSubmitSummary'); const lines=[...dlg.querySelectorAll('.mx-name-lstSubmitProjects .mx-name-containerSubmitLine')].filter(vis); const subs=[...dlg.querySelectorAll('button')].filter(b=>vis(b)&&/^(submit|submit anyway|confirm|yes)\$/i.test((b.innerText||'').trim())); return (vis(sum)?'1':'0')+'|'+lines.length+'|'+subs.length; }" 2>/dev/null | _tt_eval_str
+}
 
-# ------------------------------------------------ B. Submit Anyway still submits
-playwright-cli click ".mx-name-btnWarningSubmitAnyway" >/dev/null 2>&1
+SHAPE="$(cw_popup_shape)"
+SUM="${SHAPE%%|*}"; _rest="${SHAPE#*|}"; LINES="${_rest%%|*}"; SUBS="${_rest##*|}"
+
+[ "$SUM" = "1" ] \
+  || tt_fail "the warning popup on '$WEEK' rendered no submit summary (read '$SHAPE'). Since the 2026-09-04 rework Main.Consultant_OverFortyHours shows containerSubmitSummary on EVERY submit, warned or not; a warned week that hides it means the two states have been pulled apart again."
+case "$LINES" in ''|*[!0-9]*) tt_fail "could not count the summary's per-project lines in the popup on '$WEEK' (read '$SHAPE')" ;; esac
+[ "$LINES" -ge 1 ] \
+  || tt_fail "the submit summary on '$WEEK' listed no projects (read '$SHAPE'). lstSubmitProjects is fed by Main.DS_Timesheet_SubmitSummary - an empty list means that data source returned nothing for a week carrying 40 hours."
+case "$SUBS" in ''|*[!0-9]*) tt_fail "could not count the popup's submit buttons on '$WEEK' (read '$SHAPE')" ;; esac
+[ "$SUBS" = "1" ] \
+  || tt_fail "the merged popup on '$WEEK' offered $SUBS submit buttons, not 1 (read '$SHAPE'). btnConfirmSubmit is the single way out of this popup on both the warned and the clean path: two would mean the old warning/confirm split has come back, and zero would leave a warned consultant unable to submit at all."
+note "A3 one merged popup - summary ($LINES project line(s)) plus warnings, one submit button"
+
+# ------------------------------------------------------- B. Submit still submits
+#
+# btnConfirmSubmit, not btnWarningSubmitAnyway: the merged popup has one button
+# and it runs Main.ACT_Timesheet_SubmitAnyway whether or not anything warned.
+playwright-cli click ".mx-name-btnConfirmSubmit" >/dev/null 2>&1
 sleep 4
 tt_clear_dialogs 6 >/dev/null 2>&1 || true
 
@@ -240,7 +277,7 @@ for _ in $(seq 1 8); do
   sleep 3
 done
 [ -n "$submitted" ] \
-  || tt_fail "Submit Anyway on the not-ended warning left '$PROJECT' still editable on '$WEEK', so the week was never submitted. The warning is a confirm, not a block — Main.ACT_Timesheet_SubmitAnyway should close the popup and run ACT_Timesheet_Submit."
-note "B Submit Anyway submitted the current week"
+  || tt_fail "Submit on the not-ended warning left '$PROJECT' still editable on '$WEEK', so the week was never submitted. The warning is a confirm, not a block — btnConfirmSubmit runs Main.ACT_Timesheet_SubmitAnyway, which should close the popup and run ACT_Timesheet_Submit."
+note "B Submit submitted the current week"
 
 echo "PASS: verify-current-week-warning — the current week warns that it has not ended, and Submit Anyway still submits ($WEEK)"

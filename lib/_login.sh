@@ -147,12 +147,13 @@ _tt_dialog_js() {
 tt_clear_dialogs() {
   local max="${1:-8}" extra="${2:-}" i r d alts
   d="$(_tt_dialog_js)"
-  # 'submit' is listed as well as 'submit anyway'. Since the two submit popups
-  # were merged, a week with nothing wrong opens the same confirm page reading
-  # "Submit Timesheet?" with a plain Submit button (btnConfirmSubmit); only a
-  # week that actually warned shows "Submit Anyway" (btnWarningSubmitAnyway).
-  # Without the bare caption every clean submit parks on BLOCKED. The regex is
-  # anchored with ^...$, so 'submit' does NOT swallow 'Submit Anyway'.
+  # 'submit' is listed as well as 'submit anyway'. The two submit popups were
+  # merged into one page, and the 2026-09-04 consultant rework then merged that
+  # page's two states as well: warned or clean, the dialog now reads "Submit
+  # timesheet?" and its only confirm is a plain Submit (btnConfirmSubmit).
+  # Without the bare caption every submit would park on BLOCKED. 'submit anyway'
+  # is kept for the other popups that still use that wording, and the regex is
+  # anchored with ^...$, so 'submit' does NOT swallow it.
   alts='yes|submit|submit anyway|confirm|continue|proceed|ok'
   # Strip regex metacharacters — the caption is interpolated into a JS literal.
   [ -n "$extra" ] && alts="$alts|$(printf '%s' "$extra" | tr -d '\^$.[]|()?*+{}/')"
