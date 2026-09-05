@@ -126,6 +126,27 @@ jobs:
           npx playwright-cli install || true
           npx playwright-cli install-browser chromium
 
+      # pdftotext, for verify-tt683-a3, which reads the BODY of each exported PDF
+      # rather than only its name, size and checksum. That is the only assertion
+      # in the suite that can tell one consultant's timesheet from another's
+      # inside the archive, so it must not be quietly skipped.
+      #
+      # poppler-utils is not in the ubuntu-latest image's documented package
+      # list, so this cannot be assumed present -- but the list names notable
+      # packages rather than every one, so it may well be. Conditional on that
+      # account: a no-op costing nothing when the tool is already there, and an
+      # apt install of about a second when it is not.
+      #
+      # The spec FAILS rather than skips when pdftotext is missing, so if this
+      # step is ever removed the suite says so instead of going quietly green.
+      - name: Install poppler-utils (pdftotext)
+        shell: bash
+        run: |
+          command -v pdftotext >/dev/null 2>&1 && { pdftotext -v 2>&1 | head -1; exit 0; }
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq poppler-utils
+          pdftotext -v 2>&1 | head -1
+
       - name: Run suite
         shell: bash
         env:
