@@ -12,8 +12,20 @@ Modes
   names    one archive entry name per line
   pdf      "<name>~~OK <bytes>" or "<name>~~BAD <reason>" -- opens each entry
   records  "<name>~~<crc32>~~<bytes>" -- content identity, no inflation needed
+  extract  inflate every entry into <outdir>, printing "<name>~~<path>" per entry
+
+`extract` exists so a caller can read what is INSIDE each PDF rather than only
+its name, size and checksum. Distinct CRCs prove the renders are not
+byte-identical; they cannot prove each PDF holds the right consultant's hours,
+because two documents rendering the same person for different weeks differ in
+bytes too. verify-tt683-a3 reads the extracted text to settle that.
+
+Entry names are written out verbatim, so the caller can pair a file on disk back
+to the archive name it came from. They are also flattened: a name with a path
+separator in it would otherwise escape <outdir>, and this archive is built by
+ZipHandling.ZipDocuments from FileDocument names, which are not path-checked.
 """
-import sys, zipfile
+import os, sys, zipfile
 
 # Emit UNIX line endings even on Windows. Python opens stdout in text mode
 # there and rewrites every newline as carriage-return + newline, so each name
@@ -32,6 +44,10 @@ def main():
         print("usage: zipreport.py <zipfile> <names|pdf|records>", file=sys.stderr)
         return 2
     path, mode = sys.argv[1], sys.argv[2]
+    outdir = sys.argv[3] if len(sys.argv) > 3 else None
+    if mode == "extract" and not outdir:
+        print("usage: zipreport.py <zipfile> extract <outdir>", file=sys.stderr)
+        return 2
     try:
         zf = zipfile.ZipFile(path)
     except zipfile.BadZipFile as e:
@@ -65,6 +81,22 @@ def main():
                 print("%s~~BAD not a PDF (starts %r)" % (i.filename, head[:5]))
             else:
                 print("%s~~OK %d" % (i.filename, i.file_size))
+        elif mode == "extract":
+            # Flatten the name so a separator inside it cannot write outside
+            # outdir, and keep the archive name in the output so the caller can
+            # pair the file back to it.
+            flat = i.filename.replace("\\", "/").split("/")[-1]
+            dest = os.path.join(outdir, flat)
+            try:
+                os.makedirs(outdir, exist_ok=True)
+                with zf.open(i) as src, open(dest, "wb") as out:
+                    out.write(src.read())
+            except Exception as e:
+                print("ERR cannot extract %s: %s" % (i.filename, e), file=sys.stderr)
+                return 1
+            # Forward slashes even on Windows: the caller is bash, and a
+            # backslash in a path it quotes is an escape, not a separator.
+            print("%s~~%s" % (i.filename, dest.replace("\\", "/")))
         else:
             print("ERR unknown mode %s" % mode, file=sys.stderr)
             return 2
