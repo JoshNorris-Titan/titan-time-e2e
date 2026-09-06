@@ -57,7 +57,7 @@ MINE_NAME="${TT_ISO_NAME:-E2E Consultant}"
 # a second name does not help when the first one's data was never seeded.
 #
 # 'E2E Consultant Two' is now seeded deliberately, before this runs, by
-# suites/00-setup/verify-001-seed-isolation-control.test.sh (FX_ENTRIES in
+# suites/00-setup/verify-002-seed-isolation-control.test.sh (FX_ENTRIES in
 # lib/_fixtures.sh). If the control aborts here again, that step is the place to
 # look — not this list.
 OTHER_CANDIDATES="${TT_ISO_OTHER:-E2E Consultant Two}"

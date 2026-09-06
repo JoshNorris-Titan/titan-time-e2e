@@ -81,7 +81,7 @@ flowchart LR
 
    | Folder | What runs there |
    |---|---|
-   | `00-setup/` | Ensure the projects/assignments exist, then wipe transactional test data |
+   | `00-setup/` | Wipe everything (transactional data *and* projects/assignments), then rebuild the projects/assignments and seed control rows |
    | `10-smoke/` | Login and the role landing pages |
    | `20-consultant/` | Timesheet entry, line items, attachments |
    | `30-approval/` | PM, manager and customer approval journeys |
@@ -95,8 +95,24 @@ flowchart LR
    | `99-teardown/` | Wipe again |
 
    Previously this was a flat alphabetical sort, which worked only because `-` sorts before `0`
-   — so `verify-00-fixtures` happened to precede `verify-000-testdata-clear-before`. The folders
-   make that intent explicit instead of incidental.
+   — so the fixture step (then named `verify-00-fixtures`) happened to precede
+   `verify-000-testdata-clear-before`. The folders make that intent explicit instead of
+   incidental.
+
+   Inside `00-setup/` the numbers carry the order, and as of 2026-09-06 it runs
+   **clear → build → seed**:
+
+   | Step | What it does |
+   |---|---|
+   | `verify-000-testdata-clear-before` | Deletes each e2e consultant's transactional data **and** their assignments and the projects those were on |
+   | `verify-001-fixtures` | Rebuilds the projects (with their approval flags) and the consultant→project assignments |
+   | `verify-002-seed-isolation-control` | Seeds the entry rows `verify-consultant-data-isolation` needs as its control |
+
+   That is the reverse of the old order. The clear used to preserve structure, so the fixture
+   step deliberately ran ahead of it; it now removes structure too, so building has to come
+   after. The upside is that projects are recreated from `FX_PROJECTS` on every run, which makes
+   that table the only source of their approval flags — a project that already exists can no
+   longer pass the name check while carrying drifted configuration.
 4. **Marks a step FAILED if it exits non-zero**, prints its output, and saves a screenshot named
    `<step>-failure.png` so you can see what the page looked like.
 5. **Gives up on a step after 4 minutes**, so one hung page can't stall the run. A step that is
@@ -841,6 +857,7 @@ using. Details in [`tools/README.md`](tools/README.md).
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Administrator login |
 | `TT_ROLE_PASS` | Password shared by the `e2e_*` role accounts (see below) |
 | `TT_E2E_CONSULTANTS` | Which consultants the wipe steps are allowed to clear |
+| `TT_E2E_CLEAR_DEPTH` | `deep` (default) also deletes their assignments and the projects those were on; `shallow` is the old transactional-only clear. There is no automatic fallback — against an environment that has not been redeployed with the deep control, the clear fails and names the reason |
 
 **The role accounts.** `e2e_consultant`, `e2e_consultant2`, `e2e_hr`, `e2e_pm`, `e2e_pm2` and
 `e2e_tm`, all sharing `TT_ROLE_PASS`. They are **not** created by any fixture — `fx_ensure_*` only

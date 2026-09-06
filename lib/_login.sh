@@ -551,10 +551,12 @@ tt_try_click_text() {
 # Budget: each pass costs two evals, so 15 tries was roughly 15-20 seconds. That is
 # plenty against a warm app and not nearly enough against a cold one. The very first
 # login of a CI run lands on a Mendix Cloud environment that may not have served a
-# request in days, and the suite's own ordering makes verify-00-fixtures that first
-# caller -- "-" sorts before "0", so it precedes the clear step. It failed with
-# "login form not found" while every later login in the same run succeeded, which is
-# the signature of a cold start rather than a broken account.
+# request in days. That first caller is whatever sorts first in suites/00-setup --
+# verify-000-testdata-clear-before since 2026-09-06, and verify-00-fixtures before
+# that, when "-" sorting ahead of "0" put the fixture step in front of the clear.
+# Either way it is the step that eats the cold start: it failed with "login form
+# not found" while every later login in the same run succeeded, which is the
+# signature of a cold start rather than a broken account.
 #
 # The runner's health check does not cover this: it curls the index and gets a 200
 # back long before the client has booted far enough to render a login form.

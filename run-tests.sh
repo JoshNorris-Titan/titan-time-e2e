@@ -117,8 +117,9 @@ if [ -z "$BASE_URL" ] && [ "$LIST_ONLY" -eq 0 ]; then
   cat >&2 <<'EOF'
 FATAL: no target environment. Set TT_BASE_URL or pass --base-url.
 
-  This suite WRITES data (lib/_fixtures.sh provisions projects and assignments, and
-  the 00-setup bookends clear timesheets), so it will not guess where to run.
+  This suite WRITES data (the bookends DELETE every e2e timesheet, assignment and
+  project, and lib/_fixtures.sh then provisions them again), so it will not guess
+  where to run.
 
     TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh
     ./run-tests.sh --base-url http://localhost:8080        # local F5 run

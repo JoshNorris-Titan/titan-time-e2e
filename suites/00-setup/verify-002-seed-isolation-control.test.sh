@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
-# verify-001-seed-isolation-control.test.sh
+# verify-002-seed-isolation-control.test.sh
 #
 # Seed the transactional data that verify-consultant-data-isolation needs as its
-# CONTROL, after the clear has removed it.
+# CONTROL, after the clear has removed it and the fixtures have been rebuilt.
 #
-# WHY THIS IS ITS OWN STEP RATHER THAN PART OF verify-00-fixtures
-# ---------------------------------------------------------------
-# Run order under the runner's `LC_ALL=C sort` ('-' 0x2D precedes '0' 0x30):
+# WHY THIS IS ITS OWN STEP RATHER THAN PART OF verify-001-fixtures
+# ----------------------------------------------------------------
+# Run order under the runner's sort:
 #
-#     verify-00-fixtures                 structure: projects, consultants, assignments
-#     verify-000-testdata-clear-before   deletes every timesheet row for TT_E2E_CONSULTANTS
-#     verify-001-seed-isolation-control  <- this step
+#     verify-000-testdata-clear-before   deletes everything: transactional AND structure
+#     verify-001-fixtures                rebuilds projects, checks consultants, assignments
+#     verify-002-seed-isolation-control  <- this step
 #
-# The clear deliberately preserves structure, so fixtures can and should run
-# ahead of it. AssignmentEntries are exactly what it deletes, so anything
-# transactional has to come after. Adding this to fx_ensure_all would seed rows
-# the very next step throws away — which is the failure this is fixing, not a
-# theoretical one.
+# All three now run AFTER the clear, which was not true before 2026-09-06: the
+# clear used to preserve structure, so the fixture step deliberately ran ahead of
+# it. The deep clear takes assignments and projects too, so everything structural
+# moved behind it.
+#
+# This stays a separate step from verify-001-fixtures for a different reason than
+# it used to have. It is not about the clear any more — it is that seeding entries
+# needs a consultant session and a materialised week, while fx_ensure_all runs as
+# the Titan Manager building structure. Keeping them apart means a structural
+# failure reports as a structural failure, rather than as a confusing inability to
+# seed a control row.
 #
 # WHAT WAS BROKEN
 # ---------------
@@ -60,4 +66,4 @@ if [ -n "$FX_MISSING" ]; then
   tt_fail "the isolation control could not be seeded (listed above). verify-consultant-data-isolation will abort without it rather than report a meaningless pass."
 fi
 
-echo "PASS: verify-001-seed-isolation-control — control data present on $TT_BASE ($FX_PRESENT present, $FX_CREATED created)"
+echo "PASS: verify-002-seed-isolation-control — control data present on $TT_BASE ($FX_PRESENT present, $FX_CREATED created)"
