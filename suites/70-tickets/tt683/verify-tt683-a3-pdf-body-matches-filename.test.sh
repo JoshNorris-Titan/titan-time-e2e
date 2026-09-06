@@ -33,10 +33,23 @@
 #      header with an empty grid.
 #
 # And across entries, the assertion that actually matters:
-#   5. no PDF contains a DIFFERENT entry's consultant. This is the swap check.
-#      It needs two entries with distinct consultants to mean anything; with
-#      fewer, the step says so explicitly rather than reporting a silent pass on
-#      a check it never performed.
+#   5. no PDF contains what DISTINGUISHES a different entry from it. This is
+#      the swap check, and if it cannot be performed this step FAILS rather
+#      than passing. run-tests.sh prints a step's output only when it fails, so
+#      a note saying "this did not run" would be a message nobody ever sees --
+#      in a suite whose central finding was assertions that quietly assert
+#      nothing. Having not run the check, this file has no verdict to give.
+#
+# THE DISCRIMINATOR IS NOT ALWAYS THE CONSULTANT, and assuming it was would have
+# turned a correct nightly red. An entry is a consultant+project PAIRING, and
+# verify-tt683-a0 guarantees two distinct pairings reach export -- but its own
+# remedy is "assign the consultant to at least two projects", so the ordinary
+# seeded case is ONE consultant holding TWO projects. There, the other entry's
+# consultant appears in this PDF entirely legitimately, and testing for it would
+# report a swap on a perfectly good export. So each ordered pair uses whichever
+# half actually differs: the consultant when the consultants differ, otherwise
+# the project. A pair whose only differing half nests inside this one is not
+# usable in that direction and is counted as skipped.
 #
 # THE NAME TRANSFORM, AND WHY IT IS NOT A LOOSE MATCH. The filename carries the
 # consultant as "Last First" (Main.SUB_BuildTimesheetFileName swaps them); the
@@ -200,15 +213,39 @@ swap_fails=0
 for i in $(seq 0 $((n - 1))); do
   for j in $(seq 0 $((n - 1))); do
     [ "$i" = "$j" ] && continue
-    [ "${bodyforms[$i]}" = "${bodyforms[$j]}" ] && continue
-    # Is j's name a substring of i's? Then i's own header proves nothing.
-    case "${bodyforms[$i]}" in
-      *"${bodyforms[$j]}"*) nested=$((nested + 1)); continue ;;
-    esac
+
+    # What distinguishes entry j from entry i? An entry IS a consultant+project
+    # pairing, so either half can be the discriminator, and only a half that
+    # actually DIFFERS may be used: when one consultant holds two projects, j's
+    # consultant appears in i's PDF entirely legitimately, and testing for it
+    # would report a swap on a correct export.
+    #
+    # A discriminator is also unusable when j's value nests inside i's, because
+    # then i's own header contains it whatever the render did -- see the note
+    # above about "E2E Consultant Two" containing "E2E Consultant".
+    disc=""
+    if [ "${bodyforms[$i]}" != "${bodyforms[$j]}" ]; then
+      case "${bodyforms[$i]}" in
+        *"${bodyforms[$j]}"*) : ;;
+        *) disc="${bodyforms[$j]}" ;;
+      esac
+    fi
+    if [ -z "$disc" ] && [ "${projects[$i]}" != "${projects[$j]}" ]; then
+      case "${projects[$i]}" in
+        *"${projects[$j]}"*) : ;;
+        *) disc="${projects[$j]}" ;;
+      esac
+    fi
+
+    if [ -z "$disc" ]; then
+      nested=$((nested + 1))
+      continue
+    fi
+
     pairs=$((pairs + 1))
-    if grep -qF "${bodyforms[$j]}" "${textfiles[$i]}"; then
-      echo "FAIL: '${names[$i]}' also contains '${bodyforms[$j]}', who belongs in '${names[$j]}'."
-      echo "      One consultant's document is rendering another's hours. The filenames are"
+    if grep -qF "$disc" "${textfiles[$i]}"; then
+      echo "FAIL: '${names[$i]}' also contains '$disc', which belongs to '${names[$j]}'."
+      echo "      One assignment's document is rendering another's. The filenames are"
       echo "      built per helper and would be correct either way, and the two files differ"
       echo "      in bytes, so neither verify-tt683-a1's CRC check nor verify-tt683-a2's"
       echo "      naming check can see this. Main.ACT_PDF_GoTo is resolving the wrong"
@@ -220,10 +257,23 @@ for i in $(seq 0 $((n - 1))); do
 done
 
 if [ "$pairs" -eq 0 ]; then
-  echo "  note: the cross-contamination check had no conclusive pair to compare and"
-  echo "        did NOT run ($nested direction(s) skipped as nested names). It needs two"
-  echo "        entries whose consultants differ and do not nest; verify-tt683-a0 is what"
-  echo "        guarantees two distinct pairings reach export."
+  # A SKIPPED SWAP CHECK IS A FAILURE HERE, not a note.
+  #
+  # run-tests.sh prints a step's output only when it fails, so on a pass this
+  # would have been a message nobody ever sees, in a suite whose central finding
+  # was assertions that quietly assert nothing. The cross-contamination check is
+  # the reason this file exists -- the per-entry checks above are worth having but
+  # they cannot tell one consultant's document from another's. Having not run it,
+  # this step has no verdict to report, and says so in the only way CI can hear.
+  echo "FAIL: the cross-contamination check had no conclusive pair and did NOT run"
+  echo "      ($n entr(y/ies) in the archive, $nested direction(s) skipped as nested names)."
+  echo "      It needs two entries whose consultants differ and do not nest. This is"
+  echo "      almost certainly an upstream problem rather than a bug in the export:"
+  echo "      verify-tt683-a0 is what guarantees two distinct consultant/project"
+  echo "      pairings reach AwaitingExport, and verify-tt683-a1 asserts the archive"
+  echo "      keeps them apart. Fix those first - passing here without this check"
+  echo "      would be reporting a swap test that never compared anything."
+  fails=$((fails + 1))
 elif [ "$swap_fails" -eq 0 ]; then
   echo "  OK  no PDF contains another entry's consultant ($pairs ordered pair(s) checked, $nested skipped as nested)"
 fi
