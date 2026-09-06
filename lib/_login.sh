@@ -1609,11 +1609,47 @@ tt_mail_address() {
 # <ts-ms> is accepted and ignored: freshness comes from the high-water mark,
 # which is stronger than a timestamp fence. The argument is kept so existing
 # call sites read unchanged.
+#
+# THE BUDGET IS WALL CLOCK, AND USED NOT TO BE.
+# ---------------------------------------------
+# Both mail waiters used to count only their own `sleep 5`, while each iteration
+# also ran _tt_mail_new_rows and _tt_mail_refresh - and _tt_mail_refresh does a
+# full `playwright-cli reload` plus up to 15s of grid polling. So a nominal
+# "120s" budget was really about 8 minutes of wall clock, which is the whole step
+# budget these four mail specs declare.
+#
+# The damage was diagnostic, not just cosmetic. When mail did not arrive the
+# helper never got to return 1, so the caller's own message - "token email not
+# received within timeout" - was never printed. The step was killed from outside
+# instead and reported as a bare TIMEOUT, which says nothing about mail at all.
+# That is how CI runs 34018437556 and 34046052399 both burned 8 minutes and named
+# no cause.
+#
+# WHY 240s, AND WHY IT IS AN UPPER BOUND RATHER THAN A PREFERENCE.
+# Observed behaviour on cloud dev is bimodal: when mail works it lands in well
+# under a minute (verify-customer-token-approve passes in 90s END TO END), and
+# when it does not it never arrives at all. The longest legitimate wait is bounded
+# by the 2-minute outbound queue event, so 240s is already double the real
+# mechanism.
+#
+# The ceiling is what fixes the number, though. This budget has to expire while
+# the step still has time to report, or the step is killed from outside and we are
+# back to a bare TIMEOUT that names no cause - the exact failure this change
+# exists to remove. The specs declare `tt-timeout: 8m` (480s), the expensive path
+# through them (no pending entry, so create one as the consultant, then remind)
+# costs roughly 3 minutes before mail is even asked for, and this loop overshoots
+# its budget by up to one poll cycle (~20s at cloud-dev latency). 180 + 240 + 20
+# leaves about a minute of margin inside 480s. A 300s budget did not.
+#
+# So if mail genuinely needs longer than 240s, raising THIS number alone will
+# re-break the diagnostics: the step budget above it has to move first. Raising
+# the step's tt-timeout on its own just buys more silence.
 tt_mail_token() {
-  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" budget="${4:-120}"
-  local tag waited=0 rows link scoped
+  local ts="$1" rx="${2:-customer-approval}" want="${3:-}" budget="${4:-240}"
+  local tag rows link scoped started polls=0
   tag="$(_tt_mail_tag "$want")"
-  while [ "$waited" -lt "$budget" ]; do
+  started="$(date +%s)"
+  while :; do
     rows="$(_tt_mail_new_rows)"
     scoped="$(printf '%s\n' "$rows" | grep -i -- "$tag" 2>/dev/null || true)"
     if [ -n "$scoped" ]; then
@@ -1623,9 +1659,12 @@ tt_mail_token() {
     fi
     link="$(printf '%s' "$rows" | grep -oE "https?://[^ \"'<>()~]+${rx}[^ \"'<>()~]*" | head -1)"
     if [ -n "$link" ]; then echo "$link"; return 0; fi
-    sleep 5; waited=$((waited + 5))
+    polls=$((polls + 1))
+    [ $(( $(date +%s) - started )) -ge "$budget" ] && break
+    sleep 5
     _tt_mail_refresh >/dev/null 2>&1 || true
   done
+  echo "  [mail] no link matching '$rx' for recipient '${want:-any}' after $(( $(date +%s) - started ))s and $polls poll(s) of the Emails Sent page" >&2
   return 1
 }
 
@@ -1633,11 +1672,14 @@ tt_mail_token() {
 # Print the mail that just appeared as "Subject: <s>", a blank line, then the row
 # as rendered (recipient, status and body included) - the primitive for a test
 # that wants to LOOK at the mail rather than pull a link out of it.
+#
+# Budget is wall clock, for the reasons written above tt_mail_token.
 tt_mail_message() {
-  local ts="$1" want="${2:-}" budget="${3:-120}"
-  local tag waited=0 rows row subj
+  local ts="$1" want="${2:-}" budget="${3:-240}"
+  local tag rows row subj started polls=0
   tag="$(_tt_mail_tag "$want")"
-  while [ "$waited" -lt "$budget" ]; do
+  started="$(date +%s)"
+  while :; do
     rows="$(_tt_mail_new_rows)"
     row="$(printf '%s\n' "$rows" | grep -i -- "$tag" 2>/dev/null | head -1 || true)"
     if [ -z "$row" ] && [ -z "$want" ]; then
@@ -1648,9 +1690,12 @@ tt_mail_message() {
       printf 'Subject: %s\n\n%s\n' "$subj" "$row"
       return 0
     fi
-    sleep 5; waited=$((waited + 5))
+    polls=$((polls + 1))
+    [ $(( $(date +%s) - started )) -ge "$budget" ] && break
+    sleep 5
     _tt_mail_refresh >/dev/null 2>&1 || true
   done
+  echo "  [mail] no message for recipient '${want:-any}' after $(( $(date +%s) - started ))s and $polls poll(s) of the Emails Sent page" >&2
   return 1
 }
 
