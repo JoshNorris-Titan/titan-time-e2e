@@ -52,11 +52,18 @@ F5 first — tests written against unsaved model changes test the previous build
 ## Conventions
 
 - **Layout:** tests live under `suites/<NN-area>/`. The numeric prefix is the run order —
-  `00-setup` (fixtures, then clear) → `10-smoke` → `20-consultant` → `30-approval` → `40-hr` →
+  `00-setup` (clear, then build) → `10-smoke` → `20-consultant` → `30-approval` → `40-hr` →
   `50-titan-manager` → `60-email` → `70-tickets/<ticket>/` → `80-platform` → `99-teardown`.
   Put a new test in the area it exercises; ticket-specific regressions go in
   `70-tickets/tt<ticket>/`. `lib/` holds shared helpers, `seeders/` the destructive data
   builders (never picked up by the runner, which only matches `verify-*.test.sh`).
+- **Inside `00-setup` the order is clear → build → seed**, and it is numbered, not accidental:
+  `verify-000-testdata-clear-before` deletes everything, `verify-001-fixtures` rebuilds the
+  projects and assignments from `FX_PROJECTS` / `FX_ASSIGNMENTS`, `verify-002-seed-isolation-control`
+  seeds the entry rows the isolation test needs as its control. This inverted on 2026-09-06:
+  the clear used to preserve structure, so the fixture step deliberately sorted *ahead* of it
+  (exploiting `-` < `0` under `LC_ALL=C`, when it was named `verify-00-fixtures`). Anything
+  that still claims structure survives the clear is stale.
 - **Paths:** a test resolves its root by walking up to the directory containing `lib/`:
   `TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"`
   then `source "$TT_ROOT/lib/_login.sh"`. Depth-independent, and keeps a test directly runnable
@@ -74,6 +81,12 @@ F5 first — tests written against unsaved model changes test the previous build
   the app's only auth path, so the same test runs local / dev / acceptance.
 - **Test data:** the bookend clear scripts reset only the consultants named in
   `TT_E2E_CONSULTANTS`. Never assert an unconstrained count — own the data you assert on.
+  They now run the **deep** per-consultant control, which also deletes those consultants'
+  assignments and the projects those assignments were on, so a run starts from no structure and
+  `verify-001-fixtures` builds what it needs. Two consequences worth holding on to: deleting a
+  project cascades into *other* consultants' assignments on it (accepted — see
+  `lib/_testdata.sh`), and a finished run leaves the environment with **no E2E projects at all**,
+  so a single spec run after a completed suite finds nothing until `00-setup` runs again.
 
 ## Environment
 
@@ -83,6 +96,7 @@ F5 first — tests written against unsaved model changes test the previous build
 | `TT_ADMIN_USER` / `TT_ADMIN_PASS` | Admin account |
 | `TT_ROLE_PASS` | Password for the `e2e_*` role accounts |
 | `TT_E2E_CONSULTANTS` | Which consultants the clear scripts reset |
+| `TT_E2E_CLEAR_DEPTH` | `deep` (default) also deletes their assignments and the projects those were on; `shallow` is the old transactional-only clear. No automatic fallback — against an environment that predates the deep control the clear fails and names the reason, because a silent downgrade would leave structure in place and still report green |
 
 In CI these come from GitHub Actions secrets. The defaults baked into `lib/_login.sh` are for
 local convenience only and must never be relied on against a deployed environment.
