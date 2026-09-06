@@ -1148,14 +1148,39 @@ tt_combobox_select_first() {
 # The result is read from line 2, never grepped from the whole output: the
 # echoed SOURCE contains the literal 'true', so a plain grep would match the
 # snippet rather than its return value and pass no matter what happened.
+# tt_combobox_select_text <combobox-selector> <option-text-prefix>
+#
+# RETRIES, because a Mendix combobox does not populate synchronously. This used
+# to click once, sleep exactly 1s, look for [role=option] a single time, and give
+# up - so it failed whenever the option list had not rendered yet, and the caller
+# reported the value as "not selectable" when it was merely not ready.
+#
+# That surfaced as "fixtures: customer 'Costco' not selectable on the assignment
+# form" while creating the THIRD assignment in a row, on an environment where
+# Costco plainly exists. Same failure family as fx_view in lib/_fixtures.sh: one
+# attempt, a fixed sleep, and no way to recover a click that never landed.
+#
+# It only re-clicks when NO options are showing. Clicking an already-open combobox
+# toggles it shut, so an unconditional re-click would oscillate open/closed and
+# could starve the very poll that was about to succeed.
+#
+# A genuine "this value is not in the list" now costs ~20s instead of ~3s before
+# it reports. That is deliberate and safe here: all seven call sites treat a
+# failure as fatal and none probes for an expected absence.
 tt_combobox_select_text() {
-  local cb="$1" want="$2"
-  playwright-cli click "$cb" >/dev/null 2>&1
-  sleep 1
-  if playwright-cli eval "() => { const o=[...document.querySelectorAll('[role=option]')].find(e=>(e.innerText||'').trim().indexOf('$want')===0); if(o){o.click(); return 'true';} return 'false'; }" 2>/dev/null \
-       | sed -n '2p' | grep -qi true; then
-    sleep 2; return 0
-  fi
+  local cb="$1" want="$2" i r
+  for i in $(seq 1 6); do
+    if [ "$(playwright-cli eval "() => String(document.querySelectorAll('[role=option]').length)" 2>/dev/null | _tt_eval_str)" = "0" ]; then
+      playwright-cli click "$cb" >/dev/null 2>&1
+      sleep 1
+    fi
+    r="$(playwright-cli eval "() => { const o=[...document.querySelectorAll('[role=option]')].find(e=>(e.innerText||'').trim().indexOf('$want')===0); if(o){o.click(); return 'PICKED';} return 'NOMATCH:'+document.querySelectorAll('[role=option]').length; }" 2>/dev/null | _tt_eval_str)"
+    case "$r" in
+      PICKED) sleep 2; return 0 ;;
+    esac
+    sleep 1
+  done
+  echo "  [combobox] '$want' not selectable in $cb after $i attempts (last: $r)" >&2
   return 1
 }
 
