@@ -2,6 +2,21 @@
 # Suite setup: BUILD the structural fixtures the suite needs, after the clear has
 # removed them.
 #
+# tt-timeout: 20m
+#
+# WHY THIS STEP NEEDS ITS OWN BUDGET. It used to find every fixture already present
+# and finish in seconds, because the clear preserved structure. It now builds all of
+# it through the Titan Manager UI on every run: 5 projects and 5 assignments, each a
+# popup, a combobox chain, a save and a read-back that proves the row landed.
+#
+# Measured on cloud dev 2026-09-06, the first run after the deep clear went live:
+# the default 4m budget expired while creating the FIFTH project, having taken
+# roughly 50s each for the first four. Assignments are slower still - more fields,
+# two date pickers whose format is load-bearing, and a consultant-popup read-back
+# per row. 20m is that measurement with room for a cold Mendix Cloud start, not a
+# guess; if this step ever approaches it, something is retrying rather than running
+# slowly and the budget is the wrong thing to raise.
+#
 # Sorts immediately after verify-000-testdata-clear-before, so the order is:
 # clear everything -> rebuild structure -> seed transactional rows -> run the
 # tests. Nothing else in the suite ever creates the structure, so if this step is
