@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
-# Suite preflight: make sure the STRUCTURAL fixtures exist before anything runs.
+# Suite setup: BUILD the structural fixtures the suite needs, after the clear has
+# removed them.
 #
-# Sorts ahead of verify-000-testdata-clear-before (LC_ALL=C: '-' < '0'), so the
-# order is: ensure structure -> clear transactional data -> run the tests. That
-# matters, because the clear step deliberately preserves projects, assignments,
-# customers and accounts; it only wipes timesheet data. Nothing else in the suite
-# ever creates the structure.
+# Sorts immediately after verify-000-testdata-clear-before, so the order is:
+# clear everything -> rebuild structure -> seed transactional rows -> run the
+# tests. Nothing else in the suite ever creates the structure, so if this step is
+# skipped or fails, every consultant-facing test that follows has no project row
+# to work with.
+#
+# THE ORDER USED TO BE THE OTHER WAY ROUND. This file was verify-00-fixtures and
+# ran BEFORE the clear, exploiting LC_ALL=C ('-' 0x2D < '0' 0x30). That worked
+# only because the clear deliberately preserved projects and assignments. As of
+# 2026-09-06 the bookends drive the deep per-consultant control, which deletes
+# assignments and their projects as well, so structure created ahead of the clear
+# would simply be thrown away. Renaming this to 001 is what puts it after.
+#
+# Creating the projects fresh on every run is the point, not a side effect: the
+# fixture table below is now the single source of truth for their approval flags.
+# Previously a project that already existed with drifted flags passed the name
+# check silently — that is how E2E Sandbox sat with the wrong
+# ApprovalFromManager for weeks (see the reconciliation note in lib/_fixtures.sh).
+# A rebuilt project cannot drift.
 #
 # This exists because the first cloud CI run failed with
 #     "no assignment for project 'E2E Dual Approval' is visible to e2e_consultant"
@@ -33,7 +48,7 @@ source "$TT_ROOT/lib/_fixtures.sh"
 # Exercising the Titan Manager UI here is setup, not a login test, so the cached
 # session is fine and desirable.
 if fx_ensure_all; then
-  echo "PASS: verify-00-fixtures — structural fixtures present on $TT_BASE ($FX_PRESENT present, $FX_CREATED created)"
+  echo "PASS: verify-001-fixtures — structural fixtures present on $TT_BASE ($FX_PRESENT present, $FX_CREATED created)"
 else
   tt_fail "structural fixtures are missing and could not be created automatically (listed above). Create them, then re-run."
 fi

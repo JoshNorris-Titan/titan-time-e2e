@@ -35,12 +35,19 @@
 #              project visible to a consultant in a given week — a project with no
 #              assignment is invisible, which is exactly how verify-tt647-a5 failed.
 #   Entries    verify + create, but NOT from fx_ensure_all — see fx_ensure_entries
-#              near the bottom of this file. Everything above is structural and
-#              survives the clear; AssignmentEntries are exactly what the clear
-#              deletes, so they must be seeded by a step that sorts AFTER it
-#              (suites/00-setup/verify-001-seed-isolation-control.test.sh).
-#              Do not move that call into fx_ensure_all: this file runs BEFORE the
-#              clear, so it would seed rows the very next step throws away.
+#              near the bottom of this file. It needs a CONSULTANT session and a
+#              materialised week, while everything else here runs as the Titan
+#              Manager, so it is called from its own step
+#              (suites/00-setup/verify-002-seed-isolation-control.test.sh).
+#
+# EVERYTHING IN THIS FILE NOW RUNS AFTER THE CLEAR. Before 2026-09-06 the clear
+# preserved projects and assignments, so the structural half deliberately ran
+# ahead of it. The bookends now drive the deep per-consultant control, which
+# deletes assignments and their projects too, so nothing survives it and this
+# file's caller (verify-001-fixtures) was renamed to sort behind
+# verify-000-testdata-clear-before. Creating the projects fresh every run is the
+# upside: the FX_PROJECTS table below becomes the only source of their approval
+# flags, and a rebuilt project cannot drift the way E2E Sandbox did.
 #
 # Every selector below was verified against the live dev environment rather than read
 # from the model, because the model is only true after a deploy.
@@ -535,17 +542,21 @@ fx_reconcile_collect() {
 #
 # WHY THIS IS SEPARATE FROM fx_ensure_all
 # ---------------------------------------
-# Everything above is STRUCTURAL and deliberately runs BEFORE the clear:
-# verify-00-fixtures sorts ahead of verify-000-testdata-clear-before under the
-# runner's `LC_ALL=C sort`, because '-' (0x2D) precedes '0' (0x30). The clear
-# preserves projects, assignments, customers and accounts, so structure created
-# ahead of it survives.
+# NOT because of the clear any more. Until 2026-09-06 the structural half of this
+# file ran BEFORE the clear (verify-00-fixtures sorted ahead of
+# verify-000-testdata-clear-before under `LC_ALL=C sort`, '-' 0x2D before '0'
+# 0x30) because the clear preserved projects and assignments while deleting
+# exactly these entry rows. The deep clear now deletes structure too, so the whole
+# file moved behind it and that asymmetry is gone.
 #
-# AssignmentEntries do NOT survive it. The per-consultant clear deletes exactly
-# these rows for every name in TT_E2E_CONSULTANTS. So fx_ensure_entries must be
-# called from a step that sorts AFTER the clear -- it is NOT part of
-# fx_ensure_all, and putting it there would seed rows the very next step deletes.
-# Its caller is suites/00-setup/verify-001-seed-isolation-control.test.sh.
+# What keeps this separate is the SESSION. fx_ensure_all does its work signed in
+# as e2e_tm, building structure through the Titan Manager dashboard.
+# fx_ensure_entries has to be the consultant — it makes rows by visiting a week
+# and letting the app materialise them — and it leaves the browser logged in as
+# that consultant when it finishes. Folding it into fx_ensure_all would mean one
+# step that silently changes identity halfway through, and a structural failure
+# would surface as a confusing inability to seed a control row.
+# Its caller is suites/00-setup/verify-002-seed-isolation-control.test.sh.
 #
 # WHAT NEEDS THIS
 # ---------------
