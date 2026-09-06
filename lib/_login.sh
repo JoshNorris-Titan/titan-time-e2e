@@ -1689,8 +1689,46 @@ tt_mail_token() {
     sleep 5
     _tt_mail_refresh >/dev/null 2>&1 || true
   done
-  echo "  [mail] no link matching '$rx' for recipient '${want:-any}' after $(( $(date +%s) - started ))s and $polls poll(s) of the Emails Sent page" >&2
+  _tt_mail_dump "no link matching '$rx' for recipient '${want:-any}'" "$(( $(date +%s) - started ))" "$polls"
   return 1
+}
+
+# _tt_mail_dump <what> <seconds> <polls> - explain a mail timeout instead of just
+# announcing one.
+#
+# WHY THIS EXISTS. verify-customer-token-reject fails intermittently in CI and has
+# now survived two deliberate local reproductions: standalone after a fresh
+# 00-setup, and again in its real sequence (customer-approval-flow ->
+# customer-token-approve -> customer-token-reject, one shared browser session,
+# forced down the create-your-own-entry branch). Both passed.
+#
+# A flake that will not reproduce cannot be diagnosed by staring at the helper, and
+# the candidate causes need OPPOSITE fixes:
+#
+#   * no matching row at all      -> the app never queued the mail
+#   * a row present but not Sent  -> queued, and the outbound event has not run
+#   * a Sent row the regex missed -> the app is fine and the MATCHER is wrong
+#
+# Nothing printed so far could tell those apart, so every CI failure produced the
+# same uninformative line. This dumps what the Emails Sent page actually held at
+# the moment we gave up - unfiltered by the high-water mark, because "the row was
+# there but we considered it already seen" is itself one of the answers.
+#
+# Deliberately capped and sent to stderr: it is diagnostic context for a failure,
+# not test output, and an unbounded dump of a shared environment's mail would bury
+# the failure it is meant to explain.
+_tt_mail_dump() {
+  local what="$1" secs="$2" polls="$3" all seen
+  echo "  [mail] $what after ${secs}s and ${polls} poll(s) of the Emails Sent page" >&2
+  all="$(_tt_mail_rows 2>/dev/null | head -12)"
+  if [ -z "$all" ]; then
+    echo "  [mail] the Emails Sent grid could not be read at all - the browser may not have been on that page" >&2
+  else
+    echo "  [mail] most recent rows actually on the page (recipient ~ status ~ subject ...):" >&2
+    printf '%s\n' "$all" | sed 's/^/  [mail]   /' >&2
+  fi
+  seen="$(wc -l < "${TT_MAIL_SEEN_FILE:-/dev/null}" 2>/dev/null || echo 0)"
+  echo "  [mail] high-water mark held $seen row(s); anything above that was treated as already seen" >&2
 }
 
 # tt_mail_message <ts-ms> [recipient] [timeout-seconds]
@@ -1720,7 +1758,7 @@ tt_mail_message() {
     sleep 5
     _tt_mail_refresh >/dev/null 2>&1 || true
   done
-  echo "  [mail] no message for recipient '${want:-any}' after $(( $(date +%s) - started ))s and $polls poll(s) of the Emails Sent page" >&2
+  _tt_mail_dump "no message for recipient '${want:-any}'" "$(( $(date +%s) - started ))" "$polls"
   return 1
 }
 
