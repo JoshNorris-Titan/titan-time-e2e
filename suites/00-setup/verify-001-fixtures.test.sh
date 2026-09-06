@@ -14,8 +14,18 @@
 # roughly 50s each for the first four. Assignments are slower still - more fields,
 # two date pickers whose format is load-bearing, and a consultant-popup read-back
 # per row. 20m is that measurement with room for a cold Mendix Cloud start, not a
-# guess; if this step ever approaches it, something is retrying rather than running
-# slowly and the budget is the wrong thing to raise.
+# guess.
+#
+# Full green runs since, same environment: 638s, then 828s once fx_close_modals
+# was added. That +190s is the cost of verifying popups are shut rather than
+# sleeping and hoping - fx_view is called dozens of times and each extra
+# `playwright-cli eval` is ~2.6s of node startup - so it is real work, not a
+# retry. Roughly 70-85s per created object is the number to sanity-check against.
+#
+# If this step ever runs materially longer than ~900s, look for something
+# retrying before raising the budget again: at 10 objects the honest ceiling is
+# well under 20m, and a step that creeps toward it is failing repeatedly and
+# recovering, not working harder.
 #
 # Sorts immediately after verify-000-testdata-clear-before, so the order is:
 # clear everything -> rebuild structure -> seed transactional rows -> run the

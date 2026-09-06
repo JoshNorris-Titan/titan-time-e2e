@@ -153,16 +153,68 @@ fx_log() { echo "  [fixtures] $*"; }
 #
 # The Titan Manager dashboard is three cards (cardCustomers / cardProjects /
 # cardConsultants); clicking one switches the list below it. Verified live.
+
+# fx_close_modals — dismiss every open Mendix popup and PROVE it is gone.
+#
+# Returns 0 when no visible .modal-content remains (or when the page cannot be
+# read at all, so the caller reports the real problem), 1 if one is still up
+# after ~15s.
+#
+# This exists because a popup left open is invisible to every selector-based
+# check that follows it: the widget it is looking for is still in the DOM,
+# still matches, and still cannot be clicked, because the modal backdrop eats
+# the click. Fire-and-forget closing is what makes that state reachable.
+fx_close_modals() {
+  local i n
+  for i in $(seq 1 15); do
+    n="$(playwright-cli eval "() => String([...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null).length)" 2>/dev/null | _tt_eval_str)"
+    case "$n" in
+      0)           return 0 ;;
+      ''|*[!0-9]*) return 0 ;;
+    esac
+    playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'none'; const btns=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null); const b=btns.find(x=>/^(close|cancel|ok)$/i.test((x.innerText||'').trim())) || d.querySelector('.close, .mx-window-close, [aria-label=Close], button.close'); if(b){b.click(); return 'clicked';} if(btns.length){btns[btns.length-1].click(); return 'last';} return 'stuck'; }" >/dev/null 2>&1
+    [ $((i % 3)) -eq 0 ] && playwright-cli press "Escape" >/dev/null 2>&1
+    sleep 1
+  done
+  return 1
+}
+
+# fx_view <card> <gallery> — switch the dashboard to one of the three lists.
+#
+# RE-CLICKS ON EVERY ATTEMPT, deliberately. The original clicked once and then
+# only polled, so a click that never landed could not be recovered: the loop
+# waited 8s for a view change that nothing was still asking for, then blamed the
+# page with "the Titan Manager dashboard layout has changed".
+#
+# That is exactly what happened on CI run 34044379324, where the layout was
+# fine. fx_project_customer runs immediately after fx_consultant_assignments,
+# which opens the consultant detail popup; the popup was still up, the card
+# click hit its backdrop, and two assignments were reported as unbuildable. It
+# had gone unnoticed because until the clear started deleting structure, the
+# assignments were nearly always already present and this path almost never ran.
+#
+# Clicking a dashboard card is idempotent -- it just re-selects that view -- so
+# retrying the click costs nothing and fixes the swallowed-click case.
 fx_view() {
-  local card="$1" gal="$2" i
-  playwright-cli click ".mx-name-$card" >/dev/null 2>&1
-  for i in 1 2 3 4 5 6 7 8; do
-    if playwright-cli eval "() => String(!!document.querySelector('.mx-name-$gal'))" 2>/dev/null | grep -qiw true; then
+  local card="$1" gal="$2" i blocked
+
+  fx_close_modals || fx_log "note    a popup is still open before switching to '$card'"
+
+  for i in $(seq 1 12); do
+    playwright-cli click ".mx-name-$card" >/dev/null 2>&1
+    if [ "$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-$gal'))" 2>/dev/null | _tt_eval_str)" = "true" ]; then
       sleep 1; return 0
     fi
     sleep 1
   done
-  tt_fail "fixtures: '$card' did not reveal '$gal' — the Titan Manager dashboard layout has changed"
+
+  # Say WHICH of the two it was, so the next reader does not re-investigate the
+  # dashboard layout the way this failure made us.
+  blocked="$(playwright-cli eval "() => String([...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null).length)" 2>/dev/null | _tt_eval_str)"
+  case "$blocked" in
+    ''|0) tt_fail "fixtures: '$card' did not reveal '$gal' after 12 clicks — the Titan Manager dashboard layout has changed" ;;
+    *)    tt_fail "fixtures: '$card' did not reveal '$gal' — $blocked popup(s) still open over the dashboard, so the card click never landed" ;;
+  esac
 }
 
 # fx_search <searchWidget> <gallery> <text> — type into the list's search box and
@@ -320,9 +372,11 @@ fx_consultant_assignments() {
   playwright-cli eval "() => { const g=document.querySelector('.mx-name-galConsultants'); if(!g) return 'NOGAL'; const c=[...g.querySelectorAll('*')].find(e=>getComputedStyle(e).cursor==='pointer' && (e.innerText||'').indexOf('$name')>=0); if(!c) return 'NOCARD'; c.click(); return 'ok'; }" >/dev/null 2>&1
   sleep 4
   out="$(playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; return d ? (d.innerText||'').replace(/\\s+/g,' ') : ''; }" 2>/dev/null | _tt_eval_str)"
-  # Close the popup so the next lookup starts from a clean dashboard.
-  playwright-cli eval "() => { const b=[...document.querySelectorAll('.modal-content button, .modal-header button')].filter(x=>x.offsetParent!==null); if(b.length) b[0].click(); }" >/dev/null 2>&1
-  sleep 2
+  # Close the popup so the next lookup starts from a clean dashboard. VERIFIED,
+  # not fire-and-forget: this used to click whatever visible button came first in
+  # the modal and sleep 2s, which is how a still-open popup reached fx_view and
+  # was misreported as a dashboard layout change.
+  fx_close_modals || fx_log "note    consultant popup for '$name' did not close cleanly"
   printf '%s\n' "$out"
 }
 
