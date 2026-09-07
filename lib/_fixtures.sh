@@ -154,25 +154,44 @@ fx_log() { echo "  [fixtures] $*"; }
 # The Titan Manager dashboard is three cards (cardCustomers / cardProjects /
 # cardConsultants); clicking one switches the list below it. Verified live.
 
-# fx_close_modals — dismiss every open Mendix popup and PROVE it is gone.
+# fx_close_modals — dismiss any open Mendix popup and PROVE it is gone.
 #
-# Returns 0 when no visible .modal-content remains (or when the page cannot be
-# read at all, so the caller reports the real problem), 1 if one is still up
-# after ~15s.
+# DELEGATES to the shared dialog machinery in lib/_login.sh (TT_DIALOG_SEL and
+# _tt_dialog_js) rather than carrying a selector of its own.
 #
-# This exists because a popup left open is invisible to every selector-based
-# check that follows it: the widget it is looking for is still in the DOM,
-# still matches, and still cannot be clicked, because the modal backdrop eats
-# the click. Fire-and-forget closing is what makes that state reachable.
+# WHY, IN DETAIL - THIS HELPER CAUSED A REGRESSION. The first version, added
+# 2026-09-06, matched only '.modal-content' and then took m[m.length-1], "the
+# last match". The comment above TT_DIALOG_SEL documents precisely why that is
+# wrong: a loose modal match also hits the header/body/footer CHILDREN, so "the
+# last match" can select a modal-footer whose only button is OK. It also missed
+# popups carrying .mx-window-content or .mx-dialog-content without
+# .modal-content, and fell back to clicking "the last visible button" - which in
+# a form popup can be Save or Delete.
+#
+# A dialog left standing swallows every click that follows it. That is what
+# produced, on the 2026-09-07 nightly:
+#
+#   [combobox] 'Costco' not selectable in .mx-name-cbCustomer after 6 attempts (last: NOMATCH:0)
+#
+# Zero options, retries useless - because the click never reached the combobox.
+# The assignment form itself was verified healthy at the same time: one visible
+# cbCustomer, seven options, Costco first.
+#
+# ONLY EVER PRESSES A DISMISS CONTROL (close / cancel / x) or Escape. It must
+# never click an affirmative button: this runs before READING a list, not to
+# advance a confirmation, and clicking Yes or Save on a popup it did not open
+# would write data. tt_clear_dialogs is the helper for advancing a chain, and it
+# is deliberately not reused here for that reason.
 fx_close_modals() {
-  local i n
-  for i in $(seq 1 15); do
-    n="$(playwright-cli eval "() => String([...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null).length)" 2>/dev/null | _tt_eval_str)"
-    case "$n" in
+  local i present d
+  d="$(_tt_dialog_js)"
+  for i in $(seq 1 12); do
+    present="$(playwright-cli eval "() => String($d ? 1 : 0)" 2>/dev/null | _tt_eval_str)"
+    case "$present" in
       0)           return 0 ;;
-      ''|*[!0-9]*) return 0 ;;
+      ''|*[!0-9]*) return 0 ;;   # unreadable: let the caller report the real problem
     esac
-    playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; if(!d) return 'none'; const btns=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null); const b=btns.find(x=>/^(close|cancel|ok)$/i.test((x.innerText||'').trim())) || d.querySelector('.close, .mx-window-close, [aria-label=Close], button.close'); if(b){b.click(); return 'clicked';} if(btns.length){btns[btns.length-1].click(); return 'last';} return 'stuck'; }" >/dev/null 2>&1
+    playwright-cli eval "() => { const d=$d; if(!d) return 'none'; const btns=[...d.querySelectorAll('button')].filter(b=>b.offsetParent!==null); const b=btns.find(x=>/^(close|cancel|dismiss|x|×)$/i.test((x.innerText||'').trim())) || d.querySelector('.close, button.close, .mx-window-close, .mx-dialog-close, [aria-label=Close]'); if(b){ b.click(); return 'closed'; } return 'stuck'; }" >/dev/null 2>&1
     [ $((i % 3)) -eq 0 ] && playwright-cli press "Escape" >/dev/null 2>&1
     sleep 1
   done
@@ -210,10 +229,10 @@ fx_view() {
 
   # Say WHICH of the two it was, so the next reader does not re-investigate the
   # dashboard layout the way this failure made us.
-  blocked="$(playwright-cli eval "() => String([...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null).length)" 2>/dev/null | _tt_eval_str)"
+  blocked="$(playwright-cli eval "() => { const d=$(_tt_dialog_js); return d ? (d.innerText||'(no text)').replace(/\\s+/g,' ').slice(0,120) : ''; }" 2>/dev/null | _tt_eval_str)"
   case "$blocked" in
-    ''|0) tt_fail "fixtures: '$card' did not reveal '$gal' after 12 clicks — the Titan Manager dashboard layout has changed" ;;
-    *)    tt_fail "fixtures: '$card' did not reveal '$gal' — $blocked popup(s) still open over the dashboard, so the card click never landed" ;;
+    "") tt_fail "fixtures: '$card' did not reveal '$gal' after 12 clicks — the Titan Manager dashboard layout has changed" ;;
+    *)  tt_fail "fixtures: '$card' did not reveal '$gal' — a popup is still open over the dashboard so the card click never landed, reading: $blocked" ;;
   esac
 }
 
@@ -371,7 +390,12 @@ fx_consultant_assignments() {
   fx_search "txtConsultantSearch" "galConsultants" "$name" >/dev/null
   playwright-cli eval "() => { const g=document.querySelector('.mx-name-galConsultants'); if(!g) return 'NOGAL'; const c=[...g.querySelectorAll('*')].find(e=>getComputedStyle(e).cursor==='pointer' && (e.innerText||'').indexOf('$name')>=0); if(!c) return 'NOCARD'; c.click(); return 'ok'; }" >/dev/null 2>&1
   sleep 4
-  out="$(playwright-cli eval "() => { const m=[...document.querySelectorAll('.modal-content')].filter(d=>d.offsetParent!==null); const d=m[m.length-1]; return d ? (d.innerText||'').replace(/\\s+/g,' ') : ''; }" 2>/dev/null | _tt_eval_str)"
+  # Outermost visible dialog, via the shared machinery. This used to take
+  # "the last .modal-content", which can be a modal-FOOTER rather than the
+  # popup - the same mistake that made fx_close_modals leave dialogs standing.
+  # Reading a footer here would return "Close" instead of the assignment list
+  # and be indistinguishable from a consultant with no assignments.
+  out="$(playwright-cli eval "() => { const d=$(_tt_dialog_js); return d ? (d.innerText||'').replace(/\\s+/g,' ') : ''; }" 2>/dev/null | _tt_eval_str)"
   # Close the popup so the next lookup starts from a clean dashboard. VERIFIED,
   # not fire-and-forget: this used to click whatever visible button came first in
   # the modal and sleep 2s, which is how a still-open popup reached fx_view and
