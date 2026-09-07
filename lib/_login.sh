@@ -1510,11 +1510,37 @@ _tt_mail_refresh() {
 }
 
 # _tt_mail_new_rows - rows that were not present at tt_mail_prepare time.
+# _tt_mail_new_rows - rows that have appeared since tt_mail_prepare.
+#
+# MULTISET difference, not a set difference. This used to be `grep -Fxv -f
+# <seen>`, which drops EVERY row whose text appears in the high-water mark - so a
+# second mail identical to one already there was invisible.
+#
+# Identical is not a corner case here. A row renders as
+#
+#   9/7/2026 ~ consultant@e2e.local ~ Please submit your overdue timesheet ~ Sent ~ ...
+#
+# leading with a DATE, not a timestamp. Two reminders to the same recipient with
+# the same subject on the same day are therefore byte-identical, and the second
+# one could never be seen.
+#
+# That is what failed verify-consultant-reminder-mail on CI run 34146189329. The
+# diagnostic dump added for exactly this ambiguity printed the mail sitting on the
+# page, Sent, correctly addressed, while the test reported it as never received:
+#
+#   [mail] no message for recipient 'consultant' after 278s and 8 poll(s)
+#   [mail]   9/7/2026 ~ consultant@e2e.local ~ Please submit your overdue timesheet ~ Sent ~ ...
+#   [mail] high-water mark held 20 row(s); anything above that was treated as already seen
+#
+# Counting copies fixes it: a row seen once before and present twice now yields
+# one new row. Order is preserved, so the newest-first sort still holds.
 _tt_mail_new_rows() {
   local cur
   cur="$(_tt_mail_rows)"
   if [ -s "${TT_MAIL_SEEN_FILE:-/dev/null}" ]; then
-    printf '%s\n' "$cur" | grep -Fxv -f "$TT_MAIL_SEEN_FILE" 2>/dev/null || true
+    printf '%s\n' "$cur" \
+      | awk 'NR==FNR { seen[$0]++; next } { if (seen[$0] > 0) { seen[$0]--; next } print }' \
+            "$TT_MAIL_SEEN_FILE" - 2>/dev/null || true
   else
     printf '%s\n' "$cur"
   fi
