@@ -36,6 +36,8 @@
 #   TT_BASE_URL    app origin, no trailing slash. REQUIRED — there is no default.
 #                  Pass --base-url instead if you prefer. See the note below.
 #   TT_ADMIN_USER / TT_ADMIN_PASS / TT_ROLE_PASS   see lib/_login.sh
+#   TT_ALLOW_LOCAL_TARGET=1   opt in to a localhost target. Without it a local target
+#                  is refused outright -- see the local-target guard below.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -122,12 +124,51 @@ FATAL: no target environment. Set TT_BASE_URL or pass --base-url.
   where to run.
 
     TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh
-    ./run-tests.sh --base-url http://localhost:8080        # local F5 run
+    TT_ALLOW_LOCAL_TARGET=1 ./run-tests.sh --base-url http://localhost:8080   # local F5 run
 EOF
   exit 2
 fi
 
 BASE_URL="${BASE_URL%/}"
+
+# --- local-target guard ----------------------------------------------------
+# This suite WRITES. The bookends DELETE every e2e timesheet, assignment and project,
+# and since 2026-09-06 the clear takes STRUCTURE with it, so a misdirected run destroys
+# projects rather than only rows. A local F5 app holds entirely different accounts, so a
+# local run is not a weaker test -- it is a meaningless one that also deletes real data.
+#
+# The check that used to stop this lived OUTSIDE this repo, in the Mendix model repo's
+# .claude/tools/e2e-local.sh, which refused a local target outright. On 2026-09-08 the
+# e2e checkout moved out of the Mendix app directory, so that wrapper resolves its paths
+# under a directory that no longer exists and can no longer run at all -- leaving nothing
+# between a mistyped target and a destructive local run. The guard belongs here now: this
+# is the only place every caller goes through, CI and local alike.
+#
+# A deliberate local run is still supported. It just has to be said out loud twice: once
+# for the target, once for the risk.
+#   TT_ALLOW_LOCAL_TARGET=1 ./run-tests.sh --base-url http://localhost:8080
+#
+# --list is exempt: it only enumerates files on disk and never opens a browser.
+if [ "$LIST_ONLY" -eq 0 ] && [ "${TT_ALLOW_LOCAL_TARGET:-}" != "1" ]; then
+  case "$BASE_URL" in
+    *localhost*|*127.0.0.1*|*0.0.0.0*|*"[::1]"*|*//"::1"*)
+      cat >&2 <<EOF
+FATAL: refusing to run against a local target ($BASE_URL).
+
+  This suite WRITES. The bookends DELETE every e2e timesheet, assignment and project,
+  and the clear takes structure with it -- against a local app whose accounts these
+  tests were never written for, that destroys data rather than testing anything.
+
+  Point it at a deployed environment:
+    TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh
+
+  If you really do mean the local app, say so explicitly:
+    TT_ALLOW_LOCAL_TARGET=1 ./run-tests.sh --base-url $BASE_URL
+EOF
+      exit 3 ;;
+  esac
+fi
+
 export TT_BASE_URL="$BASE_URL"
 
 # --- discovery -------------------------------------------------------------
