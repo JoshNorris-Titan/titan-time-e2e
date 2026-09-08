@@ -139,7 +139,7 @@ FX_BUDGET_HOURS="${FX_BUDGET_HOURS:-400}"
 # indistinguishable from a hand-made one.
 FX_PROJECT_MANAGER="${FX_PROJECT_MANAGER:-E2E ProjectManger}"
 FX_APPROVER_NAME="${FX_APPROVER_NAME:-Approver E2E}"
-FX_APPROVER_EMAIL="${FX_APPROVER_EMAIL:-jnorris@titanconsulting.net}"
+FX_APPROVER_EMAIL="${FX_APPROVER_EMAIL:-jnorris+tt@titanconsulting.net}"
 FX_CUSTOMER="${FX_CUSTOMER:-Costco}"
 
 FX_CREATED=0
