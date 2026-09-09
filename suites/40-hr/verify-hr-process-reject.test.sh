@@ -36,14 +36,24 @@
 #   C. The entry arrives back in the consultant's Rejected Entries, so the week
 #      can actually be corrected.
 #
-# WHAT IT DELIBERATELY DOES NOT ASSERT. There is no empty-comment guard on this
-# path, and this does not pretend there is. The PM route (Main.ACT_Page_Reject)
-# and the client route (Main.ACT_Customer_RejectPage) both branch on "Left
-# Comments?" and refuse to reject without one; the HR route runs
-# Main.NACT_AssignmentEntry_PageReject -> Main.ACT_ApprovalHelper_Reject, which
-# has no such branch and rejects whatever it is given. That asymmetry is real and
-# worth a ticket, but asserting a guard that was never built would be asserting a
-# wish. Noted here so the next person does not "fix" the test.
+# WHAT IT DOES NOT ASSERT, AND WHERE THAT MOVED TO. The empty-comment guard is
+# not asserted here - it is asserted next door, in
+# verify-hr-process-reject-guard, which runs immediately BEFORE this file and
+# consumes nothing.
+#
+# This paragraph used to say there was no guard on this path at all: the PM route
+# (Main.ACT_Page_Reject) and the client route (Main.ACT_Customer_RejectPage) both
+# branched on "Left Comments?" and refused without one, while the HR route ran
+# Main.NACT_AssignmentEntry_PageReject -> Main.ACT_ApprovalHelper_Reject and
+# rejected whatever it was given. That asymmetry has been closed. The popup's
+# Reject now calls Main.ACT_AssignmentEntry_PageReject, which refuses without a
+# comment and ends WITHOUT closing the popup, and Main.ACT_ApprovalHelper_Reject
+# carries the same guard server-side for any other caller. The nanoflow is gone.
+#
+# What that means for THIS file: it rejects WITH a comment, so it exercises the
+# guard's true branch. tt_hr_reject_card_for_project types one and blurs the box,
+# so a failure here is not the guard - unless the comment is failing to reach the
+# server, which verify-hr-process-reject-guard would have caught first.
 #
 # WHERE THE ENTRY COMES FROM. WEEKLY TO PROCESS holds entries in ToProcess, which
 # is where an approved entry lands, so by the time 40-hr runs the earlier approval

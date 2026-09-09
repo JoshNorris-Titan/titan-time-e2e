@@ -33,10 +33,17 @@
 #   B. Pressing its Reject and confirming with a comment removes it from the tab.
 #   C. The entry arrives back in the consultant's Rejected Entries.
 #
-# It does NOT assert an empty-comment guard: the HR reject route runs
-# Main.NACT_AssignmentEntry_PageReject -> Main.ACT_ApprovalHelper_Reject, which
-# has no "Left Comments?" branch. The PM and client routes do. See
-# verify-hr-process-reject for the same note.
+# It does not assert the empty-comment guard, but that is now a division of
+# labour rather than an absence. This paragraph used to read: the HR reject route
+# runs Main.NACT_AssignmentEntry_PageReject -> Main.ACT_ApprovalHelper_Reject,
+# which has no "Left Comments?" branch, while the PM and client routes do. The
+# popup's Reject now calls Main.ACT_AssignmentEntry_PageReject, which refuses
+# without a comment, and Main.ACT_ApprovalHelper_Reject carries the same guard
+# server-side. The refusal is asserted once, on the Weekly tab, by
+# verify-hr-process-reject-guard - the popup and the flow behind it are shared, so
+# asserting it a third time here would only cost a fixture. What this step still
+# owns is the Monthly tab reaching that popup at all, which is the hir_reject_one
+# return code 2 below.
 #
 # WHY 75-export. It needs an entry in AwaitingExport, and the cheap supply of
 # those is what suites/70-tickets/tt683/ has already processed by the time this
@@ -123,10 +130,17 @@ hir_reject_one() {
   playwright-cli eval "() => { const bs=[...document.querySelectorAll('$TT_HR_BTN_INVOICE_REJECT')].filter(b=>b.offsetParent!==null); for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<500 && el.querySelectorAll('$TT_HR_BTN_INVOICE_REJECT').length===1){ if(t.split('\n')[0].trim()==='$CNAME'){ b.click(); return 'ok'; } break; } } } return 'nf'; }" 2>/dev/null | _tt_eval_str | grep -qiw ok || return 1
   sleep 4
   # Main.AssignmentEntry_RejectPage: a textarea bound to RejectionComment and a
-  # footer Reject. Both carry GENERATED widget names (textArea1 / actionButton1),
-  # so they are matched structurally and by caption - the same approach
-  # tt_hr_reject_card_for_project uses, and for the same reason.
-  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$COMMENT'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'typed'; }" 2>/dev/null | _tt_eval_str | grep -qiw typed || return 2
+  # footer Reject. The textarea is now named - txtRejectionComment, matching the
+  # PM and client reject pages - so it is tried by name first and structurally
+  # second. The footer button is still the GENERATED actionButton1 and is pressed
+  # by caption, the same approach tt_hr_reject_card_for_project uses.
+  #
+  # THE BLUR IS LOAD-BEARING NOW. A Mendix text area hands its value over on blur,
+  # and the flow behind this button refuses to reject without a comment - so an
+  # uncommitted comment no longer produces a rejection with an empty reason, it
+  # produces no rejection at all and a message this helper would report as a
+  # missing card.
+  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$COMMENT'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'typed'; }" 2>/dev/null | _tt_eval_str | grep -qiw typed || return 2
   sleep 1
   tt_click_button_exact "reject" popup || return 3
   sleep 4

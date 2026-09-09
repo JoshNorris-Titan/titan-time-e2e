@@ -176,8 +176,12 @@ tt_hr_reject_first() {
   [ -n "$opened" ] || { echo "  tt_hr_reject_first: no View card for '$who' on tab '$tab' in any week"; return 1; }
   sleep 4
 
-  # In the popup: enter the required comment, then Reject.
-  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(ta){ const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$comment'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); return 'typed'; } return 'nofield'; }" >/dev/null 2>&1
+  # In the popup: enter the required comment, blur it so Mendix takes the value,
+  # then Reject. This route has always faced a comment guard - the popup is
+  # Main.ReviewTimesheetEntry and its Reject runs Main.ACT_Page_Reject, whose
+  # "Left Comments?" branch refuses without one - so the blur only makes explicit
+  # what the button click was relying on.
+  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(ta){ const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$comment'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'typed'; } return 'nofield'; }" >/dev/null 2>&1
   sleep 1
   tt_click_button_exact "reject" popup || { echo "  tt_hr_reject_first: no Reject button in popup"; return 1; }
   sleep 3
@@ -373,7 +377,15 @@ tt_hr_reject_card_for_project() {
   unset IFS
   [ -n "$opened" ] || return 1
   sleep 4
-  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(ta){ const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$comment'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); return 'typed'; } return 'nofield'; }" >/dev/null 2>&1
+  # Fill the comment box and BLUR IT. The blur is not cosmetic: a Mendix text area
+  # hands its value over on blur, and the reject flows now refuse to reject without
+  # a comment (Main.ACT_AssignmentEntry_PageReject / Main.ACT_ApprovalHelper_Reject,
+  # "Left Comments?"). Before that guard existed an uncommitted comment produced a
+  # rejection with a blank reason and every caller still passed; now it produces NO
+  # rejection, and this helper's callers would report a missing card instead. The
+  # textarea is named txtRejectionComment on that popup, tried first, with the old
+  # structural match kept as the fallback the header explains.
+  playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(ta){ const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$comment'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'typed'; } return 'nofield'; }" >/dev/null 2>&1
   sleep 1
   tt_click_button_exact "reject" popup || return 1
   sleep 3

@@ -36,12 +36,28 @@
 # the two decimals the assertion needs — it is a rendering of the real attribute, not
 # a rounded summary.
 #
+# THE REJECT IS NOW TWO STEPS. btnRejectAfterExport used to call
+# Main.ACT_RejectAfterExport on the click, and the rejection landed there and then.
+# It now opens Main.AssignmentEntry_RejectPage — the same 'Add Rejection Comments'
+# popup the Weekly and Monthly tabs use — because the flow refuses to reject without
+# a comment. So pressing the card's Reject is only half the action; see
+# hre_confirm_reject_popup for the other half.
+#
+# That change also removed a canned comment. Main.ACT_RejectAfterExport used to set
+# RejectionComment = 'Rejected by HR after export.' in the same change action as the
+# status, overwriting anything present, and that string was what reached the
+# ChangeLog and the consultant's email. It is gone; the comment typed below is what
+# lands. The empty-comment refusal on this route is asserted by
+# verify-hr-export-reject-guard, which runs before this step and consumes nothing.
+#
 # SELECTORS. btnRejectAfterExport, cardConsultants, galConsultants, cardConsultantRow,
-# txtConsultantName and txtConsultantSearch are all real names. The two values read
-# out of unnamed widgets are anchored on LABEL TEXT instead: 'TOTAL HOURS' on the HR
-# card, and 'WORKED/BUDGETED HOURS' in the popup, whose value widget is the
-# auto-named text18 inside a list view and could not be renamed anyway — it lives in
-# a snippet, which the model tooling cannot reach.
+# txtConsultantName, txtConsultantSearch and the popup's txtRejectionComment are all
+# real names. The two values read out of unnamed widgets are anchored on LABEL TEXT
+# instead: 'TOTAL HOURS' on the HR card, and 'WORKED/BUDGETED HOURS' in the popup,
+# whose value widget is the auto-named text18 inside a list view and could not be
+# renamed anyway — it lives in a snippet, which the model tooling cannot reach. The
+# popup's footer Reject is still the auto-named actionButton1, so it is pressed by
+# caption.
 #
 # Consumes one exported entry.
 set -uo pipefail
@@ -50,8 +66,11 @@ set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_tt683.sh"
+# For tt_click_button_exact / tt_dismiss_dialogs, which the comment popup needs.
+source "$TT_ROOT/lib/_tt692693.sh"
 
 CONSULTANT_NAME="${TT_EXPORT_CONSULTANT:-E2E Consultant}"
+REJECT_COMMENT="E2E automated post-export reject - hours returned to the assignment"
 
 # ---------------------------------------------------------------------- helpers
 
@@ -114,6 +133,34 @@ hre_card_present() {
 # hre_click_reject <project> — press Reject on the card for our consultant + project.
 hre_click_reject() {
   playwright-cli eval "() => { const btns=[...document.querySelectorAll('.mx-name-btnRejectAfterExport')].filter(b=>b.offsetParent!==null); for(const b of btns){ let p=b; for(let k=0;k<12;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length<1500 && t.indexOf('$CONSULTANT_NAME')>=0 && t.indexOf('$1')>=0){ b.click(); return 'clicked'; } } } return 'nf'; }" 2>/dev/null | _tt_eval_str
+}
+
+# hre_confirm_reject_popup <comment> — the second half of the reject: fill the
+# 'Add Rejection Comments' popup and press its Reject.
+#
+# Return codes rather than a printed marker, because every one of these states is a
+# different failure sentence and a command substitution would capture the helper's
+# own diagnostics into the value as well:
+#   1 no popup     — btnRejectAfterExport is not opening Main.AssignmentEntry_RejectPage
+#   2 no field     — the popup opened without its comment box
+#   3 no confirm   — the comment went in but the popup's Reject could not be pressed
+#
+# The comment box is matched by name first and structurally second: the popup is
+# shared with the Weekly and Monthly routes, and this suite has been bitten before
+# by widget renumbering in shared popups.
+hre_confirm_reject_popup() {
+  local r
+  r="$(playwright-cli eval "() => { const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea') || [...d.querySelectorAll('input[type=text]')].pop(); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$1'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'typed'; }" 2>/dev/null | _tt_eval_str)"
+  case "$r" in
+    typed)   : ;;
+    nopopup) return 1 ;;
+    *)       return 2 ;;
+  esac
+  sleep 1
+  tt_click_button_exact "reject" popup || return 3
+  sleep 4
+  tt_dismiss_dialogs
+  return 0
 }
 
 # hre_tm_read <project> — the whole Titan Manager read in ONE eval: open the
@@ -249,8 +296,16 @@ TAB="$(hre_open_reject_tab)" || tt_fail "could not return to the post-export rej
 rc="$(hre_click_reject "$PROJECT")"
 [ "$rc" = "clicked" ] \
   || tt_fail "could not press Reject on the exported card for '$PROJECT' (state: $rc)"
-tt_clear_dialogs 8 "Reject" \
-  || tt_fail "post-export rejection confirmation was not dismissed: ${TT_DIALOG_BLOCKED:-unknown dialog}"
+sleep 4
+
+# The card's Reject opens the comment popup; the rejection happens when the popup's
+# own Reject is pressed with a comment in the box.
+hre_confirm_reject_popup "$REJECT_COMMENT"
+case "$?" in
+  1) tt_fail "pressing Reject on the exported card opened no comment popup. btnRejectAfterExport is meant to open Main.AssignmentEntry_RejectPage; if it is calling Main.ACT_RejectAfterExport directly again then the post-export route captures no comment at all, and this test's own comment would be replaced by whatever the flow writes. verify-hr-export-reject-guard asserts the same thing from the other side." ;;
+  2) tt_fail "the comment popup opened but exposed no comment field (.mx-name-txtRejectionComment, or any textarea) - there is nowhere to type the reason the flow now insists on, so no rejection from this tab can succeed" ;;
+  3) tt_fail "the comment was typed but no Reject button in the popup could be pressed - the popup opened and then would not confirm" ;;
+esac
 sleep 4
 
 # The card must leave the tab. Poll — the flow commits and refreshes every tab.
@@ -260,7 +315,7 @@ for _ in $(seq 1 10); do
   sleep 3
 done
 [ -n "$gone" ] \
-  || tt_fail "the exported entry for '$PROJECT' is still on tab '$TAB' after Reject — ACT_RejectAfterExport's 'Exported?' guard may have refused it"
+  || tt_fail "the exported entry for '$PROJECT' is still on tab '$TAB' after Reject — one of the two guards in front of the rejection refused it. 'Exported?' in Main.ACT_RejectAfterExport is the old suspect; the newer one is 'Left Comments?', which refuses when the comment did not reach the server, and a Mendix text area hands its value over on BLUR. hre_confirm_reject_popup blurs the box for exactly that reason, so a refusal here means the blur is not committing rather than that the comment was never typed."
 
 # ---------------------------------------- 4. the arithmetic, which is the point
 tt_login "e2e_tm" "Add Customer"
