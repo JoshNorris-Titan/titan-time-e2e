@@ -24,12 +24,31 @@
 # local, dev and acceptance. It is in 10-smoke because it is fast and because a drifted
 # grid invalidates every consultant and HR scenario that runs after it.
 #
-# THE COMPARATOR LIVES IN THE MODEL REPO, not here. tests/ is a separate repository
-# nested inside the Mendix working copy, so ../tools/check_mirrors.py resolves whenever
-# the suite runs from its normal home. CI checks this repo out on its own, where that
-# path does not exist -- hence the entry in ci-skip.txt. This script deliberately does
-# NOT skip itself when the checker is missing: a self-skip that exits 0 is indistinguishable
-# from a pass, and this suite has been bitten by exactly that before.
+# THE COMPARATOR LIVES IN THE MODEL REPO, not here, and where that repo sits relative to
+# this one CHANGED on 2026-09-08. This suite used to be nested inside the Mendix working
+# copy, so a single `../tools/check_mirrors.py` always resolved. It now sits BESIDE the
+# model checkouts instead of inside one:
+#
+#   Titan Time/
+#     tests/    <- this repo
+#     main/     <- a model checkout, holds tools/check_mirrors.py
+#     main2/    <- ditto
+#     main3/    <- ditto
+#
+# so `../tools/` is now an empty path and the old single candidate could never resolve.
+# That is not a hypothetical: it silently took the only guard on the mirrored regions out
+# of service, in a suite where this script is the region's ONLY guard, because CI skips it
+# (ci-skip.txt) and the local run was the one place it ever ran.
+#
+# Resolution therefore tries several candidates and reports every one it looked at. The
+# sibling glob deliberately does not hardcode main/main2/main3 -- any checkout name works,
+# and the first match wins because all model checkouts on the same branch carry an
+# identical comparator.
+#
+# CI checks this repo out on its own, where none of the candidates exist -- hence the entry
+# in ci-skip.txt. This script deliberately does NOT skip itself when the checker is missing:
+# a self-skip that exits 0 is indistinguishable from a pass, and this suite has been bitten
+# by exactly that before.
 #
 # Env: TT_BASE_URL (the app to test). TT_MIRRORS_CHECKER overrides the checker path.
 set -uo pipefail
@@ -41,14 +60,39 @@ if [ -z "$BASE_URL" ]; then
   exit 1
 fi
 
-CHECKER="${TT_MIRRORS_CHECKER:-$TT_ROOT/../tools/check_mirrors.py}"
-if [ ! -f "$CHECKER" ]; then
-  echo "FAIL: verify-mirrored-regions — no comparator at $CHECKER"
-  echo "      It lives in the MODEL repo (tools/check_mirrors.py), which is normally the"
-  echo "      parent of this one. Point TT_MIRRORS_CHECKER at it, or add this script to"
-  echo "      ci-skip.txt for runs where the model repo is not checked out."
+# Candidate order: explicit override, then the pre-2026-09-08 nested layout, then the
+# current sibling layout. TT_MIRRORS_CHECKER short-circuits everything.
+CHECKER=""
+CHECKER_TRIED=""
+if [ -n "${TT_MIRRORS_CHECKER:-}" ]; then
+  CHECKER_CANDIDATES="$TT_MIRRORS_CHECKER"
+else
+  CHECKER_CANDIDATES="$TT_ROOT/../tools/check_mirrors.py"
+  for sibling in "$TT_ROOT"/../*/tools/check_mirrors.py; do
+    [ -f "$sibling" ] && CHECKER_CANDIDATES="$CHECKER_CANDIDATES
+$sibling"
+  done
+fi
+
+while IFS= read -r candidate; do
+  [ -z "$candidate" ] && continue
+  CHECKER_TRIED="$CHECKER_TRIED
+        $candidate"
+  if [ -f "$candidate" ]; then CHECKER="$candidate"; break; fi
+done <<EOF
+$CHECKER_CANDIDATES
+EOF
+
+if [ -z "$CHECKER" ]; then
+  echo "FAIL: verify-mirrored-regions — no comparator found. Looked at:$CHECKER_TRIED"
+  echo "      It lives in the MODEL repo (tools/check_mirrors.py). Since 2026-09-08 this"
+  echo "      suite sits BESIDE the model checkouts rather than inside one, so the"
+  echo "      comparator is at ../<checkout>/tools/check_mirrors.py. Point"
+  echo "      TT_MIRRORS_CHECKER at it, or add this script to ci-skip.txt for runs where"
+  echo "      no model repo is checked out."
   exit 1
 fi
+echo "  comparator: $CHECKER"
 
 PY=""
 for candidate in python3 python; do
