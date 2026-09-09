@@ -1,0 +1,15 @@
+93
+
+# How many verify-*.test.sh steps run-tests.sh should discover under suites/.
+#
+# Read by suites/80-platform/verify-run-budget.test.sh, which fails the run when
+# the two disagree. The first non-comment line is the number; everything else here
+# is prose.
+#
+# CHANGE THIS DELIBERATELY, in the same commit as the test you added or removed -
+# never afterwards to make a red run green. A count that DROPPED is the case worth
+# stopping for: a test renamed out of the verify-*.test.sh glob disappears silently
+# and the run still reports every remaining step passing.
+#
+# The same number belongs in --expect-count if .github/workflows/e2e.yml ever
+# starts passing it, which run-tests.sh recommends and CI still does not do.

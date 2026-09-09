@@ -82,6 +82,21 @@ TT_HR_TXT_APPROVER2='.mx-name-txtProcessClientApprover'
 # container13, which is why a rename could never have been noticed by name alone.
 TT_HR_CARD='.mx-name-containerManagerCard, .mx-name-containerClientCard, .mx-name-containerProcessCard, .mx-name-containerSentCard'
 
+# MONTHLY TO BE INVOICED, named separately for the reason given above: it is a
+# page-level tab, not one of the four HRDashboardTab snippet tabs, so it is
+# deliberately NOT in the unions and a helper written against them cannot see it.
+#
+# ITS PICKER IS MONTHS, NOT WEEKS. There is no galInvoiceAvailableWeeks and no
+# HRDashboardTab row behind it — the filter is galAvailableMonths, which is why
+# tt_hr_count_cards_for and tt_hr_reject_card_for_project (both of which iterate
+# TT_HR_GAL_WEEKS) find nothing here however long they are left to run. A caller
+# on this tab has to walk the months itself; see
+# suites/75-export/verify-hr-invoice-reject.test.sh for the shape of that walk.
+TT_HR_GAL_MONTHS='.mx-name-galAvailableMonths'
+TT_HR_GAL_INVOICE='.mx-name-galInvoiceEntries'
+TT_HR_BTN_INVOICE_VIEW='.mx-name-btnInvoiceView'
+TT_HR_BTN_INVOICE_REJECT='.mx-name-btnInvoiceReject'
+
 # tt_fail — report and stop. Writes to STDERR, deliberately.
 #
 # It used to write to stdout, which meant any helper that failed inside a command

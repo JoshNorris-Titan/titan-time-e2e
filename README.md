@@ -33,7 +33,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 | | Section | |
 |---|---|---|
 | 1 | [How a run works](#1-how-a-run-works) | What the conductor does |
-| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ All 51 steps |
+| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ All 91 steps |
 | 3 | [Files that aren't part of the run](#3-files-that-arent-part-of-the-run) | Seeders, probes, quality check |
 | 4 | [Settings the suite reads](#4-settings-the-suite-reads) | Addresses and logins |
 | 5 | [Running it automatically](#5-running-it-automatically-on-github) | The GitHub workflow |
@@ -138,11 +138,38 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 66 steps, grouped into eight blocks.
+All 91 steps, grouped into eight blocks.
 
 > [!NOTE]
-> One step, `verify-timesheet-locks-after-submit` (added in `f885008`), is not written up
-> below yet. The count above includes it; the walkthrough does not.
+> The walkthrough below does not cover every step. `verify-timesheet-locks-after-submit`
+> (added in `f885008`) and the eight steps added on 2026-09-08 (listed immediately below) are
+> counted but not written up. `suites/expected-count.txt` is the number of record, and
+> `suites/80-platform/verify-run-budget.test.sh` fails the run when discovery disagrees with it.
+
+<details>
+<summary><h4>Added 2026-09-08 &nbsp;·&nbsp; closing the remediation plan's Phase 3</h4></summary>
+
+Seven new steps and one extended, from `docs/plans/e2e-coverage-completion.md` in the model repo.
+Together they close the last routes to `Rejected`, the replay half of the token surface, the
+authenticated half of the token denial, and two behaviours that shipped with no coverage.
+
+| Step | What it proves |
+|---|---|
+| `30-approval/verify-pm-reject-action` | The project manager can reject (AwaitingManagerApproval → Rejected), an empty comment is refused, and the entry returns to the consultant |
+| `40-hr/verify-hr-process-reject` | HR sends a week back from WEEKLY TO PROCESS and **the card leaves the tab** (TT-686). Also settles whether the inline `btn*Reject` buttons are live |
+| `75-export/verify-hr-invoice-reject` | The same, from MONTHLY TO BE INVOICED (AwaitingExport → Rejected) — the last exit before an invoice goes out |
+| `85-security/verify-token-replay-refused` | A **cold reload** of a used approval link no longer offers the approved week, and an emptied link shows "You're all caught up" (TT-744) |
+| `85-security/verify-role-token-denial` | No signed-in role — consultant, PM, HR, Titan Manager, administrator — can retrieve `Main.ApprovalToken` |
+| `70-tickets/tt706/verify-tt706-sent-print` | Print on the SENT tab yields a **real PDF whose text names the right consultant** (TT-706) |
+| `80-platform/verify-run-budget` | The run cannot silently shrink: discovery is compared against `suites/expected-count.txt` |
+| `50-titan-manager/verify-assignment-dropdowns-sorted` *(extended)* | The Customer dropdown is sorted too (TT-694), alongside Project and Consultant (TT-662) |
+
+Two things these deliberately do **not** assert, both stated in the files themselves: there is no
+empty-comment guard on the HR reject route (`Main.ACT_ApprovalHelper_Reject` has no such branch —
+the PM and client routes do), and the role×entity denial matrix is one entity wide because the
+model grants every staff role unconstrained read on almost everything else.
+
+</details>
 
 > [!IMPORTANT]
 > The numbering below still reflects the old flat alphabetical run order. Tests now live in

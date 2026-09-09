@@ -9,8 +9,17 @@
 # Requires the widget-naming pass deployed (btnAddAssignment, cbCustomer, cbProject,
 # cbConsultant, txtWeeklyHours). Env: TT_BASE_URL, TT_ROLE_PASS.
 #
-# NOTE: TT-662 covers Consultant + Project. The Customer dropdown on this form is
-# separately NOT sorted on dev (unlike the New Project popup) — flagged, out of scope here.
+# ALL THREE DROPDOWNS ARE ASSERTED, AND THAT IS A CHANGE. TT-662 covered
+# Consultant + Project only, and this file used to carry a note saying the
+# Customer dropdown on this form was separately unsorted on dev, "flagged, out of
+# scope here". That note is stale: TT-694 - "Add Assignment: Customer dropdown is
+# not sorted (inconsistent with New Project)" - closed on 2026-08-18 and fixed
+# exactly that, with no test written for it. Customer is asserted first now,
+# before the cascade consumes it.
+#
+# So a failure on the Customer half means TT-694 has regressed, and a failure on
+# either of the other two means TT-662 has. They are different tickets against the
+# same form and the messages below say which.
 set -euo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
@@ -31,6 +40,11 @@ for _ in $(seq 1 15); do
 done
 [ -n "$ok" ] || tt_fail "Add Assignment popup did not open (cbCustomer not found)"
 
+# TT-694: the Customer dropdown itself. Asserted BEFORE anything is selected -
+# choosing a customer closes this list and moves the cascade on, so there is no
+# second chance at it later in the form.
+tt_combobox_sorted ".mx-name-cbCustomer" ".mx-name-txtWeeklyHours" "TT-694 Customer dropdown"
+
 # Pick a customer -> populates the Project dropdown, then assert Project is sorted.
 tt_combobox_select_first ".mx-name-cbCustomer"
 tt_combobox_sorted ".mx-name-cbProject" ".mx-name-txtWeeklyHours" "TT-662 Project dropdown"
@@ -39,4 +53,4 @@ tt_combobox_sorted ".mx-name-cbProject" ".mx-name-txtWeeklyHours" "TT-662 Projec
 tt_combobox_select_first ".mx-name-cbProject"
 tt_combobox_sorted ".mx-name-cbConsultant" ".mx-name-txtWeeklyHours" "TT-662 Consultant dropdown"
 
-echo "PASS: verify-assignment-dropdowns-sorted (TT-662) — Project & Consultant dropdowns sorted ascending"
+echo "PASS: verify-assignment-dropdowns-sorted — Customer (TT-694), Project and Consultant (TT-662) dropdowns all sorted ascending"
