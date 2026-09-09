@@ -73,6 +73,36 @@ TT_HR_CB_CONSULTANT='.mx-name-cbManagerConsultant, .mx-name-cbClientConsultant, 
 TT_HR_CB_PROJECT='.mx-name-cbManagerProject, .mx-name-cbClientProject, .mx-name-cbProcessProject, .mx-name-cbSentProject'
 TT_HR_BTN_APPROVE='.mx-name-btnManagerApprove, .mx-name-btnClientApprove'
 TT_HR_BTN_REMIND='.mx-name-btnManagerRemind, .mx-name-btnClientRemind'
+# THE CLIENT REMIND BUTTON IS NOW CONDITIONAL, AND THIS IS ITS OTHER HALF.
+#
+# The model gained a once-per-day gate on customer reminders (model commit
+# fdd18a24). On the Client Approval card, .mx-name-btnClientRemind is rendered
+# only while ApprovalHelper/CanRemindCustomer is true; when it is false the
+# button is REPLACED by an inert look-alike, .mx-name-btnClientRemindBlocked,
+# wrapped in a tooltip naming the time the reminder already went out. There is
+# no disabled ActionButton in Mendix, so this is two mutually exclusive
+# controls, not one control in two states.
+#
+# THE RULE THAT DECIDES WHICH ONE YOU GET:
+#   blocked = a reminder was sent to this customer TODAY
+#             AND this timesheet was already awaiting them when it went out
+# So a timesheet submitted AFTER today's reminder still shows an enabled
+# button, which is what the callers' fallback path relies on.
+#
+# WHY THIS BITES A WHOLE SUITE RUN, NOT ONE SPEC. Every project the fixtures
+# create shares one approver address (FX_APPROVER_EMAIL), and the gate keys on
+# that address. So the FIRST spec in a run to press Remind gates every
+# already-pending client entry for the rest of the run, across all projects.
+# The specs still pass -- their fallback submits a fresh entry, which re-enables
+# the button -- but they take the slow path, and a helper that only looked for
+# TT_HR_BTN_REMIND would report "no pending entry" for a card that is sitting
+# right there. That misdiagnosis is the expensive failure mode in this suite;
+# tt_hr_remind_e2e_entry names the gated state explicitly instead.
+#
+# NOTE the two class names are distinct tokens, so TT_HR_BTN_REMIND does NOT
+# match the blocked look-alike. Do not "simplify" either selector into a prefix
+# match, or every gated card will read as clickable.
+TT_HR_BTN_REMIND_BLOCKED='.mx-name-btnClientRemindBlocked'
 TT_HR_BTN_VIEW='.mx-name-btnManagerView, .mx-name-btnClientView'
 TT_HR_BTN_PROCESS='.mx-name-btnProcessEntry'
 TT_HR_BTN_REJECT='.mx-name-btnProcessReject'
@@ -1227,7 +1257,7 @@ tt_combobox_select_text() {
 # Those point at completely different causes and were indistinguishable before.
 _tt_hr_tab_state() {
   local label="${1:-tab state}" s
-  s="$(playwright-cli eval "() => { const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('$TT_HR_GAL_WEEKS'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return 'weekPicker=' + (wk?'present':'ABSENT') + ' | entriesGallery=' + (g?'present':'ABSENT') + ' | consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | remindCards=' + document.querySelectorAll('$TT_HR_BTN_REMIND').length; }" 2>/dev/null | _tt_eval_str)"
+  s="$(playwright-cli eval "() => { const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('$TT_HR_GAL_WEEKS'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return 'weekPicker=' + (wk?'present':'ABSENT') + ' | entriesGallery=' + (g?'present':'ABSENT') + ' | consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | remindCards=' + document.querySelectorAll('$TT_HR_BTN_REMIND').length + ' | remindGated=' + document.querySelectorAll('$TT_HR_BTN_REMIND_BLOCKED').length; }" 2>/dev/null | _tt_eval_str)"
   echo "  [hr-tab] $label: $s" >&2
 }
 
@@ -1296,6 +1326,17 @@ tt_hr_remind_e2e_entry() {
     IFS='|'
   done
   unset IFS
+  # DISTINGUISH "no such card" FROM "the card is there but Remind is gated today".
+  # Since the once-per-day gate landed, an already-reminded client card renders
+  # btnClientRemindBlocked INSTEAD of btnClientRemind, so the walk above finds
+  # nothing and the old message asserted a cause this function never checked.
+  # Same ancestor walk as the matcher, so the two cannot drift about what a row is.
+  local gated
+  gated=$(playwright-cli eval "() => { const rs=[...document.querySelectorAll('$TT_HR_BTN_REMIND_BLOCKED')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)) return 'true'; } } return 'false'; }" 2>/dev/null | sed -n '2p')
+  if echo "$gated" | grep -qiw true; then
+    _tt_hr_tab_state "'$who'${proj:+ / '$proj'} card IS present but Remind is GATED (already reminded today); caller must create a fresh entry to re-enable it"
+    return 1
+  fi
   # Say what the tab was actually showing. Without this the caller can only report
   # "no pending entry", which asserts a cause this function never checked.
   _tt_hr_tab_state "no pending '$who'${proj:+ / '$proj'} card in any listed week"
