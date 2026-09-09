@@ -36,10 +36,10 @@
 # It does not assert the empty-comment guard, but that is now a division of
 # labour rather than an absence. This paragraph used to read: the HR reject route
 # runs Main.NACT_AssignmentEntry_PageReject -> Main.ACT_ApprovalHelper_Reject,
-# which has no "Left Comments?" branch, while the PM and client routes do. The
-# popup's Reject now calls Main.ACT_AssignmentEntry_PageReject, which refuses
-# without a comment, and Main.ACT_ApprovalHelper_Reject carries the same guard
-# server-side. The refusal is asserted once, on the Weekly tab, by
+# neither of which has a "Left Comments?" branch, while the PM and client routes
+# do. Both have one now. That same nanoflow was rewritten to check the comment
+# before it routes, and Main.ACT_ApprovalHelper_Reject carries the check
+# server-side too. The refusal is asserted once, on the Weekly tab, by
 # verify-hr-process-reject-guard - the popup and the flow behind it are shared, so
 # asserting it a third time here would only cost a fixture. What this step still
 # owns is the Monthly tab reaching that popup at all, which is the hir_reject_one

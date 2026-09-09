@@ -15,10 +15,14 @@
 # given, including nothing. verify-hr-process-reject and verify-hr-invoice-reject
 # both carried a paragraph saying so and declining to assert it.
 #
-# That asymmetry is now closed. Main.ACT_AssignmentEntry_PageReject sits behind
+# That asymmetry is now closed. Main.NACT_AssignmentEntry_PageReject sits behind
 # the popup's Reject and refuses without a comment, and the two flows it calls -
 # Main.ACT_ApprovalHelper_Reject and Main.ACT_RejectAfterExport - carry the same
-# guard server-side, so a future caller cannot get round it. This asserts the
+# guard server-side, so no caller can complete a rejection without one. Note the
+# server-side copies END rather than abort: a caller other than this nanoflow
+# would see the message, not reject the entry, and still run to completion. The
+# only such caller today, Main.ACT_HRDashboard_ApproveOrReject's reject branch, is
+# unreachable - both dashboard buttons pass IsApproving as the literal true. This asserts the
 # refusal from the outside, which is the only place the guard's real requirement
 # shows up: it has to refuse WITHOUT closing the popup or discarding what the
 # operator typed.
@@ -167,7 +171,7 @@ case "$R1" in
     tt_fail "no Reject button could be pressed inside the comment popup" ;;
   NOMESSAGE:*)
     echo "FAIL: Reject with an EMPTY comment produced no guard message."
-    echo "      Expected '$GUARD_MSG' from Main.ACT_AssignmentEntry_PageReject's"
+    echo "      Expected '$GUARD_MSG' from Main.NACT_AssignmentEntry_PageReject's"
     echo "      'Left Comments?' branch. The dialogs on screen said:"
     echo "      ${R1#NOMESSAGE:}"
     echo "      If the rejection went through instead, step 4 below will say so - but a"
@@ -181,7 +185,7 @@ tt_clear_dialogs 8 \
 sleep 2
 
 [ "$(hprg_popup_open)" = "true" ] \
-  || tt_fail "the comment popup CLOSED when the guard refused the rejection. The refusal path must end without closing the form, or the operator loses the card and has to find it again - which is the whole reason this route is a microflow called with form validations rather than the old nanoflow."
+  || tt_fail "the comment popup CLOSED when the guard refused the rejection. The refusal path must end without closing the form, or the operator loses the card and has to find it again. Main.NACT_AssignmentEntry_PageReject's false branch shows the message and returns, with no 'close page' on it - a popup that shuts here means one has been wired onto that branch."
 echo "  the popup survived the refusal"
 
 # --------------------------------- 3. C: whitespace refused, and text kept
@@ -224,7 +228,7 @@ if [ "$AFTER" -lt "$COUNT" ]; then
   echo "      Both probes were refused with the guard's message, so the message is being"
   echo "      shown and the rejection is happening anyway - the worst of the three"
   echo "      possible outcomes, because the operator is told it did not work."
-  echo "      Main.ACT_AssignmentEntry_PageReject's false branch must end WITHOUT"
+  echo "      Main.NACT_AssignmentEntry_PageReject's false branch must end WITHOUT"
   echo "      calling either reject flow."
   exit 1
 fi

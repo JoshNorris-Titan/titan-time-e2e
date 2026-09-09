@@ -45,10 +45,10 @@
 # (Main.ACT_Page_Reject) and the client route (Main.ACT_Customer_RejectPage) both
 # branched on "Left Comments?" and refused without one, while the HR route ran
 # Main.NACT_AssignmentEntry_PageReject -> Main.ACT_ApprovalHelper_Reject and
-# rejected whatever it was given. That asymmetry has been closed. The popup's
-# Reject now calls Main.ACT_AssignmentEntry_PageReject, which refuses without a
-# comment and ends WITHOUT closing the popup, and Main.ACT_ApprovalHelper_Reject
-# carries the same guard server-side for any other caller. The nanoflow is gone.
+# rejected whatever it was given. That asymmetry has been closed. That same
+# nanoflow was rewritten: it now checks the comment first, refuses without one,
+# and ends WITHOUT closing the popup, so the operator keeps the card and the text
+# they typed. Main.ACT_ApprovalHelper_Reject carries the check server-side too.
 #
 # What that means for THIS file: it rejects WITH a comment, so it exercises the
 # guard's true branch. tt_hr_reject_card_for_project types one and blurs the box,
