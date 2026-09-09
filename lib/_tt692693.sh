@@ -379,7 +379,7 @@ tt_hr_reject_card_for_project() {
   sleep 4
   # Fill the comment box and BLUR IT. The blur is not cosmetic: a Mendix text area
   # hands its value over on blur, and the reject flows now refuse to reject without
-  # a comment (Main.ACT_AssignmentEntry_PageReject / Main.ACT_ApprovalHelper_Reject,
+  # a comment (Main.NACT_AssignmentEntry_PageReject / Main.ACT_ApprovalHelper_Reject,
   # "Left Comments?"). Before that guard existed an uncommitted comment produced a
   # rejection with a blank reason and every caller still passed; now it produces NO
   # rejection, and this helper's callers would report a missing card instead. The

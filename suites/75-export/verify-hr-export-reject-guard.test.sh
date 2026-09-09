@@ -151,7 +151,7 @@ case "$DIALOGS" in
   *"$GUARD_MSG"*) : ;;
   *)
     echo "FAIL: Reject with an EMPTY comment produced no guard message on the Sent tab."
-    echo "      Expected '$GUARD_MSG'. Main.ACT_AssignmentEntry_PageReject checks the"
+    echo "      Expected '$GUARD_MSG'. Main.NACT_AssignmentEntry_PageReject checks the"
     echo "      comment BEFORE it splits on 'Exported?', and Main.ACT_RejectAfterExport"
     echo "      carries the same guard after its own 'Exported?' check, so this route has"
     echo "      two chances to refuse and took neither."
