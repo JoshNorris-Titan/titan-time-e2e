@@ -149,7 +149,7 @@ echo "  the card left $TAB (before=$BEFORE, after=$AFTER)"
 # ------------------------------ 4. the consultant got it back, and can fix it
 tt_login "$CUSER" "My Timesheets"
 tt_consultant_history_load >/dev/null 2>&1 || true
-if [ "$(tt_rejected_has_project "$PROJECT")" != "true" ]; then
+if ! tt_rejected_has_project "$PROJECT"; then
   echo "FAIL: the card left $TAB but no '$PROJECT' row arrived in the consultant's Rejected Entries."
   echo "      Rejected Entries currently shows: $(tt_rejected_projects)"
   echo "      An entry that leaves HR's queue without returning to the consultant is lost:"
