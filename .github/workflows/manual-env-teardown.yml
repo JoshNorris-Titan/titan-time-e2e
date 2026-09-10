@@ -1,0 +1,87 @@
+name: Manual env — teardown
+
+# Deletes the "Manual *" review data: timesheets, entries, approval workflows,
+# assignments and the Manual projects. The seven manual_* ACCOUNTS survive, and so does
+# the shared customer — that is the contract, and the job asserts it rather than assuming
+# it.
+#
+# It cannot reach the E2E data. The clear is per consultant and scoped to the Manual
+# names, which the step assigns unconditionally rather than reading from the
+# TT_E2E_CONSULTANTS secret — see the note at that assignment in
+# manual-env/teardown/verify-zzz-manual-clear.test.sh.
+#
+# THE TYPED CONFIRMATION IS NOT CEREMONY. This is a destructive workflow on a shared
+# environment, dispatched from a menu that sits one item away from the build. The build
+# is re-runnable; a mis-click here throws away whatever a reviewer was part-way through.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DELETE to confirm — this removes all Manual projects, assignments and timesheets"
+        required: true
+        type: string
+      base_url:
+        description: "App origin to clear (blank = the TT_BASE_URL secret)"
+        required: false
+        type: string
+
+concurrency:
+  # Shared with the build so the two can never interleave on the same data.
+  group: manual-env
+  cancel-in-progress: false
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    # One deep clear per consultant, each allowed ~120s by lib/_testdata.sh, plus the
+    # read-back checks. The declared step budget is 20m.
+    timeout-minutes: 40
+
+    steps:
+      - name: Check the confirmation
+        shell: bash
+        run: |
+          # Exact match, no case-folding and no trimming beyond the obvious: a workflow
+          # that accepts "delete " or "d" is not a confirmation, it is a formality.
+          if [ "${{ inputs.confirm }}" != "DELETE" ]; then
+            echo "::error::Confirmation not given. Re-dispatch and type DELETE (exactly) in the confirm box."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: |
+          npx playwright-cli install || true
+          npx playwright-cli install-browser chromium
+
+      - name: Clear the Manual environment
+        shell: bash
+        env:
+          TT_BASE_URL: ${{ inputs.base_url || secrets.TT_BASE_URL }}
+          TT_ADMIN_USER: ${{ secrets.TT_ADMIN_USER }}
+          TT_ADMIN_PASS: ${{ secrets.TT_ADMIN_PASS }}
+          TT_ROLE_PASS: ${{ secrets.TT_ROLE_PASS }}
+          TT_MANUAL_PASS: ${{ secrets.TT_MANUAL_PASS }}
+        run: |
+          chmod +x ./run-tests.sh
+          # TT_E2E_CONSULTANTS is NOT passed. The step sets its own scope; inheriting the
+          # E2E names here would point a deep clear at the nightly's consultants.
+          ./run-tests.sh manual-env/teardown --expect-count 1
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-env-teardown-failures
+          path: "*-failure.png"
+          if-no-files-found: ignore
+          retention-days: 30

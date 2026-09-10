@@ -1,0 +1,91 @@
+name: Manual env — build
+
+# Provisions the "Manual *" review environment on cloud dev: projects, assignments and
+# timesheets in every reachable status, for the manual_* accounts.
+#
+# ON DEMAND ONLY. There is deliberately no schedule. This data exists for a person to
+# look at, and a nightly rebuild would either wipe out what they were mid-way through
+# reviewing or pile a second ladder on top of the first.
+#
+# IT DOES NOT CREATE THE ACCOUNTS. The seven manual_* logins are provisioned once, by
+# hand — see manual-env/README.md. The first step here verifies they exist and can sign
+# in, and fails naming any that cannot, because everything after it assumes them.
+#
+# RELATIONSHIP TO THE E2E NIGHTLY. The two data sets are disjoint by construction (see
+# the isolation note in manual-env/manual.env.sh), so this can run while E2E is red, and
+# the nightly's teardown does not touch anything built here. What they DO share is the
+# dev environment itself, so avoid dispatching this during the 02:00 CT window — not for
+# correctness, but because two suites driving the same app make each other's logs
+# unreadable.
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "App origin to build on (blank = the TT_BASE_URL secret)"
+        required: false
+        type: string
+      skip_timesheets:
+        description: "Structure only — skip the timesheet ladder (fast; leaves every tab empty)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  # Build and teardown share this group so they can never interleave on the same data.
+  # NOT scoped to the ref: the shared resource is the dev environment, not the branch.
+  group: manual-env
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # 25m accounts + 25m structure + 150m timesheets is the declared per-step budget
+    # (see the tt-timeout lines in manual-env/build/), plus setup. The timesheet budget
+    # is an estimate rather than a measurement — retune both after the first green run.
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: |
+          npx playwright-cli install || true
+          npx playwright-cli install-browser chromium
+
+      - name: Build the Manual environment
+        shell: bash
+        env:
+          TT_BASE_URL: ${{ inputs.base_url || secrets.TT_BASE_URL }}
+          TT_ADMIN_USER: ${{ secrets.TT_ADMIN_USER }}
+          TT_ADMIN_PASS: ${{ secrets.TT_ADMIN_PASS }}
+          TT_ROLE_PASS: ${{ secrets.TT_ROLE_PASS }}
+          # Optional. Set this secret only if the manual_* accounts were given a
+          # different password from the e2e_* ones; blank means "use TT_ROLE_PASS".
+          TT_MANUAL_PASS: ${{ secrets.TT_MANUAL_PASS }}
+          MANUAL_SKIP_SEED: ${{ inputs.skip_timesheets && '1' || '0' }}
+        run: |
+          chmod +x ./run-tests.sh
+          # TT_E2E_CONSULTANTS is deliberately NOT passed. Nothing in the build clears
+          # anything, and handing it the E2E scope would only invite a future step to use it.
+          #
+          # --expect-count guards the run itself: without it, a step renamed out of the
+          # verify-*.test.sh glob would leave this reporting "2 tests: 2 passed" and a
+          # half-built environment.
+          ./run-tests.sh manual-env/build --expect-count 3
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-env-build-failures
+          path: "*-failure.png"
+          if-no-files-found: ignore
+          retention-days: 30

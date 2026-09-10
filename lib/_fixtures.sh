@@ -142,6 +142,15 @@ FX_APPROVER_NAME="${FX_APPROVER_NAME:-Approver E2E}"
 FX_APPROVER_EMAIL="${FX_APPROVER_EMAIL:-jnorris+tt@titanconsulting.net}"
 FX_CUSTOMER="${FX_CUSTOMER:-Costco}"
 
+# Which account builds the structure. The Titan Manager dashboard is the only surface
+# that can create a project or an assignment, so this is not a preference — it is the
+# role the builders below require.
+#
+# Parameterised for manual-env/, which drives this same file against a parallel data set
+# owned by 'manual_tm' (see manual-env/manual.env.sh). The default is unchanged, so the
+# e2e suite behaves exactly as before.
+FX_TM_USER="${FX_TM_USER:-e2e_tm}"
+
 FX_CREATED=0
 FX_PRESENT=0
 FX_MISSING=""
@@ -796,7 +805,7 @@ fx_ensure_entries() {
 fx_ensure_all() {
   [ -n "${TT_BASE_URL:-}" ] || tt_fail "fixtures: TT_BASE_URL must be set explicitly — this writes data and must never fall back to a default environment"
 
-  tt_login "e2e_tm" "Add Customer"
+  tt_login "$FX_TM_USER" "Add Customer"
 
   # Order matters: a project must exist before it can be assigned.
   fx_ensure_projects

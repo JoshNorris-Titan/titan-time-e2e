@@ -62,9 +62,19 @@
 #                    catches a selector typo that would otherwise waste 40 minutes.
 #   SEED_SKIP_SUBMIT / SEED_SKIP_HR   run only one half
 set -uo pipefail
-cd "$(dirname "$0")/../.."   # seeders/ -> tests/ -> project root
-source tests/lib/_login.sh
-source tests/lib/_seed.sh
+# Resolve the suite root by walking up to the directory that holds lib/, the same way
+# every verify-*.test.sh does.
+#
+# THIS USED TO BE `cd "$(dirname "$0")/../.."` FOLLOWED BY `source tests/lib/_login.sh`,
+# which assumed the suite was still nested inside the Mendix working copy as
+# `<checkout>/tests/`. It is its own repository now, checked out at the root of its own
+# workspace, so `../..` lands ABOVE the workspace and `tests/lib/_login.sh` does not
+# exist there — the seeder aborted on its first line in CI and anywhere else the repo is
+# cloned standalone. The walk-up is depth-independent and works in both layouts.
+TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
+cd "$TT_ROOT"
+source "$TT_ROOT/lib/_login.sh"
+source "$TT_ROOT/lib/_seed.sh"
 
 if [ -z "${TT_BASE_URL:-}" ]; then
   echo "FAIL: TT_BASE_URL must be set explicitly. This seeder submits, approves and" >&2
@@ -74,6 +84,14 @@ fi
 
 CONSULTANTS="${SEED_CONSULTANTS:-e2e_consultant|e2e_consultant2|e2e_consultant3}"
 PROVE="${SEED_PROVE:-0}"
+
+# Who applies the HR stages (approve / process / export / reject). Parameterised so
+# manual-env/ can drive this same ladder against the parallel 'Manual *' data set with
+# its own HR login; the default is unchanged for the e2e set.
+#
+# It must be an account whose dashboard shows the four approval tabs — the HR phase waits
+# for "WEEKLY TO PROCESS" and gives up, loudly, if it never appears.
+HR_USER="${SEED_HR_USER:-e2e_hr}"
 
 # Stage ladder, OLDEST week first. Each entry is "<stage>|<hour-pattern>".
 STAGES="${SEED_STAGES:-export|full40_lines
@@ -736,7 +754,7 @@ fi
 
 if [ "${SEED_SKIP_HR:-0}" != "1" ] && [ "$PROVE" != "1" ]; then
   log "=== HR stages ==="
-  if seed_login_role "e2e_hr" "WEEKLY TO PROCESS"; then
+  if seed_login_role "$HR_USER" "WEEKLY TO PROCESS"; then
     log "  KPIs before (pending manager client process invoice sent): $(seed_kpis)"
     # Depth order, and approve_mgr LAST: its output sits on CLIENT APPROVAL, the tab
     # entries were observed drifting off within ~10 minutes, so it is left as fresh as
@@ -756,7 +774,7 @@ if [ "${SEED_SKIP_HR:-0}" != "1" ] && [ "$PROVE" != "1" ]; then
     fi
     log "  KPIs after: $(seed_kpis)"
   else
-    log "  !! cannot sign in as e2e_hr — no HR stage applied"
+    log "  !! cannot sign in as $HR_USER — no HR stage applied"
   fi
 fi
 
