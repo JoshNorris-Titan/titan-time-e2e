@@ -31,9 +31,10 @@ verify-scheduled-event-config.test.sh
 # (tools/check_mirrors.py), which is not checked out beside this one in CI. Same
 # shape as verify-scheduled-event-config above. The test deliberately fails rather
 # than self-skipping when it cannot find the comparator, so the exclusion is
-# visible here instead of hiding as a silent green. Run it locally, where the
-# model repo is the parent directory - it needs no browser, login or seed data,
-# so it costs about a second. Note this leaves CI blind to mirrored-region drift;
-# the real gate is /pre-commit-check, which runs the same comparator before every
-# commit, and drift can only arrive through a commit.
+# visible here instead of hiding as a silent green. Run it locally with
+# TT_MODEL_DIR naming a model checkout (this repo no longer sits inside one) -
+# it needs no browser, login or seed data, only an HTTP read of the compiled
+# pages at TT_BASE_URL, so it costs about a second. Note this leaves CI blind to
+# mirrored-region drift; the real gate is /pre-commit-check, which runs the same
+# comparator before every commit, and drift can only arrive through a commit.
 verify-mirrored-regions.test.sh

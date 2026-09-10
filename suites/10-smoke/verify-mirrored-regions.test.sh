@@ -10,9 +10,10 @@
 # cost: the snippet is inlined into each calling page, and the copies are then meant to
 # stay identical forever. "Meant to" is the weak part. This is the part that checks.
 #
-# The register lives in the model repo at docs/reference/mirrored-regions.json. Today it
-# holds one region: the weekly timesheet grid, on Main.ConsultantDashboard (what a
-# consultant fills in) and Main.CreateTimesheet (HR's rewrite tool).
+# The register lives in the model repo at docs/reference/mirrored-regions.json. It
+# began with one region: the weekly timesheet grid, on Main.ConsultantDashboard (what a
+# consultant fills in) and Main.CreateTimesheet (HR's rewrite tool). It holds more now;
+# the register, not this comment, is the list.
 #
 # WHAT IT COMPARES. Not the DOM, and not the .mpr. Mendix compiles every page into a
 # pretty-printed React module and the app serves it at /pages/<Module>.<Page>.js -- the
@@ -24,14 +25,24 @@
 # local, dev and acceptance. It is in 10-smoke because it is fast and because a drifted
 # grid invalidates every consultant and HR scenario that runs after it.
 #
-# THE COMPARATOR LIVES IN THE MODEL REPO, not here. tests/ is a separate repository
-# nested inside the Mendix working copy, so ../tools/check_mirrors.py resolves whenever
-# the suite runs from its normal home. CI checks this repo out on its own, where that
-# path does not exist -- hence the entry in ci-skip.txt. This script deliberately does
-# NOT skip itself when the checker is missing: a self-skip that exits 0 is indistinguishable
-# from a pass, and this suite has been bitten by exactly that before.
+# THE COMPARATOR LIVES IN A MODEL CHECKOUT, not here: tools/check_mirrors.py, which
+# reads the register docs/reference/mirrored-regions.json from that same checkout.
+# Until 2026-09-08 this repository was nested inside the Mendix working copy, so the
+# comparator was simply ../tools/check_mirrors.py. It now sits BESIDE the model
+# checkouts (main, main2, main3), and more than one of them can hold the comparator,
+# so this script does not guess which: set TT_MODEL_DIR to the checkout whose register
+# should be enforced -- the same variable verify-scheduled-event-config uses. Unset,
+# it falls back to the parent directory, which only works in the old nested layout.
+# Pick a checkout whose register matches what is deployed at TT_BASE_URL: a region
+# registered there but not yet deployed reads as "could not check", not as a pass.
 #
-# Env: TT_BASE_URL (the app to test). TT_MIRRORS_CHECKER overrides the checker path.
+# CI checks this repo out on its own, with no model checkout at all -- hence the
+# entry in ci-skip.txt. This script deliberately does NOT skip itself when the
+# comparator is missing: a self-skip that exits 0 is indistinguishable from a pass,
+# and this suite has been bitten by exactly that before.
+#
+# Env: TT_BASE_URL (the app to test). TT_MODEL_DIR (the model checkout holding the
+# comparator and register). TT_MIRRORS_CHECKER overrides the comparator path outright.
 set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 
@@ -41,14 +52,34 @@ if [ -z "$BASE_URL" ]; then
   exit 1
 fi
 
-CHECKER="${TT_MIRRORS_CHECKER:-$TT_ROOT/../tools/check_mirrors.py}"
+MODEL="${TT_MODEL_DIR:-$(cd "$TT_ROOT/.." && pwd)}"
+CHECKER="${TT_MIRRORS_CHECKER:-$MODEL/tools/check_mirrors.py}"
 if [ ! -f "$CHECKER" ]; then
   echo "FAIL: verify-mirrored-regions — no comparator at $CHECKER"
-  echo "      It lives in the MODEL repo (tools/check_mirrors.py), which is normally the"
-  echo "      parent of this one. Point TT_MIRRORS_CHECKER at it, or add this script to"
-  echo "      ci-skip.txt for runs where the model repo is not checked out."
+  if [ -n "${TT_MIRRORS_CHECKER:-}" ]; then
+    echo "      TT_MIRRORS_CHECKER names a file that does not exist."
+  else
+    if [ -n "${TT_MODEL_DIR:-}" ]; then
+      echo "      TT_MODEL_DIR=$MODEL is not a model checkout that carries tools/check_mirrors.py."
+    else
+      echo "      TT_MODEL_DIR is not set, and the parent directory ($MODEL) is not a model"
+      echo "      checkout. This repo no longer lives inside one."
+    fi
+    echo "      Set TT_MODEL_DIR to the Mendix model checkout whose register should be"
+    echo "      enforced. Checkouts beside this repo that carry the comparator:"
+    found=""
+    for d in "$TT_ROOT"/../*/; do
+      [ -f "$d/tools/check_mirrors.py" ] || continue
+      echo "        TT_MODEL_DIR=\"$(cd "$d" && pwd)\""
+      found=1
+    done
+    [ -n "$found" ] || echo "        (none found)"
+  fi
+  echo "      This step cannot run in CI, where no model is checked out; it is listed in"
+  echo "      ci-skip.txt for that reason. Missing is a FAIL, never a skip."
   exit 1
 fi
+echo "  comparator: $CHECKER"
 
 PY=""
 for candidate in python3 python; do
@@ -83,8 +114,10 @@ case "$status" in
   2)
     echo "FAIL: verify-mirrored-regions — the comparison could not be performed."
     echo "      This is NOT a pass. Usually one of: the app is unreachable, a region's"
-    echo "      anchor widget was renamed (update mirrored-regions.json), or a page has"
-    echo "      lost its copy of the region entirely. A region that cannot be checked has"
+    echo "      anchor widget was renamed (update mirrored-regions.json), a page has"
+    echo "      lost its copy of the region entirely, or the model checkout's register"
+    echo "      names a region that is not deployed at this URL yet (pick a TT_MODEL_DIR"
+    echo "      that matches the deploy). A region that cannot be checked has"
     echo "      no guard at all, which is worse than one that has drifted — nothing will"
     echo "      say so again."
     exit 1

@@ -32,8 +32,10 @@ tt_login "e2e_pm" "Project Manager Dashboard"
 # ------------------------------------------------------- managed-project card
 #
 # The card comes from Main.DS_ProjectsManaged through the projects gallery, which
-# the snippet fold moved out of Main.SNIP_ProjectsDashboardView and into
-# Main.ProjectManagerDashboard under foldProjectsDashboardView. That gallery is
+# the snippet fold moved out of Main.SNIP_ProjectsDashboardView and onto
+# Main.ProjectManagerDashboard, where it sits inside the cntProjectsFold container.
+# Nothing here selects through that container or through any layout-grid row or
+# column class -- the gallery is found by exclusion (see SCOPING below). It is
 # PAGED, and it has been paged two different ways: virtual scrolling with pageSize 3
 # until model commit b05c11d2 ("layout grid changes"), Load more with pageSize 25
 # since. Main.DS_ProjectsManaged sorts createdDate DESCENDING, so at pageSize 3 the
