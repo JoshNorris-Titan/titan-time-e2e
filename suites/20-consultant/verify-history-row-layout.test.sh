@@ -17,9 +17,11 @@
 #
 # ONLY DELETABLE ROWS BROKE, which is what made it hard to see and worth a test.
 # imgHistoryDelete is visible only when
-#   (Status = Draft or empty) and (TotalHours = 0 or empty)
+#   (Status = Draft or empty)
 # so every other row in the same list stayed correct and the list just looked
-# uneven. verify-history-status-badge.test.sh already covers which rows offer the
+# uneven. That condition carried a second half until 2026-09-10,
+# (TotalHours = 0 or empty), dropped when any draft became deletable. It only
+# WIDENS this spec's reach: more rows render the icon whose geometry it measures. verify-history-status-badge.test.sh already covers which rows offer the
 # icon and what the pill says; it reads innerText and class names only, so it passes
 # with the row laid out either way. This file is the geometry half, and the two
 # together are what keep the row honest.
@@ -38,8 +40,8 @@
 # Assertion 2 runs only on rows that HAVE the icon, and assertion 3 only on rows
 # that render as a single visual line. Both conditions are properties of the data
 # and the viewport, not of the layout: on a freshly seeded database every week is a
-# zero-hour draft and therefore deletable, while a list of submitted weeks offers no
-# icon at all. If no row qualifies, the spec says so in a NOTE rather than passing
+# draft and therefore deletable, while a list of submitted weeks offers no icon at
+# all. If no row qualifies, the spec says so in a NOTE rather than passing
 # quietly -- a silent zero here reads exactly like coverage.
 #
 # WHY ASSERTION 3 IS CONDITIONAL. .tt-history-row-top is `flex-wrap: wrap`, so on a
@@ -222,8 +224,8 @@ fi
 
 if [ "$DELETABLE" -eq 0 ]; then
   echo "  NOTE: no row offered the delete icon, so the icon-width assertion measured nothing."
-  echo "        Expected when every seeded week has hours on it; the bug this file guards"
-  echo "        appears ONLY on a zero-hour Draft week, so a run without one is weaker"
+  echo "        Expected when every seeded week has already been submitted; the bug this"
+  echo "        file guards appears ONLY on a Draft week, so a run without one is weaker"
   echo "        coverage than it looks. lib/_seed.sh's fresh-week pool is what supplies one."
 fi
 
