@@ -1306,41 +1306,56 @@ tt_hr_remind_e2e_entry() {
 # Anonymous customer-approval (token) page helpers
 #
 # WHAT A ROW IS, AND WHAT IDENTIFIES IT. Main.Customer_Approval renders one
-# gallery row per pending entry, and that row contains exactly three readable
-# things: the consultant name, "<n> hours", and the period. It does NOT contain
-# the project name — that is a single heading above the gallery, in the page's
-# project data view, far more than ten DOM levels away from the row's buttons.
+# gallery item per pending entry, and that item contains exactly three readable
+# things: the consultant name, "<n> hours", and the period. Since model commit
+# 8ca78e2e the row template is '{ConsultantName} - {ProjectName} ({Customer})',
+# but Main.DS_ApprovalHelper_Customer never sets those two placeholders, so a row
+# reads 'E2E Consultant - ()' and names no project at all.
 #
-# So a row is identified by CONSULTANT + WEEK, and nothing else is available.
-# That is sufficient, because the token page is scoped to ONE PROJECT already:
-# Main.DS_Project_ByToken turns the token into a single Project, and the
-# gallery's Main.DS_ApprovalHelper_Customer retrieves
-#   [...Main.Assignment_Project = $Project][Status = 'AwaitingCustomerApproval']
-# There is nothing on the page belonging to another project to disambiguate.
+# So a row is identified by CONSULTANT + WEEK, and nothing else is available on
+# the landing page. The review popup is the one surface that names the project
+# (see tt_token_popup_text below), and every caller that is about to do something
+# irreversible must read it there first.
 #
-# Do NOT reintroduce a project-name match here. A predicate requiring the
-# project inside a row can never be true, and when one was added it made the
-# row-open step fail every run ("the token page lists entries but none for week
-# X") while simultaneously making the did-it-leave-the-queue poll pass instantly
-# without ever observing the entry present. Both failure modes are silent.
+# THE PAGE IS SCOPED TO THE APPROVER, NOT TO A PROJECT, and it is not ours alone.
+# Since 8ca78e2e the token resolves to an approver, and the gallery lists every
+# entry awaiting that approver on ANY project. The Manual review environment
+# (manual-env/) is on dev now, and its Manual Consultant entries appear on the
+# same page as ours, AHEAD of them. Nothing here may assume a row it did not
+# identify is E2E data.
+#
+# A ROW IS ITS GALLERY ITEM. rowOf() used to climb up to ten parents from the
+# View button and return the first ancestor whose text held the consultant and
+# "hours". It had no containment guard, and a Manual Consultant row never holds
+# "E2E Consultant" -- so from a Manual row's View the climb ran straight past the
+# row, reached the list holding EVERY row, matched there, and handed back the
+# whole list. The first View on the page (a Manual row) then "matched" any week
+# asked for. Run 34656051868 opened a Manual entry in three customer specs, which
+# refused it on the popup's project, and approved one in verify-token-replay-
+# refused, which did not look. Scoping to `.widget-gallery-item` -- what
+# tt_token_rows_all_actionable and every other gallery spec in this suite already
+# use -- makes a row exactly one entry, whatever else shares the page.
+#
+# Do NOT reintroduce a project-name match on the landing page: the row carries no
+# project, so the predicate can never be true (it did this once, and made the
+# row-open step fail every run while the did-it-leave poll passed instantly).
 #
 # The walk is defined ONCE, below, so the logger and the matchers cannot drift
-# apart about which ancestor the row is.
+# apart about which element the row is.
 # ---------------------------------------------------------------------------
 
 # _tt_token_row_js <consultantName> — emits the shared JS prelude.
 #
-# rowOf(btnView) walks up at most ten parents and returns the first ancestor
-# whose text holds both the consultant and "hours" — i.e. the ancestor spanning
-# BOTH lines of the row, which is the one carrying the period. (Deliberately not
-# a text-length heuristic: the first line alone, "E2E Consultant ViewApprove",
-# is 26 characters, so a >25 rule stops one level short and hides the week.)
+#   itemOf(btnView)  the button's own gallery item: one entry, never more.
+#   rowOf(btnView)   that item, but only when it is <consultantName>'s -- it
+#                    must hold both the name and "hours" -- else null. Both
+#                    lines of the row are inside the item, so the period is too.
 #
 # Emitted as ONE line on purpose. playwright-cli echoes the snippet source
 # before its result and _tt_eval_str reads line 2, so a multi-line snippet would
 # shift the result off the line every caller reads.
 _tt_token_row_js() {
-  printf '%s' "const who='$1';const rowOf=v=>{let p=v;for(let k=0;k<10;k++){if(!p.parentElement)break;p=p.parentElement;const t=p.innerText||'';if(t.indexOf(who)>=0&&t.indexOf('hours')>=0)return p;}return null;};const views=()=>[...document.querySelectorAll('.mx-name-btnView')];const txt=p=>((p&&p.innerText)||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();"
+  printf '%s' "const who='$1';const txt=p=>((p&&p.innerText)||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();const itemOf=v=>v.closest('.widget-gallery-item');const rowOf=v=>{const r=itemOf(v);if(!r)return null;const t=txt(r);return (t.indexOf(who)>=0&&t.indexOf('hours')>=0)?r:null;};const views=()=>[...document.querySelectorAll('.mx-name-galPendingEntries .mx-name-btnView')];"
 }
 
 # tt_token_log_rows <consultantName> — print every row the token page is
@@ -1349,7 +1364,7 @@ _tt_token_row_js() {
 # looking for a product bug.
 tt_token_log_rows() {
   local js; js="$(_tt_token_row_js "$1")"
-  playwright-cli eval "() => { $js const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=views().map(v=>{ const r=rowOf(v); return r ? txt(r).slice(0,160) : '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
+  playwright-cli eval "() => { $js const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return '(no pending list)'; const rows=views().map(v=>{ const r=itemOf(v); return r ? txt(r).slice(0,160) : '(row text unavailable)'; }); return rows.length ? rows.join('  ||  ') : '(no rows)'; }" 2>/dev/null | _tt_eval_str | sed 's/^/  [token-page rows] /'
 }
 
 # tt_token_open_row <consultantName> <weekFragment>
