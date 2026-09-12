@@ -45,6 +45,17 @@
 # there afterwards, reports that C could not be reached instead of failing - a
 # queue that deep is a data condition, not a defect. A and B always run.
 #
+# C ONLY EVER APPROVES OUR OWN ROWS. The approver is not ours alone: the Manual
+# review environment (manual-env/) lists Manual Consultant entries on this same
+# page, ahead of ours, and the E2E bookend clear never touches them. The drain
+# used to approve "the first row offered", whoever's it was. It now approves only
+# rows whose own gallery item names $CONSULTANT_NAME; when other consultants'
+# rows remain once ours are gone, the page can never reach its empty state
+# without approving somebody else's timesheet, and C reports itself not reached
+# for exactly the reason above. B likewise reads the review popup's project
+# before its approve - the other three token specs already did, this one did not,
+# and in run 34656051868 it approved a Manual Consultant entry on dev.
+#
 # CONSUMES the client-approval queue for this approver. Every step that needs one
 # seeds its own, and the ones that run before this in the suite have already had
 # theirs.
@@ -126,11 +137,24 @@ empty_state() {
   playwright-cli eval "() => { const c=document.querySelector('.mx-name-containerNoPendingApprovals'); return String(!!c && c.offsetParent!==null); }" 2>/dev/null | _tt_eval_str
 }
 
-# approve_first — open the first offered row and approve it. Echoes 'ok' or why not.
+# ours_offered — how many of those rows are $CONSULTANT_NAME's own. A row is its
+# gallery item (see _tt_token_row_js in lib/_login.sh for why it is not a climb).
+ours_offered() {
+  playwright-cli eval "() => String([...document.querySelectorAll('.mx-name-galPendingEntries .mx-name-btnView')].filter(b=>b.offsetParent!==null).filter(b=>{ const r=b.closest('.widget-gallery-item'); return !!r && (r.innerText||'').indexOf('$CONSULTANT_NAME')>=0; }).length)" 2>/dev/null | _tt_eval_str
+}
+
+# approve_first — open the first offered row that is $CONSULTANT_NAME's, confirm
+# on the review popup that it is, and approve it. Echoes 'ok' or why not. Never
+# touches another consultant's row: see "C ONLY EVER APPROVES OUR OWN ROWS".
 approve_first() {
-  local clicked
-  playwright-cli eval "() => { const b=[...document.querySelectorAll('.mx-name-galPendingEntries .mx-name-btnView')].filter(x=>x.offsetParent!==null)[0]; if(!b) return 'norow'; b.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str | grep -qiw ok || { echo "norow"; return 1; }
+  local clicked popup
+  playwright-cli eval "() => { const b=[...document.querySelectorAll('.mx-name-galPendingEntries .mx-name-btnView')].filter(x=>x.offsetParent!==null).find(x=>{ const r=x.closest('.widget-gallery-item'); return !!r && (r.innerText||'').indexOf('$CONSULTANT_NAME')>=0; }); if(!b) return 'norow'; b.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str | grep -qiw ok || { echo "norow"; return 1; }
   sleep 3
+  popup="$(tt_token_popup_text)"
+  case "$popup" in
+    *"$CONSULTANT_NAME"*) : ;;
+    *) tt_token_popup_close >/dev/null 2>&1; echo "notours"; return 1 ;;
+  esac
   clicked="$(playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnCustomerApprove'); if(!b) return 'missing'; if(b.disabled) return 'disabled'; b.click(); return 'clicked'; }" 2>/dev/null | _tt_eval_str)"
   [ "$clicked" = "clicked" ] || { echo "$clicked"; return 1; }
   # Both client actions carry a confirmation captioned with the action itself,
@@ -155,6 +179,15 @@ echo "  the token link opens and offers $BEFORE row(s)"
 opened="$(tt_token_open_row "$CONSULTANT_NAME" "$WEEKFRAG")"
 [ "$opened" = "hit" ] || tt_fail "could not open the review popup for week '$WEEK' (got: $opened)"
 tt_wait_for ".mx-name-btnCustomerApprove" "client Approve button on the review popup"
+# The landing row names no project, and this approver's page is shared, so the
+# popup's Entry Details panel is the only thing that can say WHICH entry opened.
+# Read it before the irreversible click, exactly as verify-customer-token-approve
+# does.
+POPUP="$(tt_token_popup_text)"
+case "$POPUP" in
+  *"$PROJECT"*) echo "  review popup confirms project '$PROJECT'" ;;
+  *) tt_fail "the opened entry is not on '$PROJECT' - refusing to approve it: $POPUP" ;;
+esac
 clicked="$(playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnCustomerApprove'); if(!b) return 'missing'; if(b.disabled) return 'disabled'; b.click(); return 'clicked'; }" 2>/dev/null | _tt_eval_str)"
 [ "$clicked" = "clicked" ] || tt_fail "could not click the client Approve button (state: $clicked)"
 tt_clear_dialogs 8 "Approve" || tt_fail "the approval confirmation was not dismissed: ${TT_DIALOG_BLOCKED:-unknown dialog}"
@@ -174,15 +207,28 @@ fi
 echo "  B: after approving it, a cold reload of the same link no longer offers week '$WEEK'"
 
 # ------------------------------------------- 4. C: drain, then the empty state
-n="$(rows_offered)"; n="${n:-0}"
+n="$(ours_offered)"; n="${n:-0}"
 i=0
 while [ "$n" -gt 0 ] && [ "$i" -lt "$TOKEN_DRAIN_MAX" ]; do
   r="$(approve_first)"
   [ "$r" = "ok" ] || { echo "  (stopped draining: $r)"; break; }
   i=$(( i + 1 ))
   open_cold || tt_fail "the token link stopped opening part-way through the drain, after $i approval(s)"
-  n="$(rows_offered)"; n="${n:-0}"
+  n="$(ours_offered)"; n="${n:-0}"
 done
+
+# Ours are gone (or the cap was hit). Anything still listed belongs to another
+# consultant on this approver, and approving it is not this test's to do.
+if [ "$n" -eq 0 ]; then
+  foreign="$(rows_offered)"; foreign="${foreign:-0}"
+  if [ "$foreign" -gt 0 ]; then
+    echo "  C not reached: every '$CONSULTANT_NAME' row is approved ($i this run), but $foreign row(s)"
+    echo "  for other consultants remain on this approver's page - the Manual review"
+    echo "  environment shares it. Emptying the page would mean approving their timesheets."
+    echo "PASS: verify-token-replay-refused - the approved week is not offered again by a cold reload of the same token link (empty-state check skipped: $foreign row(s) belong to other consultants)"
+    exit 0
+  fi
+fi
 
 if [ "$n" -gt 0 ]; then
   echo "  C not reached: $n row(s) still on offer after approving $i (cap TOKEN_DRAIN_MAX=$TOKEN_DRAIN_MAX)."
