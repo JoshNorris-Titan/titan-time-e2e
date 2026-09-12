@@ -1875,6 +1875,30 @@ tt_consultant_submit_entry() {
   playwright-cli eval "() => { const i=document.querySelector('.mx-name-txtDayMon input'); return String(i ? (i.disabled||i.readOnly) : false); }" 2>/dev/null | grep -qiw true
 }
 
+# tt_week_row_of <project-substring> [editable] — 1-based position of the row for
+# <project> in the consultant week grid (.mx-name-galAssignmentRows), or 0. With
+# `editable`, only a row whose Mon cell holds a writable input counts.
+#
+# ONE ROW = ONE .mx-name-txtDayMon. The climb from each Mon cell stops the moment
+# the ancestor holds more than one, so it can only ever match text inside its own
+# row -- the same containment tt_consultant_submit_project_row below, lib/_seed.sh
+# and lib/_tt654.sh already use.
+#
+# WHY THIS EXISTS (2026-09-12). Four 20-consultant specs each carried a private
+# copy of this walk WITHOUT the containment test: climb ten parents, return the
+# first whose text holds <project>. Measured on dev, a Mon cell is only four levels
+# below the list holding EVERY row (txtDayMon > cntRowCells > cntAssignmentRow >
+# .widget-gallery-item > .widget-gallery-items) since the 2026-09-09 CSS-grid
+# refactor of the timesheetGrid region. So from row 1 the old climb reached the
+# whole list by k=4, found <project> there whichever row it was on, and returned
+# 1 -- every time. The four specs stayed correct only because e2e_consultant2 has
+# exactly one assignment. verify-week-row-resolution holds this helper to the right
+# answer on a grid with several rows.
+tt_week_row_of() {
+  local proj="$1" mode="${2:-any}"
+  playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; for(let n=0;n<rows.length;n++){ let el=rows[n]; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) break; if((el.innerText||'').indexOf('$proj')>=0){ if('$mode'!=='editable') return String(n+1); const inp=rows[n].querySelector('input'); if(inp && !inp.readOnly && !inp.disabled) return String(n+1); break; } } } return '0'; }" 2>/dev/null | _tt_eval_str
+}
+
 # tt_consultant_submit_project_row <project-substring>
 # Multi-assignment variant of tt_consultant_submit_entry: on the consultant
 # timesheet (which shows one row per active assignment), steps forward to the

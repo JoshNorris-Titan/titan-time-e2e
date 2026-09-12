@@ -85,7 +85,7 @@ echo "  weeks awaiting approval before: $aw_before"
 WEEK="$(tt_goto_fresh_week "$PROJECT")" \
   || tt_fail "no fresh editable week with a '$PROJECT' row for '$CUSER' — cannot cause a rollup"
 
-ord="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; for(let n=0;n<rows.length;n++){ let el=rows[n]; for(let k=0;k<10;k++){ el=el.parentElement; if(!el) break; if((el.innerText||'').indexOf('$PROJECT')>=0){ const inp=rows[n].querySelector('input'); if(inp && !inp.readOnly && !inp.disabled) return String(n+1); } } } return '0'; }" 2>/dev/null | _tt_eval_str)"
+ord="$(tt_week_row_of "$PROJECT" editable)"
 [ "$ord" != "0" ] || tt_fail "no editable '$PROJECT' row on week '$WEEK'"
 
 for d in Mon Tues Wed Thurs Fri; do
