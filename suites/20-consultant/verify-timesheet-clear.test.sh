@@ -61,7 +61,7 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 # hc_row_any — 1-based position of the PROJECT row, editable or not. Reading has
 # to keep working after submit, which is when case C looks at it.
 hc_row_any() {
-  playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; for(let n=0;n<rows.length;n++){ let el=rows[n]; for(let k=0;k<10;k++){ el=el.parentElement; if(!el) break; if((el.innerText||'').indexOf('$PROJECT')>=0) return String(n+1); } } return '0'; }" 2>/dev/null | _tt_eval_str
+  tt_week_row_of "$PROJECT"
 }
 
 hc_editable() {
