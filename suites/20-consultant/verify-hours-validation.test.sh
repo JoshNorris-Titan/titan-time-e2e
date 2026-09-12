@@ -85,7 +85,7 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
 # hv_row_ordinal — 1-based position of the editable row for PROJECT, or 0.
 hv_row_ordinal() {
-  playwright-cli eval "() => { const rows=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; for(let n=0;n<rows.length;n++){ let el=rows[n]; for(let k=0;k<10;k++){ el=el.parentElement; if(!el) break; if((el.innerText||'').indexOf('$PROJECT')>=0){ const inp=rows[n].querySelector('input'); if(inp && !inp.readOnly && !inp.disabled) return String(n+1); } } } return '0'; }" 2>/dev/null | _tt_eval_str
+  tt_week_row_of "$PROJECT" editable
 }
 
 hv_set_day() {   # hv_set_day <ordinal> <Mon|Tues|...> <value>
