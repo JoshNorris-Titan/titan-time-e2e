@@ -50,7 +50,18 @@ CNAME="${TT_HRREJECT_NAME:-E2E Consultant}"
 GUARD_MSG="Please leave a comment before rejecting"
 WS="   "
 
-POPUP='[role=dialog], .mx-dialog, .modal-dialog, .mx-window'
+# THE POPUP IS FOUND WITH _tt_dialog_js, NOT WITH A SELECTOR OF ITS OWN.
+# This file used to carry
+#     POPUP='[role=dialog], .mx-dialog, .modal-dialog, .mx-window'
+# and filter it on offsetParent !== null. Mendix puts all four of those on the ONE
+# outer wrapper, and styles it position: fixed - and offsetParent is null for any
+# fixed element by specification, however plainly it is on screen. So step A could
+# never see the popup it had just opened: every run since the spec was written
+# (2026-09-09) failed "did not open the 'Add Rejection Comments' popup" while
+# printing, on the very next line, a dialog reading "Add Rejection Comments".
+# verify-current-week-warning measured the same wrapper on 2026-09-01 and says it
+# in capitals: use _tt_dialog_js, do not reimplement the lookup. It selects the
+# INNER content node, which is not fixed, and takes the topmost visible one.
 
 # ---------------------------------------------------------------------- helpers
 
@@ -82,12 +93,12 @@ hprg_click_reject() {
 # it, so Mendix takes the value. Called with '' on purpose, which
 # `playwright-cli fill` cannot do reliably against a Mendix text area.
 hprg_set_comment() {
-  playwright-cli eval "() => { const d=document.querySelector('$POPUP'); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea'); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$1'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'set'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea'); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$1'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'set'; }" 2>/dev/null | _tt_eval_str
 }
 
 # hprg_comment_value - 'V:<contents>' of the popup's comment box, or a marker.
 hprg_comment_value() {
-  playwright-cli eval "() => { const d=document.querySelector('$POPUP'); if(!d) return 'NOPOPUP'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea'); return ta ? 'V:'+(ta.value||'') : 'NOFIELD'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'NOPOPUP'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea'); return ta ? 'V:'+(ta.value||'') : 'NOFIELD'; }" 2>/dev/null | _tt_eval_str
 }
 
 # hprg_visible_dialog_text - the text of EVERY visible top-level dialog, joined.
@@ -104,7 +115,7 @@ hprg_visible_dialog_text() {
 # Anchored on its title text, because the guard's blocking message matches the
 # same container selectors and would otherwise answer 'true' for it.
 hprg_popup_open() {
-  playwright-cli eval "() => { const ds=[...document.querySelectorAll('$POPUP')].filter(d=>d.offsetParent!==null); return String(ds.some(d=>/Rejection Comment/i.test(d.innerText||''))); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const d=$(_tt_dialog_js); return String(!!d && /Rejection Comment/i.test(d.innerText||'')); }" 2>/dev/null | _tt_eval_str
 }
 
 # hprg_probe <value> - set the comment, press the popup's Reject, and report what
@@ -126,7 +137,20 @@ hprg_probe() {
 
 # ------------------------------------------------- 1. borrow a card to press
 hprg_hr
-WEEKS="$(hprg_weeks)"
+# tt_login returns once the tab CAPTION is on screen, and the caption renders well
+# before the week gallery does. This used to read the picker at that instant, so it
+# failed "shows no week picker" in 3-6s on every run while verify-hr-process-reject,
+# a few seconds later on the same tab, listed 8 weeks. Open the tab the way
+# tt_hr_count_cards_for does, then give the picker a bounded chance to fill.
+tt_click_text "$TAB" >/dev/null 2>&1
+WEEKS=""
+for _ in $(seq 1 20); do
+  WEEKS="$(hprg_weeks)"
+  [ -n "$WEEKS" ] && [ "$WEEKS" != "null" ] && break
+  WEEKS=""
+  sleep 1
+done
+[ -n "$WEEKS" ] || tt692693_hr_tab_state "no week picker on '$TAB' after 20s"
 [ -n "$WEEKS" ] && [ "$WEEKS" != "null" ] \
   || tt_fail "the '$TAB' tab shows no week picker, so there is no week to look in. tt692693_hr_tab_state above says what the tab was showing - an empty picker is usually a consultant or project filter left set by an earlier step, not a missing entry."
 
@@ -176,7 +200,12 @@ case "$R1" in
 esac
 echo "  the empty comment was refused with the guard's message"
 
-tt_clear_dialogs 8 \
+# ONE dialog, not "every dialog": the guard's Show Message sits on top of the
+# comment popup, and the popup's own buttons are Close and Reject - neither of
+# which tt_clear_dialogs will press, by design. Asked to clear 8, it dismisses the
+# message and then reports the POPUP as blocked, and this step would fail saying
+# the message could not be dismissed when it just was.
+tt_clear_dialogs 1 \
   || tt_fail "the guard's message could not be dismissed: ${TT_DIALOG_BLOCKED:-unknown dialog}. It is a blocking Show Message, so its only control is OK."
 sleep 2
 
