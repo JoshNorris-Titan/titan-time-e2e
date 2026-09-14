@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
 # verify-timesheet-clear.test.sh
 #
-# Clear empties a week — and "empty" means BLANK, not zero.
+# Clear zeroes a week — every day cell reads an explicit 0, never blank.
 #
 # WHY THIS EXISTS. Blank and 0 are different states in this app. A blank day means
 # "nothing recorded"; a 0 means "worked none, and I am telling you so". The two
-# drive different behaviour downstream, and ACT_Timesheet_Clear carries an
-# annotation from its own author calling the blank-versus-zero semantics
-# "delicate" — which is exactly the kind of rule that rots silently, because a
-# regression that wrote 0.00 instead of blank looks identical on screen.
+# drive different behaviour downstream, which is exactly the kind of rule that rots
+# silently, because the two look near-identical on screen.
 #
-# Nothing tested it. verify-tt692693-c2 covers an explicit 0, but the suite's own
-# tt_goto_fresh_week deliberately treats '', '0' and '0.00' as interchangeable when
-# hunting for a usable week, so it cannot tell the two apart — nor should it, for
-# that job. This step therefore reads raw field values itself rather than reusing
-# that helper's notion of "blank".
+# WHICH SIDE CLEAR IS ON CHANGED ON 2026-09-10, on Josh's instruction. Clear used
+# to blank every editable cell; it now writes an explicit 0, and keeps the entry's
+# line items (tasks) with their hours zeroed instead of deleting them. So case A
+# below is INVERTED from what it asserted before that date: a blank week now means
+# Clear regressed to the old behaviour, not that it worked. A brand-new week that
+# has never been touched still shows blanks — only a CLEARED week shows zeros.
+# The task half is covered by verify-timesheet-clear-keeps-tasks.test.sh, which
+# needs a NeedsLineItems project and so runs as its own step.
+#
+# The distinction is still worth its own step. verify-tt692693-c2 covers an explicit
+# 0, but the suite's own tt_goto_fresh_week deliberately treats '', '0' and '0.00'
+# as interchangeable when hunting for a usable week, so it cannot tell the two apart
+# — nor should it, for that job. This step therefore reads raw field values itself
+# rather than reusing that helper's notion of "blank".
 #
 # WHAT IT ASSERTS
-#   A. After Clear, every day cell is EXACTLY empty — not "0", not "0.00".
+#   A. After Clear, every day cell reads an explicit 0 — not blank, and not the
+#      hours that were there before.
 #   B. An explicit 0 survives a save and re-read as a zero, not as a blank. It
 #      round-trips a 7 first, because Main.SUB_Timesheet_Zero turns every empty
 #      day value into 0 on save: a 0.00 read off a week that has ever been saved
 #      is not evidence of anything this test wrote. Only a zero that provably
-#      replaced the 7 proves the point. Taken with A, that is what shows the two
-#      states are genuinely distinct rather than one being a rendering of the
-#      other.
+#      replaced the 7 proves the point — that a 0 the consultant typed is stored
+#      and rendered as a 0, rather than collapsing back to blank.
 #   C. Clear is refused once the week is no longer editable. ACT_Timesheet_Clear
 #      opens on "Is timesheet draft, empty, or rejected" and shows a message
 #      otherwise; a Clear that worked on a submitted week would silently destroy
@@ -156,7 +163,7 @@ case "$filled" in
     ;;
 esac
 
-# ------------------------------------------------------- A. Clear leaves BLANK
+# ------------------------------------------------------- A. Clear leaves ZEROS
 # The app hides Clear, Save and Submit together the moment the week's status
 # leaves Draft/Rejected/(empty). tt_goto_fresh_week now refuses such a week, so
 # arriving here without a Clear button means the week changed underneath us —
@@ -192,18 +199,28 @@ if [ "$clear_ran" = "1" ]; then
       bad "A after Clear there are NO day cells to read - $where (week on screen: '$(tt_current_week)'; dialog at the click: \"${CLEAR_DIALOG:-none}\"; week status: $(tt_week_status "$CUSER" "$WEEK")). Nothing can be said about blank versus zero from a grid with no cells; this is a rendering or data fault, not ACT_Timesheet_Clear conflating the two states."
       ;;
     *)
-      notblank=""
+      # Three outcomes, and each gets its own message: every cell an explicit 0
+      # (correct), every cell blank (the pre-2026-09-10 behaviour, i.e. the change
+      # was reverted or never deployed), or hours still standing (Clear did not run
+      # or did not reach this row). A missing cell is reported as itself.
+      notzero="" blanks=0 missing=""
       for d in $DAYS; do
         v="$(hc_day "$ORD" "$d")"
-        [ "$v" = "" ] || notblank="$notblank $d=[$v]"
+        case "$v" in
+          __MISSING__) missing="$missing $d" ;;
+          "")          blanks=$((blanks+1)); notzero="$notzero $d=[blank]" ;;
+          *)           hc_is_zero "$v" || notzero="$notzero $d=[$v]" ;;
+        esac
       done
 
-      if [ -z "$notblank" ]; then
-        note "A Clear left every day cell exactly blank"
-      elif hc_is_zero "$(hc_day "$ORD" Mon)"; then
-        bad "A Clear wrote ZEROS instead of blanks —$notblank. Blank means 'nothing recorded' and 0 means 'recorded none'; ACT_Timesheet_Clear must not conflate them"
+      if [ -n "$missing" ]; then
+        bad "A after Clear these day cells are absent from row $ORD -$missing (grid is rendering: $(hc_cells) rows). That is a rendering fault, not a zero-versus-blank one."
+      elif [ -z "$notzero" ]; then
+        note "A Clear left every day cell an explicit 0"
+      elif [ "$blanks" = "7" ]; then
+        bad "A Clear BLANKED the week instead of zeroing it. Every cell came back empty, which is what ACT_Timesheet_Clear did before 2026-09-10 — so either the zeroing change is not deployed to this environment, or it was reverted. Clear must write an explicit 0: blank means 'nothing recorded', and a cleared week means 'recorded none'."
       else
-        bad "A Clear did not empty the week —$notblank"
+        bad "A Clear did not zero the week —$notzero"
       fi
       ;;
   esac
