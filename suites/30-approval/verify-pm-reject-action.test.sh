@@ -83,6 +83,53 @@ pmr_open_review() {
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnReject'))" 2>/dev/null | grep -qiw true
 }
 
+# _pmr_comment_len_js — read the comment from the popup that is ON SCREEN.
+#
+# A bare document.querySelector is wrong here. Mendix keeps a CLOSED popup's nodes
+# in the DOM — lib/_login.sh's tt_clear_dialogs says so outright ("the previous
+# document.querySelector approach clicked dead nodes"), and _tt_dialog_js takes
+# outer[outer.length-1] for exactly that reason. `playwright-cli fill` writes to
+# the live field, so a first-match readback can be pointed at a dead textarea from
+# a popup that is no longer visible. It then reads 0 and the step reports "the
+# comment did not commit" while the visible box holds the text perfectly well.
+_pmr_comment_len_js() {
+  printf "%s" "() => { const es=[...document.querySelectorAll('.mx-name-txtRejectionComment')].filter(e=>e.offsetParent!==null); const e=es[es.length-1]; if(!e) return 'absent'; const i=e.querySelector('textarea,input')||e; return String((i.value||'').trim().length); }"
+}
+
+# pmr_fill_comment <text> — type into the textarea of the popup that is ON SCREEN,
+# then commit it. Returns non-zero when there is no visible comment box.
+#
+# THE WRITE HAD THE SAME BUG THE READ DID, AND A WORSE ONE. This step used to
+# `playwright-cli fill ".mx-name-txtRejectionComment"`, output to /dev/null. On
+# Main.ReviewTimesheetEntry that class sits on the $FormGroup WRAPPER <div>, not
+# on the <textarea> (compiled page, 2026-09-12), and Playwright refuses to fill a
+# plain div -- so the fill errored, the error went to /dev/null, nothing was
+# typed, and the read-back truthfully said 0. Run 34666443985 proved it: the
+# read-back fix alone left this step red with the identical message. Every other
+# spec that writes this comment already targets the textarea itself
+# (verify-customer-token-reject fills ".mx-name-txtRejectionComment textarea",
+# lib/_tt692693.sh and the export-reject specs set it through the textarea).
+# :nth-match picks the LAST visible one, for the dead-popup reason given on
+# _pmr_comment_len_js above.
+pmr_fill_comment() {
+  local n
+  n="$(playwright-cli eval "() => { const all=[...document.querySelectorAll('.mx-name-txtRejectionComment textarea')]; let k=0; all.forEach((t,i)=>{ if(t.offsetParent!==null) k=i+1; }); return String(k); }" 2>/dev/null | _tt_eval_str)"
+  case "$n" in ''|*[!0-9]*|0) return 1 ;; esac
+  playwright-cli fill ":nth-match(.mx-name-txtRejectionComment textarea, $n)" "$1" >/dev/null 2>&1
+  tt_commit_focused
+}
+
+# pmr_close_review — dismiss the review popup so the next open starts from ONE.
+#
+# The empty-comment half deliberately trips Main.ACT_Page_Reject's "Left Comments?"
+# branch, which shows a message and ends WITHOUT closing the popup. Left open, the
+# real-rejection half below opens a SECOND review popup and there are then two
+# txtRejectionComment nodes in the document at once.
+pmr_close_review() {
+  playwright-cli eval "() => { const bs=[...document.querySelectorAll('.mx-name-btnCancel')].filter(e=>e.offsetParent!==null); if(!bs.length) return 'none'; bs[bs.length-1].click(); return 'closed'; }" >/dev/null 2>&1
+  sleep 2
+}
+
 pm_login_dash() { tt_login "e2e_pm" "Project Manager Dashboard"; }
 
 # ------------------------------------------- 1. make sure there is one to reject
@@ -110,14 +157,14 @@ pmr_open_review || tt_fail "the review page did not open from the PM dashboard -
 # Deliberately do NOT touch txtRejectionComment. A comment left over from an
 # earlier run would make this half pass for the wrong reason, so clear it first
 # and prove it is empty before pressing anything.
-playwright-cli fill ".mx-name-txtRejectionComment" "" >/dev/null 2>&1
-tt_commit_focused
-empty="$(playwright-cli eval "() => { const e=document.querySelector('.mx-name-txtRejectionComment'); if(!e) return 'absent'; const i=e.querySelector('textarea,input')||e; return String((i.value||'').trim().length); }" 2>/dev/null | _tt_eval_str)"
+pmr_fill_comment "" || tt_fail "the review popup is open but shows no editable rejection comment box (.mx-name-txtRejectionComment textarea) - nothing to empty, so the guard check that follows would prove nothing"
+empty="$(playwright-cli eval "$(_pmr_comment_len_js)" 2>/dev/null | _tt_eval_str)"
 [ "$empty" = "0" ] || tt_fail "could not empty the rejection comment before the guard check (read back: [$empty]) - the assertion that follows would prove nothing"
 
 playwright-cli click ".mx-name-btnReject" >/dev/null 2>&1
 sleep 3
 tt_dismiss_dialogs
+pmr_close_review
 
 pm_login_dash
 GUARDED="$(pmr_count)"
@@ -133,8 +180,8 @@ echo "  the empty-comment guard held (queue still $GUARDED)"
 # --------------------------------------------- 3. Reject with a real comment
 pmr_open_review || tt_fail "the review page did not reopen for the real rejection (it opened once already, so the row is there - suspect the first Reject left a dialog on screen)"
 
-tt_fill_commit ".mx-name-txtRejectionComment" "$COMMENT"
-typed="$(playwright-cli eval "() => { const e=document.querySelector('.mx-name-txtRejectionComment'); if(!e) return 'absent'; const i=e.querySelector('textarea,input')||e; return String((i.value||'').trim().length); }" 2>/dev/null | _tt_eval_str)"
+pmr_fill_comment "$COMMENT" || tt_fail "the reopened review popup shows no editable rejection comment box (.mx-name-txtRejectionComment textarea)"
+typed="$(playwright-cli eval "$(_pmr_comment_len_js)" 2>/dev/null | _tt_eval_str)"
 case "$typed" in
   ''|*[!0-9]*) tt_fail "could not read the rejection comment back: [$typed]" ;;
   0) tt_fail "the rejection comment did not commit - a Mendix text area hands its value over on BLUR, so an uncommitted comment would trip the very guard this half is trying to get past" ;;
@@ -153,7 +200,7 @@ echo "  the entry left the PM queue (before=$BEFORE, after=$AFTER)"
 # --------------------------------- 5. it came back to the consultant, rejected
 tt_login "$CUSER" "My Timesheets"
 tt_consultant_history_load >/dev/null 2>&1 || true
-if [ "$(tt_rejected_has_project "$PROJECT")" != "true" ]; then
+if ! tt_rejected_has_project "$PROJECT"; then
   echo "FAIL: the entry left the PM queue but did not arrive in the consultant's Rejected Entries."
   echo "      Rejected Entries currently shows: $(tt_rejected_projects)"
   echo "      A rejection that removes the entry from the approver's queue without"
