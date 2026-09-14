@@ -74,6 +74,30 @@ hprg_weeks() {
   playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | _tt_eval_str
 }
 
+# hprg_open_tab - land on the tab and wait (<=20s) for its week picker to list
+# something; prints the pipe-joined weeks, or nothing if it never filled.
+#
+# tt_login returns once the tab CAPTION is on screen, and the caption renders well
+# before the week gallery does. Both reads in this file used to happen at that
+# instant. The first failed "shows no week picker" in 3-6s on every run while
+# verify-hr-process-reject, seconds later on the same tab, listed 8 weeks. Once
+# that was fixed, the re-count in step D did the same thing: it selected the
+# week before the picker existed, counted an empty gallery, and reported
+# "an entry left ... (before=3, after=0)" - the most serious thing this file can
+# say, pointing at Main.ACT_AssignmentEntry_PageReject, for three cards at once
+# when the probe had only ever touched one (run 34885953025).
+hprg_open_tab() {
+  local w="" _
+  tt_click_text "$TAB" >/dev/null 2>&1
+  for _ in $(seq 1 20); do
+    w="$(hprg_weeks)"
+    [ -n "$w" ] && [ "$w" != "null" ] && break
+    w=""
+    sleep 1
+  done
+  printf '%s' "$w"
+}
+
 hprg_select_week() {
   playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){ el.click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str
   sleep 3
@@ -137,19 +161,7 @@ hprg_probe() {
 
 # ------------------------------------------------- 1. borrow a card to press
 hprg_hr
-# tt_login returns once the tab CAPTION is on screen, and the caption renders well
-# before the week gallery does. This used to read the picker at that instant, so it
-# failed "shows no week picker" in 3-6s on every run while verify-hr-process-reject,
-# a few seconds later on the same tab, listed 8 weeks. Open the tab the way
-# tt_hr_count_cards_for does, then give the picker a bounded chance to fill.
-tt_click_text "$TAB" >/dev/null 2>&1
-WEEKS=""
-for _ in $(seq 1 20); do
-  WEEKS="$(hprg_weeks)"
-  [ -n "$WEEKS" ] && [ "$WEEKS" != "null" ] && break
-  WEEKS=""
-  sleep 1
-done
+WEEKS="$(hprg_open_tab)"
 [ -n "$WEEKS" ] || tt692693_hr_tab_state "no week picker on '$TAB' after 20s"
 [ -n "$WEEKS" ] && [ "$WEEKS" != "null" ] \
   || tt_fail "the '$TAB' tab shows no week picker, so there is no week to look in. tt692693_hr_tab_state above says what the tab was showing - an empty picker is usually a consultant or project filter left set by an earlier step, not a missing entry."
@@ -245,9 +257,24 @@ sleep 2
 tt_clear_dialogs 8 >/dev/null 2>&1 || true
 
 hprg_hr
-hprg_select_week "$WEEK" >/dev/null 2>&1
-AFTER="$(tt692693_count_cards_here "$CNAME")"
-AFTER="${AFTER:-0}"
+WEEKS_AFTER="$(hprg_open_tab)"
+if [ -z "$WEEKS_AFTER" ]; then
+  tt692693_hr_tab_state "re-count: no week picker on '$TAB' after 20s"
+  tt_fail "could not re-open '$TAB' to re-count: its week picker never filled, so there is nothing to compare against before=$COUNT. That says nothing about the guard either way."
+fi
+case "|$WEEKS_AFTER|" in
+  *"|$WEEK|"*)
+    sel="$(hprg_select_week "$WEEK")"
+    [ "$sel" = "ok" ] \
+      || tt_fail "week '$WEEK' is listed on '$TAB' but could not be selected to re-count ($sel)"
+    AFTER="$(tt692693_count_cards_here "$CNAME")"
+    AFTER="${AFTER:-0}" ;;
+  *)
+    # A week with nothing left to process drops out of the picker, so its absence
+    # after the picker has loaded IS the cards having gone - count it as zero.
+    echo "  week '$WEEK' is no longer in the picker (now: $WEEKS_AFTER)"
+    AFTER=0 ;;
+esac
 if [ "$AFTER" -lt "$COUNT" ]; then
   echo "FAIL: an entry left '$TAB' week '$WEEK' during the guard probes (before=$COUNT, after=$AFTER)."
   echo "      Both probes were refused with the guard's message, so the message is being"
