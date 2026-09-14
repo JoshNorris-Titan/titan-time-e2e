@@ -439,7 +439,7 @@ tt654_mcp_tools() {
   playwright-cli eval "$(_tt654_mcp_js "$1" "tools/list" "{}")" 2>/dev/null | _tt_eval_str | tr -d '\r'
 }
 
-# tt654_mint_token — mint an MCP token via the "Connect my LLM" flow and echo the
+# tt654_mint_token — mint an MCP token via the "Connect my agent" flow and echo the
 # raw token. The stored value is hashed, so the copy-ready snippet this produces is
 # the only place the token is ever readable.
 #
@@ -448,15 +448,19 @@ tt654_mcp_tools() {
 # button no longer exists — on dev it returns a count of 0 while
 # actionButtonConnectMyLLM returns 1. The flow is now:
 #
-#   dashboard: actionButtonConnectMyLLM
-#     -> modal "Connect my LLM"
+#   dashboard: actionButtonConnectMyLLM   (caption "Connect my agent"; the widget
+#                                          name kept its old LLM spelling)
+#     -> modal "Connect my agent"
 #          actionButtonGenerateToken2      mints the token
-#          tabContainerClients             one tab per client
-#          textAreaClaudeCode              holds a ready-to-paste command:
-#            claude mcp add --transport http titan-time <base>/titan-time/mcp \
-#              --header "Authorization: Bearer <token>"
+#          tabContainerClients             two tabs: Claude Code, Other
+#          textAreaClaudeCode              holds a prompt to paste into Claude Code,
+#                                          which tells it to write a .mcp.json whose
+#                                          titan-time entry carries
+#            "headers": { "Authorization": "Bearer <token>" }
 #
 # So the token is now parsed out of that snippet rather than read from a dialog.
+# "Bearer" appears exactly once in it, so the first match below is the token;
+# Core.UT_SUB_MCP_Connect_BuildSnippets_ClaudePromptHoldsServerEntry guards that.
 # Driving the old button is what made verify-tt654-a1 time out and left a4/a5/a6
 # asserting against an empty token — which surfaced as "AUTHFAIL" and
 # "MCP rejected a freshly minted token", i.e. as if the server were broken. It is
@@ -467,10 +471,10 @@ tt654_mint_token() {
     playwright-cli goto "$TT_BASE/" >/dev/null 2>&1
     sleep 3
   fi
-  tt_wait_for ".mx-name-actionButtonConnectMyLLM" "Connect my LLM button on the consultant dashboard"
+  tt_wait_for ".mx-name-actionButtonConnectMyLLM" "Connect my agent button on the consultant dashboard"
   playwright-cli click ".mx-name-actionButtonConnectMyLLM" >/dev/null 2>&1
 
-  tt_wait_for ".mx-name-actionButtonGenerateToken2" "Generate token button inside the Connect my LLM modal"
+  tt_wait_for ".mx-name-actionButtonGenerateToken2" "Generate token button inside the Connect my agent modal"
   playwright-cli click ".mx-name-actionButtonGenerateToken2" >/dev/null 2>&1
   sleep 3
 
@@ -482,7 +486,7 @@ tt654_mint_token() {
   printf '%s\n' "$tok"
 }
 
-# tt654_close_connect_modal — dismiss the Connect my LLM popup.
+# tt654_close_connect_modal — dismiss the Connect my agent popup.
 # It is a Mendix PAGE popup, not a message dialog, so tt654_dismiss_dialog (which
 # hunts for OK/Close buttons in a message box) does not apply. Never press Escape
 # here: on this app that closes the popup AND can drop the surrounding context.

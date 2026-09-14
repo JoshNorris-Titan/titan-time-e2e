@@ -7,12 +7,14 @@
 # breaks there is no other way to connect an MCP client.
 #
 # Asserts:
-#   - the Connect my LLM button is present on the consultant dashboard
+#   - the Connect my agent button is present on the consultant dashboard
 #   - generating inside that modal yields a token in the copy-ready snippet
 #
 # The UI moved: this was one dashboard button that popped a message containing the
-# token. It is now a modal with a per-client tab whose text area holds a ready-to-
-# paste `claude mcp add ... --header "Authorization: Bearer <token>"` command.
+# token. It is now a modal whose Claude Code tab holds a prompt to paste into a
+# Claude Code session; the prompt has Claude write a .mcp.json carrying
+# "Authorization": "Bearer <token>". (Before that it was a `claude mcp add` command.)
+# What the popup shows is covered by verify-tt654-a8-connect-agent-popup.
 #
 # Deliberately does NOT assert the token's exact format beyond "long hex-ish
 # string with dashes" — it comes from CommunityCommons.RandomHash, and pinning
@@ -29,14 +31,15 @@ tt_login "$TT654_CONSULTANT" "My Timesheets"
 
 # Drive the SHARED helper rather than repeating the click sequence here. This test
 # and lib/_tt654.sh previously each hard-coded the old dashboard button, so when
-# the UI became the "Connect my LLM" modal both broke and had to be found twice.
+# the UI became the "Connect my LLM" (now "Connect my agent") modal both broke and
+# had to be found twice.
 # One implementation, one place to fix.
 TOKEN="$(tt654_mint_token)"
 
-[ -n "$TOKEN" ] || tt_fail "no token in the Connect my LLM snippet after clicking Generate token"
+[ -n "$TOKEN" ] || tt_fail "no token in the Connect my agent snippet after clicking Generate token"
 
 # Only ever print a prefix — the whole point of hashing at rest is that this
 # value is a live credential for the account that generated it.
 echo "token issued: ${TOKEN:0:8}… (${#TOKEN} chars)"
 
-echo "PASS: consultant can mint an MCP token via Connect my LLM"
+echo "PASS: consultant can mint an MCP token via Connect my agent"

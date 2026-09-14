@@ -29,18 +29,19 @@ closer to today and keep the Sunday/Wednesday pairing.
 
 ---
 
-## Part 0 — The Connect my LLM popup (UI, no assistant)
+## Part 0 — The Connect my agent popup (UI, no assistant)
 
 | # | Do this | Expect |
 |---|---|---|
-| 0.1 | Consultant dashboard → look at the button | Reads **Connect my LLM**, red-tinted with a small dot; hover fills solid red and lifts |
-| 0.2 | Click it | Intro panel, "What your assistant can do", Step 1, Step 2 with **four** tabs (Claude Code, ChatGPT / Codex, Cursor, Other). **No Step 3** |
-| 0.3 | Look at a command box before generating | Shows `CLICK-GENERATE-MY-TOKEN-FIRST` where the token goes |
-| 0.4 | Click **Copy** on any tab | Button briefly reads **Copied** in green, then returns to "Copy". **No popup message** |
-| 0.5 | Paste somewhere | You get the command, placeholder still in it, pointing at the dev host |
-| 0.6 | Click **Generate my token** | Token box fills; every tab's command now contains the real token |
+| 0.1 | Consultant dashboard → look at the button | Reads **Connect my agent**, red-tinted with a small dot; hover fills solid red and lifts |
+| 0.2 | Click it | Titled **Connect my agent**. Intro panel, "Connect your assistant" card, "What your assistant can do". **Two** tabs only: Claude Code, Other. The Claude Code tab shows five numbered steps above the text box |
+| 0.3 | Look at the Claude Code text box before generating | A prompt whose first line tells Claude to stop if the token reads `CLICK-GENERATE-MY-TOKEN-FIRST`, and that placeholder where the token goes |
+| 0.4 | Click **Copy** on either tab | Button briefly reads **Copied** in green, then returns to "Copy". **No popup message** |
+| 0.5 | Paste somewhere | You get the text, placeholder still in it, the `.mcp.json` block pointing at the dev host |
+| 0.6 | Click **Generate my token** | Token box fills; both tabs now contain the real token |
 | 0.7 | Click **Copy**, then immediately click **Generate my token** while it still says "Copied" | Popup stays alive and usable. *(This is the React crash path that was fixed — a stuck button or a vanished popup is a failure.)* |
-| 0.8 | Copy the Claude Code line and run it in a terminal | Client connects; `/mcp` lists **7** tools |
+| 0.8 | Follow the five steps: make a `Timesheets` folder, open the Claude app → **Code** tab, point the session at that folder, paste the Claude Code text | Claude writes `.mcp.json` and `CLAUDE.md` in the folder and tells you to start a new session |
+| 0.9 | Start a new session in the same folder; approve the titan-time server if asked | `/mcp` lists **7** tools. Open a second new session in that folder — it is connected with no pasting |
 
 Keep the token — you need it for everything below.
 
