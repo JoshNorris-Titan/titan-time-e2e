@@ -42,22 +42,31 @@
 # range) and imgHistoryDelete (the trash-can icon). Nothing else in the model, the
 # suite or docs/ referenced either name.
 #
-# THE DELETE ICON NOW DEPENDS ON HOURS AS WELL AS STATUS (2026-09-04, finding T3).
+# THE DELETE ICON DEPENDS ON STATUS ONLY, AND HOURS DO NOT COME INTO IT.
 # imgHistoryDelete used to fire a raw client-side Delete with no confirmation and no
 # undo, about 20px from the row that OPENS a week. It now calls a microflow that puts
-# a confirmation dialog in front of the delete, and its conditional visibility moved
-# from an enum condition list on Status to an expression combining that same status
-# set with TotalHours = 0 -- so a misclick can only ever destroy a week that holds
-# nothing. Assertion 5 below therefore couples the icon to the pill AND to the hours.
+# a confirmation dialog in front of the delete, which is what makes a misclick
+# recoverable. Its conditional visibility is an expression on Status alone:
 #
-# A third widget in the row was named for this: txtHistoryHours, the "{1} hrs" text,
-# formerly the auto-generated text21. Note WHICH hours it renders -- it is bound to
-# Main.TimesheetHelper.TotalHours, summed per row at render time by
-# Main.DS_Timesheet_TotalHours, while the icon's visibility expression reads the
-# STORED Main.Timesheet.TotalHours. Nothing in the model keeps those two in step.
-# Assertion 5 asserts against the number the CONSULTANT CAN SEE, which is the whole
-# point: if the stored total ever drifts from the entry sum, this test is what says
-# so, by catching a bin offered on a row that reads a non-zero number.
+#     if $currentObject/Status = 'Draft' then true else $currentObject/Status = empty
+#
+# so every week whose pill reads "Draft" offers the bin, whether it holds 0 hours or
+# 20, and no other week does. Assertion 5 below couples the icon to the pill and to
+# nothing else.
+#
+# THIS FILE ASSERTED THE OPPOSITE UNTIL 2026-09-14, and was wrong rather than early.
+# A 2026-09-04 note (finding T3) recorded the rule as "that status set AND
+# TotalHours = 0", and the model's own page documentation still says so; the shipped
+# expression never had the hours half, or lost it before 2026-09-11. Josh settled it
+# on 2026-09-14: "leave it how it is, we want users to be able to delete if there are
+# 0 hours or 20." The zero-hours coupling is therefore gone from the assertion. A
+# deletable week holding hours is the product working as intended -- the confirmation
+# dialog, not an hours check, is what stands between a misclick and a lost week.
+#
+# txtHistoryHours -- the "{1} hrs" text, formerly the auto-generated text21 -- is still
+# read, but only to put the hours in the failure message, where they say WHICH week
+# went wrong. It is no longer asserted on, so a row that fails to render it no longer
+# fails this spec: verify-history-row-layout is what holds the row's shape.
 #
 # PAGING. galTimesheetHistory is "Load more" with pageSize 25, not virtual scrolling,
 # so a consultant with more than 25 weeks has the rest outside the DOM entirely.
@@ -193,27 +202,17 @@ for PART in "${PARTS[@]}"; do
     *) tt_fail "timesheet history row '$DATE' disagrees with itself: caption '$TEXT' should carry '$WANT' but classes are '$CLASSES'" ;;
   esac
 
-  # --- Assertion 5: the pill and the hours agree with the delete affordance --
-  # Independent signals, separate settings. imgHistoryDelete's visibility expression
-  # ticks Draft/(empty) status AND a zero total, so the icon must appear on exactly
-  # the rows whose pill reads "Draft" and whose hours read zero -- and nowhere else.
-  # Three ways this drifts: the pill's fall-through branch stops covering the empty
-  # status; the visibility expression loses one of its two halves; or the stored
-  # Main.Timesheet.TotalHours drifts from the per-row sum this row displays. All
-  # three land here.
-  if [ -z "$HOURS" ]; then
-    tt_fail "timesheet history row '$DATE' has no hours text: .mx-name-txtHistoryHours is absent, so the delete icon's zero-hours condition cannot be checked (was the widget renamed, or did its data view fail to load?)"
-  fi
-
-  # "0.00 hrs" -> "0.00". The template is "{1} hrs" at 2dp, but do not assume the
-  # precision: accept any spelling of zero and treat everything else as non-zero.
-  HOURS_NUM="${HOURS%% *}"
-  case "$HOURS_NUM" in
-    0|0.|0.0|0.00|0.000|-0|-0.0|-0.00) ZERO_HOURS="yes" ;;
-    *)                                 ZERO_HOURS="no" ;;
-  esac
-
-  if [ "$TEXT" = "Draft" ] && [ "$ZERO_HOURS" = "yes" ]; then
+  # --- Assertion 5: the pill agrees with the delete affordance ---------------
+  # imgHistoryDelete's visibility expression ticks Draft or (empty) status and
+  # nothing else, and the pill reads "Draft" for both -- so the icon must appear on
+  # exactly the rows whose pill reads "Draft", whatever hours they hold, and on no
+  # other row. Two ways this drifts: the pill's fall-through branch stops covering
+  # the empty status, or the visibility expression gains or loses a condition. Both
+  # land here.
+  #
+  # Hours are NOT part of the rule (see the header). They are carried into the
+  # messages below because "which week" is the first thing a reader asks.
+  if [ "$TEXT" = "Draft" ]; then
     EXPECT_DEL="yes"
   else
     EXPECT_DEL="no"
@@ -221,11 +220,9 @@ for PART in "${PARTS[@]}"; do
 
   if [ "$DEL" != "$EXPECT_DEL" ]; then
     if [ "$EXPECT_DEL" = "yes" ]; then
-      tt_fail "timesheet history row '$DATE' reads 'Draft' and $HOURS but has no delete icon — an empty draft week the consultant is allowed to remove offers no way to remove it"
-    elif [ "$TEXT" != "Draft" ]; then
-      tt_fail "timesheet history row '$DATE' reads '$TEXT' (a submitted or finished week) but still offers a delete icon — a consultant can delete a week the pill calls finished"
+      tt_fail "timesheet history row '$DATE' reads 'Draft'${HOURS:+ with $HOURS} but offers no delete icon — a draft week the consultant is allowed to remove gives them no way to remove it. imgHistoryDelete is visible on Draft or empty status, so either that expression narrowed (an hours condition is the one that has been proposed before) or the pill and the stored Status disagree"
     else
-      tt_fail "timesheet history row '$DATE' reads 'Draft' with $HOURS on it but still offers a delete icon — the icon is meant to appear only on weeks totalling zero, so either its visibility expression lost the hours condition or the stored total disagrees with the hours this row displays"
+      tt_fail "timesheet history row '$DATE' reads '$TEXT'${HOURS:+ with $HOURS} (a submitted or finished week) but still offers a delete icon — a consultant can delete a week the pill calls finished"
     fi
   fi
 
