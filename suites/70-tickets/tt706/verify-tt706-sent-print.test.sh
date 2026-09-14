@@ -116,10 +116,11 @@ echo "  Print reached the download page"
 # tt683_download_zip_entries clicks the download control and reads back what the
 # browser saved. On this route the artefact may be a single PDF rather than an
 # archive, so its ZIP parse is allowed to fail and the saved file is inspected
-# directly - _tt683_downloaded_path reports whatever was last written either way.
+# directly - _tt683_downloaded_path returns the file the capture parked, which it
+# does BEFORE the ZIP parse, so a PDF download still comes back here.
 tt683_download_zip_entries >"$WORK/entries.txt" 2>"$WORK/dl.err" || true
 FILE="$(_tt683_downloaded_path)" \
-  || tt_fail "the download control was pressed but the browser saved no file. Network log tail: $(playwright-cli requests --static 2>/dev/null | tail -4 | tr '\n' ' ')"
+  || tt_fail "the download control was pressed but the browser saved no file. The capture's own account (headers, download iframe, .playwright-cli/): $(tr -s ' \n' ' ' < "$WORK/dl.err" 2>/dev/null | cut -c1-1200)"
 BYTES="$(wc -c < "$FILE" | tr -d ' ')"
 echo "  downloaded: $FILE ($BYTES bytes)"
 [ "$BYTES" -gt 1000 ] || tt_fail "the downloaded file is only $BYTES bytes, which is too small to be a rendered timesheet - that size is what a DocGen error page weighs"

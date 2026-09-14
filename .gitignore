@@ -32,6 +32,7 @@ __pycache__/
 *.pyc
 .tt683-zip.path
 .tt683-zip.path.err
+.tt683-zip.path.mark
 
 # --- profiling (tools/pw-trace) --------------------------------------------
 # Raw traces are per-run and large; the numbers that matter go in the PR body.
