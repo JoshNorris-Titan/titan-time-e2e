@@ -126,6 +126,12 @@ echo "  downloaded: $FILE ($BYTES bytes)"
 [ "$BYTES" -gt 1000 ] || tt_fail "the downloaded file is only $BYTES bytes, which is too small to be a rendered timesheet - that size is what a DocGen error page weighs"
 
 # ------------------------------------------- 4. it is a PDF, and it is OURS
+# PDFS is NEWLINE-separated and read with `while read`, never `for pdf in $PDFS`.
+# The export names its PDFs "<yyyy-mmdd>-<Last> <First>-<Project>.pdf" - spaces and
+# all - so a word-split loop read "2026-1204-Consultant E2E-E2E Line Items.pdf" as
+# four files that do not exist, reported each as "a blank render", and failed
+# saying the print did not name the consultant (run 34885953025) without having
+# opened the one real PDF at all.
 PDFS=""
 case "$(head -c 4 "$FILE")" in
   "%PDF")
@@ -133,14 +139,15 @@ case "$(head -c 4 "$FILE")" in
   "PK"*)
     python "$TT683_ZIPREPORT" "$FILE" extract "$WORK/zip" >/dev/null 2>&1 \
       || tt_fail "the download is a ZIP that could not be extracted: $(head -1 "$WORK/dl.err" 2>/dev/null)"
-    PDFS="$(find "$WORK/zip" -type f -name '*.pdf' | tr '\n' ' ')"
+    PDFS="$(find "$WORK/zip" -type f -name '*.pdf')"
     [ -n "$PDFS" ] || tt_fail "the download is a ZIP containing no PDF at all: $(find "$WORK/zip" -type f | tr '\n' ' ')" ;;
   *)
     tt_fail "the downloaded file is neither a PDF nor a ZIP - it begins [$(head -c 8 "$FILE" | tr -d '\0')]. An HTML error page with a PDF's filename is exactly what a failed render produces." ;;
 esac
 
 hit=""
-for pdf in $PDFS; do
+while IFS= read -r pdf; do
+  [ -n "$pdf" ] || continue
   txt="$pdf.txt"
   pdftotext -layout "$pdf" "$txt" 2>/dev/null || true
   [ -s "$txt" ] || { echo "  (no text in $(basename "$pdf") - a blank render)"; continue; }
@@ -148,20 +155,21 @@ for pdf in $PDFS; do
   # The filename form is "Last First"; the body may carry either order.
   last="${CNAME##* }"; first="${CNAME%% *}"
   if grep -qiF "$last" "$txt" && grep -qiF "$first" "$txt"; then hit="$pdf"; break; fi
-done
+done <<< "$PDFS"
 
 if [ -z "$hit" ]; then
   echo "FAIL: the printed document does not name '$CNAME' anywhere in its text."
-  echo "      Files read: $PDFS"
+  echo "      Files read: $(printf '%s' "$PDFS" | tr '\n' ';')"
   echo "      A PDF that renders somebody else's hours under the right filename is a"
   echo "      real, shipped failure mode on this route - Main.ACT_PDF_GoTo ignored its"
   echo "      context object once before, which is why verify-tt683-a3 exists. Printing"
   echo "      the wrong consultant's week from the Sent tab would send one client"
   echo "      another client's hours."
-  for pdf in $PDFS; do
+  while IFS= read -r pdf; do
+    [ -n "$pdf" ] || continue
     echo "      --- $(basename "$pdf") first lines ---"
     head -5 "$pdf.txt" 2>/dev/null | sed 's/^/      /'
-  done
+  done <<< "$PDFS"
   exit 1
 fi
 
