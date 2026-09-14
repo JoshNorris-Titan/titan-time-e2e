@@ -153,14 +153,16 @@ TT683_TAB_TOPROCESS="WEEKLY TO PROCESS"
 # afterwards returned HTTP 560 because the guid stops resolving once the flow
 # closes the form.
 #
-# The browser makes the request regardless, so the bytes are taken from
-# playwright's own network log and read off disk with tools/zipreport.py. No
-# race, no second request, and no hand-rolled ZIP parsing in the page.
+# The browser makes the request regardless and saves the response, so the bytes
+# are read off disk with tools/zipreport.py: no second request, and no
+# hand-rolled ZIP parsing in the page. HOW the saved file is found is the part
+# that went wrong - see _tt683_saved_since.
 # ---------------------------------------------------------------------------
 
 # Where the downloaded archive path is parked. Callers invoke these helpers in a
 # command substitution, so a shell variable would not survive; a file does.
 TT683_ZIP_STATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.tt683-zip.path"
+TT683_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TT683_ZIPREPORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/zipreport.py"
 
 # _tt683_zip_request_index — index of the /file request in the network log, or "".
@@ -170,13 +172,32 @@ _tt683_zip_request_index() {
     | tail -1 | cut -d. -f1
 }
 
-# _tt683_downloaded_path — the archive playwright saved, or "".
+# _tt683_saved_since <marker> — the file playwright saved after <marker> was
+# touched, or "" (rc 1).
 #
-# THE BROWSER ALREADY WROTE THE FILE. The export response carries
-#     content-disposition: attachment; content-type: application/zip
-# so playwright treats it as a download and saves it, announcing the location in
-# the network log:
+# THE FILE IS FOUND ON DISK, NOT FROM PLAYWRIGHT'S "Downloaded file" LINE.
+# The export response carries content-disposition: attachment, so the browser
+# saves it into .playwright-cli/ every time. This used to locate it by grepping
 #     - Downloaded file 2026-0831-Timesheets.zip to ".playwright-cli\...zip"
+# out of `playwright-cli requests`. But that line is not a log entry. It is a
+# ONE-SHOT event, attached to the response of whichever playwright-cli command
+# happens to be running when the download finishes, and never repeated. When the
+# download finished while the Download click's own `eval` was still settling, the
+# event rode out on that eval's output - which is discarded - and every later
+# `requests` came back without it, however long we polled. Proven on a synthetic
+# page with the same hidden-iframe download (2026-09-14):
+#     finishes during the click:  click output has it, later requests never do
+#     finishes after the click:   the FIRST later command has it, a second does not
+#     either way:                 the file is on disk
+# Which way it goes depends on how fast the server answers. That is why
+# verify-tt706-sent-print never passed, and why verify-tt683-a1/a2 passed for
+# weeks and then went red together on 34861080445 with "the browser requested
+# /file? (#79) but no download was saved" - while, in the local repro of the same
+# run, .playwright-cli/2026-0918-Timesheets.zip sat on disk, written inside the
+# step that said no file was saved.
+#
+# So: touch a marker before the click, and take the newest non-snapshot file in
+# the download directory written after it, once its size stops changing.
 # Everything else that was tried cannot work, and this is why:
 #   * `response-body <n>` returns rc=0 and ONE byte - a download's body is
 #     consumed by the download machinery and never retained;
@@ -184,29 +205,67 @@ _tt683_zip_request_index() {
 #     genuinely one-shot, so the second request gets a Mendix error page;
 #   * nothing is observable from the page at all: the iframe never gets a src and
 #     never navigates, because the attachment response is converted to a download.
-# Reading the file playwright already wrote sidesteps all three.
+_tt683_saved_since() {
+  local marker="$1" dir f newest="" s1 s2
+  for dir in "$PWD/.playwright-cli" "$TT683_ROOT/.playwright-cli"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*; do
+      [ -f "$f" ] && [ "$f" -nt "$marker" ] || continue
+      case "${f##*/}" in page-*|console-*|*.crdownload|*.tmp|*.part) continue ;; esac
+      if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then newest="$f"; fi
+    done
+  done
+  [ -n "$newest" ] || return 1
+  # Written in one piece as far as anyone has seen, but a half-copied archive
+  # would fail as a corrupt ZIP and read as a product bug - so wait for it to settle.
+  s1="$(wc -c < "$newest" | tr -d ' ')"; sleep 1; s2="$(wc -c < "$newest" | tr -d ' ')"
+  [ "$s1" = "$s2" ] && [ "$s2" -gt 0 ] || return 1
+  printf '%s\n' "$newest"
+}
+
+# _tt683_downloaded_path — the file the last tt683_download_zip_entries captured,
+# or "" (rc 1). It is parked BEFORE the ZIP is parsed, so a caller whose download
+# turns out to be a single PDF (verify-tt706-sent-print) still gets its path.
 _tt683_downloaded_path() {
-  local line raw path
-  line="$(playwright-cli requests --static 2>/dev/null | grep -oE 'Downloaded file .* to "[^"]+"' | tail -1)"
-  [ -n "$line" ] || return 1
-  raw="$(printf '%s' "$line" | sed -e 's/.* to "//' -e 's/"$//')"
-  path="$(printf '%s' "$raw" | tr '\' '/')"
-  [ -f "$path" ] || path="$PWD/$path"
-  [ -f "$path" ] || return 1
-  printf '%s\n' "$path"
+  [ -f "$TT683_ZIP_STATE" ] || return 1
+  local p; p="$(cat "$TT683_ZIP_STATE")"
+  [ -n "$p" ] && [ -f "$p" ] || return 1
+  printf '%s\n' "$p"
+}
+
+# _tt683_download_evidence [request-index] — what became of a download that was
+# never announced. Three questions, each of which has a different fix:
+#   * what the /file response said it was (content-disposition decides whether
+#     the browser saves it or renders it);
+#   * what the Mendix client's hidden download iframe ([data-file-downloader])
+#     is holding now - an error page rendered there means the response was
+#     displayed, not saved;
+#   * what IS in .playwright-cli/, newest first, so a save to somewhere
+#     unexpected shows up rather than reading as no save at all.
+_tt683_download_evidence() {
+  local idx="$1"
+  if [ -n "$idx" ]; then
+    echo "  /file response headers (#$idx):"
+    playwright-cli response-headers "$idx" 2>&1 | grep -i -E 'content-(disposition|type|length)|^ *(status|HTTP)' | sed 's/^/    /' | head -8
+  fi
+  echo "  download iframe: $(playwright-cli eval "() => { const f=document.querySelector('[data-file-downloader]'); if(!f) return 'absent'; let d; try { d=f.contentDocument; } catch(e) { return 'unreadable: ' + e.message; } if(!d) return 'no document'; return (d.location ? d.location.href.replace(/guid=[0-9]+/,'guid=...') : '?') + ' | ' + d.contentType + ' | ' + ((d.body && d.body.innerText) || '').replace(/\s+/g,' ').trim().slice(0,200); }" 2>/dev/null | _tt_eval_str)"
+  echo "  .playwright-cli/ newest: $(ls -t .playwright-cli 2>/dev/null | grep -v -E '^(console|page)-' | head -3 | tr '\n' ' ')"
 }
 
 # tt683_download_zip_entries — click Download, take the archive playwright saved,
 # print one entry name per line. Leaves the path in TT683_ZIP_STATE.
 tt683_download_zip_entries() {
-  local i path idx
+  local i path idx marker="$TT683_ZIP_STATE.mark"
   rm -f "$TT683_ZIP_STATE"
+  # The marker is the "before" line for _tt683_saved_since. The second's pause
+  # keeps a filesystem with coarse timestamps from dating the download level with it.
+  touch "$marker"; sleep 1
 
   playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip/i.test(e.innerText||'')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "could not click the ZIP download button"
 
   for i in $(seq 1 30); do
-    path="$(_tt683_downloaded_path)" && break
+    path="$(_tt683_saved_since "$marker")" && break
     path=""
     sleep 1
   done
@@ -214,12 +273,13 @@ tt683_download_zip_entries() {
   if [ -z "$path" ]; then
     idx="$(_tt683_zip_request_index)"
     if [ -n "$idx" ]; then
-      TT683_ZIP_ERR="the browser requested /file? (#$idx) but no download was saved - check the response is still content-disposition: attachment"
+      TT683_ZIP_ERR="the browser requested /file? (#$idx) but no new file appeared in .playwright-cli/ within 30s - the response headers below say whether it was still content-disposition: attachment"
     else
       TT683_ZIP_ERR="the browser never requested /file? after the download was clicked"
     fi
     echo "  zip read failed: $TT683_ZIP_ERR" >&2
     echo "  network log tail: $(playwright-cli requests --static 2>/dev/null | tail -6 | tr '\n' ' ')" >&2
+    _tt683_download_evidence "$idx" >&2
     return 1
   fi
 
