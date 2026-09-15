@@ -517,17 +517,43 @@ tt683_process_one() {
 # only if a1 starts reporting a single pairing.
 TT683_PROCESS_TARGET="${TT683_PROCESS_TARGET:-2}"
 
-# tt683_process_all_toprocess [max]
+# _tt683_week_pairings — the distinct owned "<consultant>|<project>" labels among
+# the processable cards of the week on screen, one per line. Reads each card the
+# same way tt683_process_one does, so a label here is a label it would print.
+_tt683_week_pairings() {
+  local owned; owned="$(_tt683_owned_js)"
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return ''; const out=new Set(); for(const b of g.querySelectorAll('$TT_HR_BTN_PROCESS')){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('$TT_HR_BTN_PROCESS').length === 1 && $owned && t.indexOf('PROJECT')>=0){ const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); out.add(ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?')); break; } } } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
+}
+
+# tt683_process_all_toprocess [max] [week]
 # As HR: walk the To Process tab and process owned cards, stopping once
 # TT683_PROCESS_TARGET distinct consultant/project pairings have been pushed to
-# AwaitingExport (or <max> entries processed). Prints one "<consultant>|<project>"
-# line per entry actually processed.
+# AwaitingExport (or <max> entries processed). Prints one
+# "<consultant>|<project>|<week label>" line per entry actually processed.
 #
 # An unprocessable card is SKIPPED rather than ending the walk - see the return
 # codes on tt683_process_one. Without that, a single half-approved entry took the
 # whole drain down with it.
+#
+# THE SECOND ARGUMENT, `week`, COUNTS THE TARGET WITHIN ONE WEEK, and it is what
+# verify-tt683-a0 needs. Export All exports ONE month, so a1 can only see the
+# split if two pairings share a month - and without `week` the target is counted
+# across the whole tab. Run 34899869829 drained one card from a December week and
+# one from a November week, reached 2, stopped, and a0 passed; a1 then exported
+# December and found "only one consultant/project pairing". Two pairings from the
+# SAME week always share an export month: an entry's month is taken from its
+# week's end date (MonthlyHelper.MonthEnd = endOfMonth(addDays(Timesheet/EndDate,
+# -1)), docs/plans/TT-652-monthly-pdf-naming.md in the model repo), and a week has
+# one end date. So in `week` mode a week is only touched when it offers at least
+# TT683_PROCESS_TARGET distinct owned pairings, the count restarts on every week,
+# and the walk stops at the first week that reaches it. Skipping the thinner weeks
+# also keeps single-pairing cards out of AwaitingExport, where they would only
+# compete with the real one for tt683_choose_export_month's pick.
+#
+# The other callers want *something* awaiting export and discard the output, so
+# they keep the tab-wide count.
 tt683_process_all_toprocess() {
-  local max="${1:-6}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0
+  local max="${1:-6}" scope="${2:-tab}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have
   tt_login "e2e_hr" "$TT683_TAB_TOPROCESS"
   tt_click_text "$TT683_TAB_TOPROCESS" "HR To Process tab"
   tt_wait_for "$TT_HR_GAL_WEEKS" "To Process available-weeks list"
@@ -540,6 +566,14 @@ tt683_process_all_toprocess() {
     [ -n "$lbl" ] || continue
     unset IFS
     tt683_select_week "$lbl" || { IFS='|'; continue; }
+    if [ "$scope" = "week" ]; then
+      have="$(_tt683_week_pairings | grep -c .)"
+      if [ "$have" -lt "$TT683_PROCESS_TARGET" ]; then
+        echo "  (week '$lbl': $have owned pairing(s), fewer than $TT683_PROCESS_TARGET - left alone)" >&2
+        IFS='|'; continue
+      fi
+      seen=""; uniq=0
+    fi
     skip=0
     while [ "$done_" -lt "$max" ] && [ "$uniq" -lt "$TT683_PROCESS_TARGET" ]; do
       one="$(tt683_process_one "$skip")"; rc=$?
@@ -555,7 +589,7 @@ tt683_process_all_toprocess() {
       # A processed card leaves the tab, so the offset has to start over.
       skip=0
       done_=$((done_ + 1))
-      echo "$one"
+      echo "$one|$lbl"
       case "$seen" in
         *"[$one]"*) : ;;
         *) seen="$seen[$one]"; uniq=$((uniq + 1)) ;;
