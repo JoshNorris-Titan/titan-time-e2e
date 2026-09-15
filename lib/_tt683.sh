@@ -84,8 +84,90 @@ tt683_open_export_tab() {
   tt_fail "no HR dashboard tab exposes an 'Export All' button (looked at: $labels)"
 }
 
-# tt683_click_export_all — click Export All, wait for Main.ExportAll_Waiting.
+# _tt683_month_labels — the months in the Monthly tab's picker, pipe joined; ""
+# when the tab renders no month picker.
+_tt683_month_labels() {
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_MONTHS'); if(!g) return ''; return [...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>t.length>2 && t.length<40))].join('|'); }" 2>/dev/null | _tt_eval_str
+}
+
+# _tt683_month_select <label> — "ok" or "nf".
+_tt683_month_select() {
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_MONTHS'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim()==='$1'); if(el){ el.click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str
+}
+
+# _tt683_month_census — "<all cards>|<e2e-owned cards>" for the month on screen,
+# after paging the invoice gallery to the end. A card's first line is its
+# consultant (verified on dev 2026-09-14: "Manual Consultant / Submitted Sep 09 /
+# View / Reject"); there is no project on these cards.
+_tt683_month_census() {
+  local owned; owned="$(_tt683_owned_js)"
+  tt_gallery_load_all "$TT_HR_GAL_INVOICE" >/dev/null 2>&1
+  playwright-cli eval "() => { const cs=[...document.querySelectorAll('$TT_HR_GAL_INVOICE .widget-gallery-item')].filter(c=>c.offsetParent!==null); let o=0; for(const c of cs){ const t=(c.innerText||'').trim(); if($owned) o++; } return cs.length + '|' + o; }" 2>/dev/null | _tt_eval_str
+}
+
+# tt683_choose_export_month — on the Monthly tab, select the month to export, or
+# REFUSE. Prints the chosen month on stdout and a per-month census on stderr.
+#
+# EXPORT ALL EXPORTS THE WHOLE SELECTED MONTH, NOT JUST OUR ENTRIES.
+# Main.ACT_ExportAll_HRDash takes every AwaitingExport entry in
+# HRDashboardHelper_MonthlyHelper's month and Main.SUB_ExportAll flips them all to
+# Exported. It used to press Export All on whatever month the tab happened to
+# have selected. Two things were wrong with that, both seen on 2026-09-14:
+#   * Rishika's Manual review environment keeps six AwaitingExport weeks on this
+#     tab (Jun 2026, all 'Manual Consultant'). Had that month been the selected
+#     one, a1 would have exported them, and nothing would have said so.
+#   * the selected month held ONE pairing, so a1's split check failed "only one
+#     consultant/project pairing was in the archive" (run 34885953025) although
+#     a0 had put >= 2 into AwaitingExport - just not in that month.
+# So: take the month with the MOST e2e cards among months holding ONLY e2e cards.
+# A month holding anyone else's card is never exported, and if there is no
+# e2e-only month this fails rather than consume someone else's data.
+tt683_choose_export_month() {
+  local months m c total own best="" bestn=0 census="" IFS
+  months="$(_tt683_month_labels)"
+  if [ -z "$months" ] || [ "$months" = "null" ]; then
+    c="$(_tt683_month_census)"; total="${c%%|*}"; own="${c##*|}"
+    echo "  export census: (no month picker) ${own:-0} e2e of ${total:-0} card(s)" >&2
+    [ "${total:-0}" -gt 0 ] && [ "$own" = "$total" ] \
+      || tt_fail "refusing to press Export All: the Monthly tab shows $total card(s), $own of them e2e, and Export All would export every one of them"
+    echo "(all)"; return 0
+  fi
+  IFS='|'
+  for m in $months; do
+    unset IFS
+    [ -n "$m" ] || { IFS='|'; continue; }
+    [ "$(_tt683_month_select "$m")" = "ok" ] || { census="$census $m=unselectable;"; IFS='|'; continue; }
+    sleep 3
+    c="$(_tt683_month_census)"; total="${c%%|*}"; own="${c##*|}"
+    total="${total:-0}"; own="${own:-0}"
+    census="$census $m=${own}e2e/${total};"
+    if [ "$total" -gt 0 ] && [ "$own" = "$total" ] && [ "$own" -gt "$bestn" ]; then
+      best="$m"; bestn="$own"
+    fi
+    IFS='|'
+  done
+  unset IFS
+  echo "  export census (e2e/all cards):$census" >&2
+  [ -n "$best" ] \
+    || tt_fail "refusing to press Export All: no month on the Monthly tab holds only e2e cards (${census# }). Export All exports EVERY AwaitingExport entry in the selected month, so any of these would consume somebody else's data. verify-tt683-a0 is what should put e2e entries into a month of their own."
+  [ "$(_tt683_month_select "$best")" = "ok" ] || tt_fail "could not re-select month '$best' to export it"
+  sleep 3
+  # Re-check the month actually on screen: the census is only as good as the
+  # selection it was taken under, and this is the last look before a destructive click.
+  c="$(_tt683_month_census)"; total="${c%%|*}"; own="${c##*|}"
+  [ "${total:-0}" -gt 0 ] && [ "$own" = "$total" ] \
+    || tt_fail "refusing to press Export All: month '$best' now shows $own e2e of $total card(s), not the all-e2e month the census found"
+  echo "$best"
+}
+
+# tt683_click_export_all — choose a safe month, click Export All, wait for
+# Main.ExportAll_Waiting. EVERY Export All in the suite goes through here, which is
+# why the month choice lives here rather than in the specs: verify-hr-reject-after-export
+# presses it best-effort with its errors discarded, and must not be able to skip it.
 tt683_click_export_all() {
+  local month
+  month="$(tt683_choose_export_month)" || exit 1
+  echo "  exporting month: $month" >&2
   playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnExportAll') || [...document.querySelectorAll('button,a')].find(e=>/^export/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
     || tt_fail "could not click the 'Export All' button"
   local i
