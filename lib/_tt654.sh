@@ -143,11 +143,48 @@ tt654_week_start_iso() {
   echo "$iso"
 }
 
+# tt654_week_caption — the week-range caption of the timesheet page as it stands.
+# Deliberately the RAW second line, quotes and all: TT654_WEEK has always been set
+# from exactly this read, and specs print and compare that value, so this is a
+# rename of an inline read rather than a change to what it returns.
+tt654_week_caption() {
+  playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'')" 2>/dev/null | sed -n '2p'
+}
+
+# How many weeks forward tt654_find_editable_row will look for an open week.
+#
+# THE SUITE ITSELF EATS THIS POOL, AND 12 WAS SMALLER THAN WHAT IT EATS.
+# One weekly Submit submits EVERY assignment row on that week, so any spec that
+# submits a week for a consultant closes that week for every project of theirs -
+# and every seeding helper walks FORWARD FROM TODAY, so they consume the pool in
+# order. Counting the specs that submit an e2e_consultant week before
+# verify-tt692693-c4-lineitem-popup runs: 1 in 20-consultant, 7 in 30-approval,
+# 1 in 40-hr, 4 in tt647, 7 in tt654, plus tt683-a0 on its seeding path - about
+# 20, against a horizon of 12. c4 was red on runs 34885953025, 34899869829 and
+# 34984196379 with "no editable week with a 'E2E Line Items' row found within 12
+# weeks", while the specs that hunt EARLIER in the same run all passed. Rejections
+# hand some weeks back, which is why it is ~20 and not exactly 21.
+#
+# 30 covers that with margin. The cost is only paid on the way to a failure -
+# a caller that finds its week on step 3 still stops on step 3 - and a step is
+# one click plus a 2s settle, so the worst case adds about 45s to a spec that
+# was going to fail anyway. Raise it again if the count above grows; the census
+# in the failure message says whether that is really what happened.
+TT654_WEEK_HORIZON="${TT654_WEEK_HORIZON:-30}"
+
 # tt654_find_editable_row <project-substring> [max-weeks]
 # Steps forward from the current week until <project-substring> has an editable
 # row. Sets TT654_ORD, TT654_WEEK, TT654_WEEK_START. Fails if none is found.
+#
+# On failure it prints a census, one character per week walked, so the next
+# failure says WHICH of the two causes it hit without anyone re-running it:
+#   -  no editable row for this project that week (not assigned, or the row is
+#      gone) — points at the fixtures
+#   R  the row is editable but the week's timesheet is already submitted (no
+#      Save Draft) — points at the pool being consumed, as above
 tt654_find_editable_row() {
-  local proj="$1" max="${2:-12}" i ord
+  local proj="$1" max="${2:-$TT654_WEEK_HORIZON}" i ord census="" from="" to=""
+  from="$(tt654_week_caption)"
   for i in $(seq 1 "$max"); do
     ord="$(tt654_row_ordinal "$proj")"
     # A row can report itself editable on a week whose TIMESHEET has already
@@ -156,13 +193,15 @@ tt654_find_editable_row() {
     # fails later at tt654_save_draft with "no Save Draft button on this week",
     # so require the week to still be open before accepting the row. Same guard
     # tt_consultant_submit_project_row uses.
-    if [ -n "$ord" ] && [ "$ord" != "0" ] \
-       && ! playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnSaveDraft'))" 2>/dev/null | grep -qiw true; then
+    if [ -z "$ord" ] || [ "$ord" = "0" ]; then
+      census="${census}-"
+    elif ! playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnSaveDraft'))" 2>/dev/null | grep -qiw true; then
       ord="0"
+      census="${census}R"
     fi
     if [ -n "$ord" ] && [ "$ord" != "0" ]; then
       TT654_ORD="$ord"
-      TT654_WEEK=$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'')" 2>/dev/null | sed -n '2p')
+      TT654_WEEK="$(tt654_week_caption)"
       # Hand the caption over rather than letting it be read a second time.
       TT654_WEEK_START="$(tt654_week_start_iso "$TT654_WEEK")"
       return 0
@@ -170,7 +209,13 @@ tt654_find_editable_row() {
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
     sleep 2
   done
-  tt_fail "no editable week with a '$proj' row found within $max weeks (is $TT654_CONSULTANT assigned to it, and are earlier weeks already submitted?)"
+  to="$(tt654_week_caption)"
+  tt_fail "no editable week with a '$proj' row found within $max weeks (is $TT654_CONSULTANT assigned to it, and are earlier weeks already submitted?)
+  walked ${from:-<unknown>} -> ${to:-<unknown>}, one character per week: $census
+  ('-' = no editable '$proj' row that week, so look at the fixtures/assignment;
+   'R' = the row was editable but the week is already submitted, so the weeks
+   ahead of this spec have been consumed by the specs that run before it - raise
+   TT654_WEEK_HORIZON, currently $TT654_WEEK_HORIZON)"
 }
 
 # tt654_fill_row <ordinal> [hours]
