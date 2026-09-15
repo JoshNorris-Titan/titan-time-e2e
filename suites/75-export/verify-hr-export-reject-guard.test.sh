@@ -49,7 +49,18 @@ source "$TT_ROOT/lib/_tt683.sh"
 CNAME="${TT_EXPORT_CONSULTANT:-E2E Consultant}"
 GUARD_MSG="Please leave a comment before rejecting"
 
-POPUP='[role=dialog], .mx-dialog, .modal-dialog, .mx-window'
+# THE POPUP IS FOUND WITH _tt_dialog_js, NOT WITH A SELECTOR OF ITS OWN.
+# This file used to carry
+#     POPUP='[role=dialog], .mx-dialog, .modal-dialog, .mx-window'
+# and filter it on offsetParent !== null. Mendix puts all four of those on the ONE
+# outer wrapper, and styles it position: fixed - and offsetParent is null for any
+# fixed element by specification, however plainly it is on screen. So step A could
+# never see the popup it had just opened: every run since the spec was written
+# (2026-09-09) failed "did not open the 'Add Rejection Comments' popup" while
+# printing, on the very next line, a dialog reading "Add Rejection Comments".
+# verify-current-week-warning measured the same wrapper on 2026-09-01 and says it
+# in capitals: use _tt_dialog_js, do not reimplement the lookup. It selects the
+# INNER content node, which is not fixed, and takes the topmost visible one.
 BTN='.mx-name-btnRejectAfterExport'
 
 # ---------------------------------------------------------------------- helpers
@@ -94,7 +105,7 @@ herg_click_reject() {
 }
 
 herg_set_comment() {
-  playwright-cli eval "() => { const d=document.querySelector('$POPUP'); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea'); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$1'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'set'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'nopopup'; const ta=d.querySelector('.mx-name-txtRejectionComment textarea') || d.querySelector('textarea'); if(!ta) return 'nofield'; const set=Object.getOwnPropertyDescriptor(ta.__proto__,'value').set; set.call(ta,'$1'); ta.dispatchEvent(new Event('input',{bubbles:true})); ta.dispatchEvent(new Event('change',{bubbles:true})); ta.blur(); return 'set'; }" 2>/dev/null | _tt_eval_str
 }
 
 herg_visible_dialog_text() {
@@ -104,7 +115,7 @@ herg_visible_dialog_text() {
 # herg_popup_open - anchored on the popup's title, because the guard's blocking
 # message matches the same container selectors.
 herg_popup_open() {
-  playwright-cli eval "() => { const ds=[...document.querySelectorAll('$POPUP')].filter(d=>d.offsetParent!==null); return String(ds.some(d=>/Rejection Comment/i.test(d.innerText||''))); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const d=$(_tt_dialog_js); return String(!!d && /Rejection Comment/i.test(d.innerText||'')); }" 2>/dev/null | _tt_eval_str
 }
 
 # ------------------------------------------------ 1. borrow an exported card
@@ -160,7 +171,12 @@ case "$DIALOGS" in
 esac
 echo "  the empty comment was refused with the guard's message"
 
-tt_clear_dialogs 8 \
+# ONE dialog, not "every dialog": the guard's Show Message sits on top of the
+# comment popup, and the popup's own buttons are Close and Reject - neither of
+# which tt_clear_dialogs will press, by design. Asked to clear 8, it dismisses the
+# message and then reports the POPUP as blocked, and this step would fail saying
+# the message could not be dismissed when it just was.
+tt_clear_dialogs 1 \
   || tt_fail "the guard's message could not be dismissed: ${TT_DIALOG_BLOCKED:-unknown dialog}. It is a blocking Show Message, so its only control is OK."
 sleep 2
 
