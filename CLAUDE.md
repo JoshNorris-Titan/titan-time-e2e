@@ -49,6 +49,88 @@ persisting into the next. Run order is load-bearing: `verify-000-testdata-clear-
 **Preconditions:** the suite drives a *running* app. Locally that means Josh presses Ctrl+S then
 F5 first — tests written against unsaved model changes test the previous build.
 
+## The autofix loop
+
+`.github/workflows/e2e.yml` runs this suite nightly at 02:00 CT against cloud dev. The model
+repo's `/e2e-autofix` skill watches those runs and, under `/loop`, fixes test-side failures here
+autonomously — branch, fix, prove locally, PR, squash-merge, re-dispatch — with no human gate.
+
+Two things that constrains here:
+
+- **Local reproduction is mandatory before any of its PRs.** It uses
+  `../.claude/tools/e2e-local.sh --repro <spec>`, which sources `.e2e-autofix.env` (gitignored;
+  copy `.e2e-autofix.env.example`) so the repro hits the same origin CI used, and always runs
+  `suites/00-setup` first.
+- **It may never turn a red test green by weakening it.** Deleting a test, an entry in
+  `ci-skip.txt`, a loosened assertion, `|| true`, or a timeout bump with no evidence are all
+  escalations to Josh, as is any change to `.github/workflows/` or `run-tests.sh`. The rails are
+  in `.claude/skills/e2e-autofix/SKILL.md` in the model repo.
+
+## `manual-env/` — the human review environment
+
+`manual-env/` is **not part of the suite**. It provisions a parallel `Manual *` data set
+(accounts, projects, assignments, timesheets in every status) for a person to review dev
+against, because the e2e bookends delete the `E2E *` data at both ends of every run and so
+it is never there when someone opens the app.
+
+`run-tests.sh` discovers only under `suites/` when given no target, so nothing here is
+ever picked up by the nightly. Its steps are still named `verify-*.test.sh` so they can
+reuse the runner's shared session, per-step timeouts and failure screenshots:
+
+```bash
+manual-env/provision-accounts.sh      # ONCE: create the seven manual_* logins
+./run-tests.sh manual-env/build       # accounts check -> structure -> timesheet ladder
+./run-tests.sh manual-env/teardown    # delete everything but the accounts
+```
+
+Two GitHub workflows dispatch the two `run-tests.sh` commands (*Manual env — build* /
+*— teardown*). The provisioner is deliberately not one of them: it creates credentials,
+nothing ever deletes them, and both workflows assume the accounts outlive them.
+
+**Never hunt for an account's password by trying logins.** Mendix blocks an account after
+a few failed attempts, and a blocked account answers "Invalid Credentials" to everything —
+indistinguishable from a wrong password. The provisioner sets a known password as the
+administrator instead (Accounts Overview → Edit Account → Change password), and re-running
+its `stage` phase is what clears the Blocked flag.
+
+The one rule that keeps the two data sets from destroying each other: **a Manual
+consultant must never be assigned to an E2E project, and vice versa** — the deep clear
+follows a consultant's assignments into the projects behind them, which is the only way
+either set can reach the other. See `manual-env/README.md`.
+
+## `password-refresh/` — stopping the logins ageing into a forced reset
+
+Also **not part of the suite**. Once a week it sets every `e2e_*` and `manual_*` account's
+password away and straight back, as the administrator, through Accounts Overview → Edit
+Account → Change password:
+
+```bash
+./run-tests.sh password-refresh --expect-count 2
+```
+
+**The password does not change** — each account ends on the value it started on, so no
+secret needs updating afterwards. It is a keep-alive, not a rotation.
+
+Two things worth knowing before touching it:
+
+- **The roster is an allowlist, and that is the point.** Dev carries plenty of real
+  people's logins alongside the test ones. Nothing here reads the grid for candidates; it
+  acts on the names in `refresh.env.sh` and nothing else. `MxAdmin` is deliberately
+  excluded — it is the credential the job authenticates *with*.
+- **`verify-zzz-password-verify` is the step that proves anything.** An administrator
+  setting someone else's password cannot tell whether the account can use it, so the churn
+  step only reports that each submit was accepted. The sign-in step carries the
+  `verify-zzz-` prefix so it runs even after the churn fails, which is the run where its
+  answer matters most.
+
+`lib/_accounts.sh` holds the measured facts about that admin surface.
+`manual-env/provision-accounts.sh` still carries its own copies of the same primitives —
+they were mid-rework when the library was extracted, so both exist on purpose and the
+library's functions are all `acct_`-prefixed. Converge them when that rework settles.
+
+Full detail, including how to recover an account left on a throwaway password:
+`password-refresh/README.md`.
+
 ## Conventions
 
 - **Layout:** tests live under `suites/<NN-area>/`. The numeric prefix is the run order —

@@ -174,10 +174,28 @@ MANUAL_ENTRIES=(
 MANUAL_CUSTOMER="${MANUAL_CUSTOMER:-Costco}"
 MANUAL_PROJECT_MANAGER="${MANUAL_PROJECT_MANAGER:-Manual ProjectManager}"
 MANUAL_APPROVER_NAME="${MANUAL_APPROVER_NAME:-Approver Manual}"
-# Customer-approval mail for these projects lands here. Defaulted to a plus-address on
-# Josh's mailbox rather than guessed at a reviewer's address — override it if the mail
-# should go somewhere else.
-MANUAL_APPROVER_EMAIL="${MANUAL_APPROVER_EMAIL:-jnorris+ttmanual@titanconsulting.net}"
+# Customer-approval mail for these projects lands here.
+#
+# THE SAME ADDRESS AS THE E2E SET, ON PURPOSE (Josh, 2026-09-14: "we want jnorris+tt to
+# be the email for everything in this environment"). It was jnorris+ttmanual@ until then,
+# while dev's Manual projects had been built with jnorris+tt@ — so this line now matches
+# the data rather than contradicting it.
+#
+# WHAT THAT MEANS, because it is not free. Main.DS_Projects_ByToken scopes the anonymous
+# approval page by ContactEmail, so ONE address means ONE approval link listing BOTH sets:
+# a Manual Consultant row and an E2E Consultant row sit on the same page, Manual first.
+# Anything that acts on "the first row offered" therefore reaches the other set's data —
+# which is exactly how run 34656051868 approved a Manual timesheet. Every token helper is
+# now scoped to its own .widget-gallery-item and matches the consultant by name
+# (lib/_login.sh, _tt_token_row_js), and verify-token-replay-refused only ever approves
+# its own consultant's rows. Keep it that way: with a shared approver, "the first row" is
+# never safe.
+#
+# It also costs one assertion: that spec's empty-state check (C) needs the page to drain
+# to nothing, which can no longer happen while Manual rows are on it, so it reports
+# "C not reached" and passes on A and B alone. Giving this set its own approver again is
+# what would restore it.
+MANUAL_APPROVER_EMAIL="${MANUAL_APPROVER_EMAIL:-jnorris+tt@titanconsulting.net}"
 
 # The name prefix the teardown's leftover check scans for. Everything this directory
 # creates starts with it, which is what makes "did the clear actually take the structure

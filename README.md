@@ -922,6 +922,26 @@ data on the target environment.
 > purpose: the suite has never had a recorded clean run, and a build that is always red teaches
 > everyone to ignore it. Switch the schedule on after one clean baseline.
 
+### `password-refresh.yml` — the weekly password keep-alive
+
+**Actions → Password refresh — weekly**, and on a Sunday 14:00 UTC cron.
+
+It runs no tests. Once a week it sets every `e2e_*` and `manual_*` account's password away and
+straight back, as the administrator, so none of them ages into the forced password reset that
+otherwise breaks the nightly in a way that reads like a product failure.
+
+**Nothing needs updating after it runs.** Each account ends on the password it started with, so
+`TT_ROLE_PASS`, `TT_MANUAL_PASS`, the repository secrets and `.e2e-autofix.env` are all still
+correct. It is a keep-alive, not a rotation.
+
+It shares `e2e.yml`'s concurrency group deliberately, so the two **queue** instead of overlapping:
+for about a minute per account a login is sitting on a throwaway password, and a nightly that tried
+to sign in during that minute would fail for a reason that has nothing to do with the app.
+
+If a run reports `STRANDED`, an account was left on a throwaway password — **re-dispatch the
+workflow**, which walks the chain again and lands on the original. Details, knobs and the
+by-hand recovery: `password-refresh/README.md`.
+
 ---
 
 ## 6. Known traps

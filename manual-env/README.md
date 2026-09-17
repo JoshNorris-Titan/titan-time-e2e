@@ -192,7 +192,7 @@ default-preserving:
 | `MANUAL_DRY_RUN=1` | Provisioner only: drive the form and cancel instead of saving |
 | `MANUAL_ACCOUNT_EMAIL_TEMPLATE` | `printf` format for account addresses, `%s` = username |
 | `MANUAL_CUSTOMER` | Owning customer for the Manual projects (default `Costco`) |
-| `MANUAL_APPROVER_EMAIL` | Where customer-approval mail goes (default `jnorris+ttmanual@titanconsulting.net`) |
+| `MANUAL_APPROVER_EMAIL` | Where customer-approval mail goes (default `jnorris+tt@titanconsulting.net`, the same approver as the E2E set — one approval link lists both, so nothing may act on "the first row"; see the note on the variable) |
 | `MANUAL_MIN_STATUSES` | Distinct-status floor the timesheet step asserts (default 4) |
 | `MANUAL_SKIP_SEED=1` | Assert on existing timesheets without running the ladder |
 | `TT_FIXTURES_READONLY=1` | Report missing structure, create nothing |
