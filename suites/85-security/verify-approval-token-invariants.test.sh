@@ -64,7 +64,15 @@ T="$(tokens)"
 case "$T" in
   ERR:*) tt_fail "the administrator could not read Main.ApprovalToken ($T). That is not a pass - it means this step never asked its question." ;;
 esac
-[ -n "$T" ] || tt_fail "no ApprovalToken exists, so nothing was examined and this step has no verdict to give. suites/30-approval mints them; run the suite in order."
+# A ZERO COUNT IS NOT EVIDENCE OF ABSENCE. tt_authz_count returns 0 both when there
+# are no rows and when an access rule matches none, and verify-role-token-denial
+# records that Main.ApprovalToken is one of only two entities with a genuine
+# data-layer denial - measured on dev 2026-09-17, a session holding ["Administrator"]
+# read 0 from this table minutes after a customer-approval mail carrying a token link
+# had demonstrably been sent. So an empty answer here says this step could not look,
+# NOT that there is nothing to look at, and claiming the latter would be exactly the
+# kind of assertion this suite was audited for.
+[ -n "$T" ] || tt_fail "this session retrieved no ApprovalToken rows. That is NOT the same as there being none: an access rule that matches nothing reads identically to an empty table, and this entity is access-restricted even for Administrator. Nothing was examined and this step has no verdict to give - which is a gap in what the suite can see, not a pass."
 
 NOW_MS=$(( $(date -u +%s) * 1000 ))
 checked=0
