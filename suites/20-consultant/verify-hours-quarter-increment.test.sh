@@ -69,7 +69,7 @@ if [ -n "$COMPLAINT" ]; then
 else
   bad "A: nothing objected to 7.3 on Monday"
 fi
-tt_dismiss_dialogs >/dev/null 2>&1 || true
+tt_dismiss_dialogs >/dev/null 2>&1 || note "note: no dialog was open to dismiss"
 
 STATUS_A="$(tt_consultant_week_status 2>/dev/null || echo UNKNOWN)"
 case "$STATUS_A" in
