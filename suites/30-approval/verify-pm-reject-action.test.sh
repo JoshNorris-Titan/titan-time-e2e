@@ -7,7 +7,7 @@
 #
 # WHY THIS EXISTS. Rejection is how a wrong timesheet gets corrected, and the
 # manager stage is the one route to Rejected that this suite has never asserted.
-# It existed only as un-asserted setup: lib/_tt692693.sh rejects entries so that
+# It existed only as un-asserted setup: lib/_rejection.sh rejects entries so that
 # verify-tt692693-c1-resubmit has something to resubmit, and nothing anywhere
 # checks that the manager CAN reject, or that rejecting does what it claims.
 # verify-pm-approve-action covers the other half of the same screen.
@@ -49,7 +49,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 PROJECT="${TT_PMREJECT_PROJECT:-E2E Manager Approval}"
 CUSER="${TT_PMREJECT_USER:-e2e_consultant}"
@@ -108,7 +108,7 @@ _pmr_comment_len_js() {
 # read-back fix alone left this step red with the identical message. Every other
 # spec that writes this comment already targets the textarea itself
 # (verify-customer-token-reject fills ".mx-name-txtRejectionComment textarea",
-# lib/_tt692693.sh and the export-reject specs set it through the textarea).
+# lib/_rejection.sh and the export-reject specs set it through the textarea).
 # :nth-match picks the LAST visible one, for the dead-popup reason given on
 # _pmr_comment_len_js above.
 pmr_fill_comment() {

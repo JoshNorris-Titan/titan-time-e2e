@@ -43,7 +43,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 TAB="WEEKLY TO PROCESS"
 CNAME="${TT_HRREJECT_NAME:-E2E Consultant}"
@@ -68,7 +68,7 @@ WS="   "
 hprg_hr() { tt_login "e2e_hr" "$TAB"; }
 
 # hprg_weeks - the week labels in this tab's picker, pipe joined. Same shape as
-# the one in lib/_tt692693.sh; kept local because this file needs to STAY on the
+# the one in lib/_rejection.sh; kept local because this file needs to STAY on the
 # week it found rather than sweep every week and forget which was which.
 hprg_weeks() {
   playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | _tt_eval_str
@@ -106,7 +106,7 @@ hprg_select_week() {
 # hprg_click_reject - press the card's own Reject for our consultant on the
 # CURRENTLY selected week.
 #
-# Scoped the way lib/_tt692693.sh documents at length: walk up from the button
+# Scoped the way lib/_rejection.sh documents at length: walk up from the button
 # only until the ancestor holds exactly ONE Reject, or a neighbouring card's text
 # satisfies the consultant match and the wrong entry gets pressed.
 hprg_click_reject() {

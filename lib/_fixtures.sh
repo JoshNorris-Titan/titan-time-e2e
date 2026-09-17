@@ -660,7 +660,7 @@ fx_reconcile_collect() {
 #
 # WHY IT WALKS BACKWARD
 # ---------------------
-# tt_goto_fresh_week (lib/_tt692693.sh) claims a week by stepping FORWARD from
+# tt_goto_fresh_week (lib/_rejection.sh) claims a week by stepping FORWARD from
 # the current one and taking the first blank, actionable week carrying the
 # project row. Five steps draw from that pool on this same consultant/project
 # pair -- verify-hours-validation, verify-timesheet-clear (which takes TWO),

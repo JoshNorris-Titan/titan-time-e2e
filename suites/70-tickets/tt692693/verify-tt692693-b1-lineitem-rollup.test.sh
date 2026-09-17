@@ -17,7 +17,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 USER_="${TT_B1_USER:-e2e_consultant}"
 PROJECT="${TT_B1_PROJECT:-E2E Line Items}"
