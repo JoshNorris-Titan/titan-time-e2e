@@ -60,7 +60,7 @@ EXPECT_MON=7.75
 
 tot_set 1 "$A_VAL"
 tot_set 2 "$B_VAL"
-tt_commit_focused >/dev/null 2>&1 || true
+tt_commit_focused >/dev/null 2>&1 || note "note: no focused field to commit"
 sleep 3
 tt_refetch_week >/dev/null 2>&1 || note "note: tt_refetch_week did not report success; totals may be the client's optimistic values"
 sleep 2

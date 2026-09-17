@@ -61,7 +61,7 @@ note "A ok: week $WEEK has $N editable $DAY cell(s)"
 # ------------------------------------------------------------------- B/C. 13 + 13
 cap_set 1 "13"
 cap_set 2 "13"
-tt_commit_focused >/dev/null 2>&1 || true
+tt_commit_focused >/dev/null 2>&1 || note "note: no focused field to commit"
 sleep 2
 playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
 sleep 3
@@ -82,7 +82,7 @@ case "$COMPLAINT" in
     bad "C: something objected, but not with the cross-project message - a pass here would be the wrong guard firing. Got: $COMPLAINT" ;;
 esac
 
-tt_dismiss_dialogs >/dev/null 2>&1 || true
+tt_dismiss_dialogs >/dev/null 2>&1 || note "note: no dialog was open to dismiss"
 
 # ------------------------------------------------------------------------ D. still Draft
 STATUS="$(tt_consultant_week_status 2>/dev/null || echo UNKNOWN)"
