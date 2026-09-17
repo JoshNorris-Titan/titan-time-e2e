@@ -3,13 +3,21 @@
 # How many verify-*.test.sh steps run-tests.sh should discover under suites/.
 #
 # Read by suites/80-platform/verify-run-budget.test.sh, which fails the run when
-# the two disagree. The first non-comment line is the number; everything else here
-# is prose.
+# the two disagree, and by .github/workflows/e2e.yml, which reads this same first
+# line into --expect-count. The first non-comment line is the number; everything
+# else here is prose.
+#
+# THIS FILE IS NOW THE ONLY PLACE THE NUMBER LIVES. Both readers use the same
+# parse, so there is nothing to keep in step by hand - and README.md's badge and
+# intro table are asserted against it by verify-run-budget.test.sh, so update
+# those three together or that step fails.
 #
 # CHANGE THIS DELIBERATELY, in the same commit as the test you added or removed -
 # never afterwards to make a red run green. A count that DROPPED is the case worth
 # stopping for: a test renamed out of the verify-*.test.sh glob disappears silently
 # and the run still reports every remaining step passing.
 #
-# The same number belongs in --expect-count if .github/workflows/e2e.yml ever
-# starts passing it, which run-tests.sh recommends and CI still does not do.
+# A number that is too LOW is not a soft failure: --expect-count makes the CI step
+# exit 2 before any test runs. On 2026-09-17 the workflow's own hardcoded copy sat
+# at 100 while this file said 125, and the nightly was blocked outright. That copy
+# is gone; this line is what CI reads.
