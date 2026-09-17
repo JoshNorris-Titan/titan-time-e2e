@@ -1,4 +1,4 @@
-106
+110
 
 # How many verify-*.test.sh steps run-tests.sh should discover under suites/.
 #
