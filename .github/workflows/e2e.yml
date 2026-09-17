@@ -228,7 +228,7 @@ jobs:
           # run's failure. The internal deadline is checked between steps, where there
           # is room to spend the few minutes teardown needs. 195 leaves ~15m of headroom
           # under timeout-minutes: 210; keep that gap when either number moves.
-          ./run-tests.sh --skip-file ci-skip.txt --expect-count 97 --deadline 195 $FF || rc=$?
+          ./run-tests.sh --skip-file ci-skip.txt --expect-count 99 --deadline 195 $FF || rc=$?
 
           if [ -s "${TT_PW_TRACE_FILE:-}" ]; then
             echo
