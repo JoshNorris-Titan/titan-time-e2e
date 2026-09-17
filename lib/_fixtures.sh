@@ -347,8 +347,22 @@ fx_ensure_consultants() {
         *)                       fx_log "ok      consultant '$name'" ;;
       esac
     else
-      FX_MISSING="$FX_MISSING\n    consultant/account: $name  (create via Core.Account_New)"
-      fx_log "MISSING consultant '$name'"
+      # The gallery did not find it. Ask the data layer before saying so out loud:
+      # on 2026-09-17 this reported 'E2E ProjectManger' as missing and told the
+      # reader to create it, while Administration.Account held it, active, the
+      # whole time. A preflight that sends you to create an account you already
+      # have is worse than one that simply fails.
+      case "$(fx_account_exists "$name")" in
+        yes)
+          FX_MISSING="$FX_MISSING\n    consultant/account: $name  (EXISTS and is in Administration.Account — the dashboard gallery could not find it. A UI lookup problem; do NOT create this account again.)"
+          fx_log "MISSING consultant '$name' — but the account exists; the gallery lookup failed, not the account" ;;
+        no)
+          FX_MISSING="$FX_MISSING\n    consultant/account: $name  (create via Core.Account_New)"
+          fx_log "MISSING consultant '$name'" ;;
+        *)
+          FX_MISSING="$FX_MISSING\n    consultant/account: $name  (not in the gallery, and the account could not be checked either — neither answer is trustworthy)"
+          fx_log "MISSING consultant '$name' — and the data-layer cross-check failed too" ;;
+      esac
     fi
   done
 }
@@ -384,10 +398,40 @@ fx_project_customer() {
 # fx_consultant_assignments <consultantName> — the assignment list text from the
 # consultant detail popup. The popup itself is auto-named (listView1), so this reads
 # its TEXT rather than depending on widget names that will renumber.
+# fx_account_exists <fullname> — does the ACCOUNT exist, asked of the data layer?
+#
+# Echoes yes | no | ERR:<why>. The dashboard gallery is the only thing that has
+# ever been asked whether a consultant exists, and it answers about what it managed
+# to render, not about what is there. When it is wrong it is wrong in the most
+# expensive direction: "create via Core.Account_New" for an account that already
+# exists and is active. This is the authoritative second opinion, and e2e_tm can
+# read Administration.Account (verified against dev, 2026-09-17), so it needs no
+# session change.
+fx_account_exists() {
+  local n
+  n="$(playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"//Administration.Account[FullName='$1']\", filter:{amount:5}, callback:function(o){ clearTimeout(t); res(String((o||[]).length)); }, error:function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str)"
+  case "$n" in
+    ERR:*)       printf '%s' "$n" ;;
+    ''|*[!0-9]*) printf 'ERR:unreadable[%s]' "$n" ;;
+    0)           printf 'no' ;;
+    *)           printf 'yes' ;;
+  esac
+}
+
 fx_consultant_assignments() {
   local name="$1" out
-  fx_view "cardConsultants" "galConsultants" >/dev/null
-  fx_search "txtConsultantSearch" "galConsultants" "$name" >/dev/null
+  # fx_view and fx_search are FATAL on failure, and this function is only ever
+  # called inside $( ) — where a fatal kills the subshell and hands the caller an
+  # empty string, which fx_ensure_assignments then read as "consultant not found".
+  # That is how one transient navigation failure on 2026-09-17 was reported as
+  # five missing consultants and an account to go and create. Contain them and say
+  # NONAV, so a navigation failure can never again be reported as a missing one.
+  if ! ( fx_view "cardConsultants" "galConsultants" >/dev/null 2>&1 ); then
+    printf 'NONAV\n'; return 0
+  fi
+  if ! ( fx_search "txtConsultantSearch" "galConsultants" "$name" >/dev/null 2>&1 ); then
+    printf 'NONAV\n'; return 0
+  fi
   playwright-cli eval "() => { const g=document.querySelector('.mx-name-galConsultants'); if(!g) return 'NOGAL'; const c=[...g.querySelectorAll('*')].find(e=>getComputedStyle(e).cursor==='pointer' && (e.innerText||'').indexOf('$name')>=0); if(!c) return 'NOCARD'; c.click(); return 'ok'; }" >/dev/null 2>&1
   sleep 4
   # Outermost visible dialog, via the shared machinery. This used to take
@@ -477,9 +521,18 @@ fx_ensure_assignments() {
     fi
 
     case "$have" in
-      NOGAL|NOCARD|"")
-        FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (consultant not found)"
-        fx_log "MISSING consultant '$consultant' — cannot check assignments"
+      NOCARD)
+        # The gallery rendered and the consultant genuinely was not in it.
+        FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (consultant not in the dashboard gallery)"
+        fx_log "MISSING consultant '$consultant' — not in the gallery, cannot check assignments"
+        continue ;;
+      NOGAL|NONAV|"")
+        # The dashboard never got far enough to answer. This is NOT evidence that
+        # the consultant is absent, and must not be worded as if it were: an empty
+        # string here is a swallowed fatal from fx_view/fx_search, which is exactly
+        # what made this line claim five consultants were missing on 2026-09-17.
+        FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (COULD NOT CHECK — the consultants gallery did not open; this says nothing about whether the consultant or the assignment exists)"
+        fx_log "could not check assignments for '$consultant' — the gallery did not open (answer: ${have:-empty})"
         continue ;;
       *"$project"*)
         FX_PRESENT=$((FX_PRESENT+1))
