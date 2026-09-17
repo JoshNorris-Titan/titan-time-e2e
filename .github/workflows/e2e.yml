@@ -215,10 +215,23 @@ jobs:
           # --expect-count: the discovery gate. Without it the RUN ITSELF cannot fail --
           # rename a test out of the verify-*.test.sh glob and the runner reports
           # "95 tests: 95 passed" with exit 0. run-tests.sh's own header says CI should
-          # always pass it, suites/expected-count.txt says the same number belongs here,
-          # and until now the nightly was the one workflow that did not. Keep it in step
-          # with suites/expected-count.txt, deliberately, in the same commit as the test
-          # that changed the count.
+          # always pass it.
+          #
+          # The number is READ FROM suites/expected-count.txt, not written here. It used
+          # to be hardcoded, and on 2026-09-17 the two drifted apart: the file was kept
+          # current at 125 as tests landed through #114-#123, this line still said 100,
+          # and the gate then refused EVERY run - the nightly included - before a single
+          # test executed. A guard that blocks the suite because of its own bookkeeping
+          # is worse than no guard, so there is now one number in one place. Same parse
+          # as suites/80-platform/verify-run-budget.test.sh, which asserts that file
+          # against real discovery from inside the run.
+          EXPECT="$(grep -vE '^[[:space:]]*(#|$)' suites/expected-count.txt | head -1 | tr -d '[:space:]')"
+          case "$EXPECT" in
+            ''|*[!0-9]*)
+              echo "::error::suites/expected-count.txt does not begin with a number (read: [$EXPECT]); cannot set the discovery gate."
+              exit 2 ;;
+          esac
+          echo "discovery gate: expecting $EXPECT test(s), per suites/expected-count.txt"
           #
           # --deadline: the INTERNAL clock, and the reason timeout-minutes alone is not
           # enough. GitHub's ceiling arrives as a signal; run-tests.sh's handler closes
@@ -228,7 +241,7 @@ jobs:
           # run's failure. The internal deadline is checked between steps, where there
           # is room to spend the few minutes teardown needs. 195 leaves ~15m of headroom
           # under timeout-minutes: 210; keep that gap when either number moves.
-          ./run-tests.sh --skip-file ci-skip.txt --expect-count 100 --deadline 195 $FF || rc=$?
+          ./run-tests.sh --skip-file ci-skip.txt --expect-count "$EXPECT" --deadline 195 $FF || rc=$?
 
           if [ -s "${TT_PW_TRACE_FILE:-}" ]; then
             echo
