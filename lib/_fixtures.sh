@@ -91,19 +91,26 @@
 # across all projects" - which then surfaces as "reminder email not received" in
 # whichever spec ran second.
 #
-# Giving one customer-approval project its own address fixes that and makes an
-# approver-scope test possible. It is deliberately NOT done here, for two reasons
-# worth knowing before someone does it:
-#   * only 'E2E Customer Approval' and 'E2E Dual Approval' mint customer tokens, and
-#     both are load-bearing for existing token specs - verify-customer-token-approve
-#     drives Dual Approval, so changing its address changes what that token lists;
-#   * a brand-new sixth project is three more objects in a fixture build that is
-#     already hitting its 20-minute ceiling on dev.
-# When either of those is addressed, this is a one-field edit.
+# 'E2E Dual Approval' carries its own address for exactly that reason. Only it and
+# 'E2E Customer Approval' mint customer tokens, so splitting the two is what makes
+# an approver scope smaller than "everything". Dual Approval was chosen over
+# Customer Approval because it is named by five specs rather than ten, and because
+# of what verify-customer-token-approve already had to do about the shared address:
+# it carries a defensive "confirm the project before the irreversible click" step,
+# written because one token listed BOTH projects' rows for the same consultant and
+# week, so consultant+week no longer identified an entry uniquely. With the
+# addresses split, that ambiguity is gone rather than worked around.
+#
+# CHANGING AN ADDRESS HERE DOES NOT REPOINT AN EXISTING PROJECT. fx_ensure_projects
+# only creates projects that are ABSENT; a project already on the environment is
+# counted present and left alone. The environment has to be changed by hand too
+# (TM dashboard -> Projects -> Client Approver Email). fx_reconcile_collect reports
+# it when the two disagree, which is the only thing standing between a table edit
+# and tokens minted against an approver the tests never remind.
 FX_PROJECTS=(
   "E2E Manager Approval|Yes|No|No"
   "E2E Customer Approval|No|Yes|No"
-  "E2E Dual Approval|Yes|Yes|No"
+  "E2E Dual Approval|Yes|Yes|No|jnorris+tt2@titanconsulting.net"
   "E2E Line Items|No|No|Yes"
   "E2E Sandbox|Yes|No|No"
 )
