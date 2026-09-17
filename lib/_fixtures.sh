@@ -80,6 +80,26 @@
 # STRAIGHT to ToProcess, SUB_AssignmentEntry_UpdateTimesheetStatus counts ToProcess as
 # accepted, and the week rolls up to Approved instead — so the test would fail.
 # Do not "simplify" this back to No without re-reading that test.
+#
+# FIELDS: name|approvalFromManager|approvalFromCustomer|needsLineItems[|approverEmail]
+#
+# The fifth field is OPTIONAL and every row below omits it, so each project gets
+# FX_APPROVER_EMAIL as it always has. It is there because that shared address has a
+# cost the suite pays every run: the approval token is minted PER APPROVER EMAIL
+# and the remind gate keys on it, so (lib/_login_core.sh) "the FIRST spec in a run
+# to press Remind gates every already-pending client entry for the rest of the run,
+# across all projects" - which then surfaces as "reminder email not received" in
+# whichever spec ran second.
+#
+# Giving one customer-approval project its own address fixes that and makes an
+# approver-scope test possible. It is deliberately NOT done here, for two reasons
+# worth knowing before someone does it:
+#   * only 'E2E Customer Approval' and 'E2E Dual Approval' mint customer tokens, and
+#     both are load-bearing for existing token specs - verify-customer-token-approve
+#     drives Dual Approval, so changing its address changes what that token lists;
+#   * a brand-new sixth project is three more objects in a fixture build that is
+#     already hitting its 20-minute ceiling on dev.
+# When either of those is addressed, this is a one-field edit.
 FX_PROJECTS=(
   "E2E Manager Approval|Yes|No|No"
   "E2E Customer Approval|No|Yes|No"
@@ -114,12 +134,27 @@ FX_CONSULTANTS=(
 #
 # The owning customer is NOT hardcoded — it is looked up from the project itself,
 # so re-pointing a project to another customer does not silently break seeding.
+# 'E2E Consultant Two -> E2E Manager Approval' is the SECOND consultant on a project
+# that already has one, and it is there so two things can be tested that could not be
+# before:
+#   * the duplicate-assignment guard (SUB_AssignmentValidation) with a real pair of
+#     consultants rather than one consultant asked for twice;
+#   * anything that needs a project to hold more than one person's hours.
+# Keep Two's rows CONTIGUOUS: fx_ensure_assignments caches one consultant-popup read
+# and re-reads it whenever the name changes, so interleaving is correct but slower.
+#
+# Note the documented cascade in lib/_testdata.sh cuts across this: the deep clear
+# deletes E2E Consultant's assignments AND the projects they were on, so clearing
+# that consultant takes Two's Manager Approval row with it. Both are rebuilt here
+# every run, so it is self-healing - but it does mean Two's row can vanish for a
+# reason that has nothing to do with Two.
 FX_ASSIGNMENTS=(
   "E2E Consultant|E2E Manager Approval|40"
   "E2E Consultant|E2E Customer Approval|40"
   "E2E Consultant|E2E Dual Approval|40"
   "E2E Consultant|E2E Line Items|40"
   "E2E Consultant Two|E2E Sandbox|40"
+  "E2E Consultant Two|E2E Manager Approval|40"
 )
 
 # Matches the window every existing E2E assignment uses (07/01/2026 - 12/31/2027).
@@ -274,10 +309,20 @@ fx_set_radio() {
   esac
 }
 
+# fx_create_project <name> <approvalFromManager> <approvalFromCustomer> <needsLineItems> [approverEmail]
+#
+# The fifth argument is optional and defaults to FX_APPROVER_EMAIL, so the five
+# existing FX_PROJECTS rows behave exactly as before. It exists because every
+# customer-approval project currently shares ONE approver address, and
+# lib/_login_core.sh records what that costs: the approval token is minted per
+# approver email and the remind gate keys on it, so "the FIRST spec in a run to
+# press Remind gates every already-pending client entry for the rest of the run,
+# across all projects". Giving one project its own address is the fix, and is now
+# a one-field edit to the table rather than a change to this function.
 fx_create_project() {
-  local name="$1" mgr="$2" cust="$3" li="$4" i ok=""
+  local name="$1" mgr="$2" cust="$3" li="$4" email="${5:-$FX_APPROVER_EMAIL}" i ok=""
 
-  fx_log "creating project '$name' (manager=$mgr customer=$cust lineItems=$li)"
+  fx_log "creating project '$name' (manager=$mgr customer=$cust lineItems=$li approver=$email)"
   playwright-cli click ".mx-name-btnAddProject" >/dev/null 2>&1
   for i in 1 2 3 4 5 6 7 8; do
     if playwright-cli eval "() => String(!!document.querySelector('.mx-name-txtProjectName'))" 2>/dev/null | grep -qiw true; then
@@ -295,7 +340,7 @@ fx_create_project() {
     || tt_fail "fixtures: project manager '$FX_PROJECT_MANAGER' not selectable — that account may be missing"
 
   tt_fill ".mx-name-txtApproverName input"  "$FX_APPROVER_NAME"
-  tt_fill ".mx-name-txtApproverEmail input" "$FX_APPROVER_EMAIL"
+  tt_fill ".mx-name-txtApproverEmail input" "$email"
 
   fx_set_radio "rbApprovalManager"  "$mgr"
   fx_set_radio "rbApprovalCustomer" "$cust"
@@ -313,10 +358,12 @@ fx_create_project() {
 }
 
 fx_ensure_projects() {
-  local row name mgr cust li
+  local row name mgr cust li email
   fx_view "cardProjects" "galProjects"
   for row in "${FX_PROJECTS[@]}"; do
-    IFS='|' read -r name mgr cust li <<< "$row"
+    # Five fields read from a four-field row leaves email empty, which
+    # fx_create_project then defaults to FX_APPROVER_EMAIL.
+    IFS='|' read -r name mgr cust li email <<< "$row"
     if fx_exists "txtProjectSearch" "galProjects" "$name"; then
       FX_PRESENT=$((FX_PRESENT+1))
       fx_log "ok      project '$name'"
@@ -324,7 +371,7 @@ fx_ensure_projects() {
       FX_MISSING="$FX_MISSING\n    project: $name ($mgr/$cust/$li)"
       fx_log "MISSING project '$name' (read-only mode, not creating)"
     else
-      fx_create_project "$name" "$mgr" "$cust" "$li"
+      fx_create_project "$name" "$mgr" "$cust" "$li" "${email:-$FX_APPROVER_EMAIL}"
       FX_CREATED=$((FX_CREATED+1))
     fi
   done
@@ -602,10 +649,10 @@ fx_ensure_assignments() {
 #   ASSIGN|<consultant>|<project>|<start>|<end>|<archived>|<weeklyHours>
 # or <...>|ABSENT, or <...>|ERROR|<message> when the retrieve itself failed.
 fx_config_snapshot() {
-  local row name mgr cust li consultant project hours names_js="" pairs_js=""
+  local row name mgr cust li email consultant project hours names_js="" pairs_js=""
 
   for row in "${FX_PROJECTS[@]}"; do
-    IFS='|' read -r name mgr cust li <<< "$row"
+    IFS='|' read -r name mgr cust li email <<< "$row"
     names_js="$names_js'$name',"
   done
   for row in "${FX_ASSIGNMENTS[@]}"; do
@@ -613,7 +660,7 @@ fx_config_snapshot() {
     pairs_js="$pairs_js['$consultant','$project'],"
   done
 
-  playwright-cli eval "() => { const P=[${names_js}]; const A=[${pairs_js}]; const d=v=>v?new Date(v).toISOString().slice(0,10):''; const proj=n=>new Promise(r=>mx.data.get({xpath:\"//Main.Project[Name='\"+n+\"']\",filter:{amount:1},callback:o=>r(o.length?['PROJECT',n,o[0].get('ApprovalFromManager'),o[0].get('ApprovalFromCustomer'),o[0].get('NeedsLineItems'),o[0].get('Archived'),o[0].get('ManagerName')||'',o[0].get('CustomerName')||''].join('|'):['PROJECT',n,'ABSENT'].join('|')),error:e=>r(['PROJECT',n,'ERROR',e.message].join('|'))})); const asg=q=>new Promise(r=>mx.data.get({xpath:\"//Main.Assignment[ConsultantName='\"+q[0]+\"'][Main.Assignment_Project/Main.Project/Name='\"+q[1]+\"']\",filter:{amount:5},callback:o=>r(o.length?['ASSIGN',q[0],q[1],d(o[0].get('StartDate')),d(o[0].get('EndDate')),o[0].get('Archived'),o[0].get('WeeklyHours')].join('|'):['ASSIGN',q[0],q[1],'ABSENT'].join('|')),error:e=>r(['ASSIGN',q[0],q[1],'ERROR',e.message].join('|'))})); return Promise.all([...P.map(proj),...A.map(asg)]).then(x=>x.join('\n')); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const P=[${names_js}]; const A=[${pairs_js}]; const d=v=>v?new Date(v).toISOString().slice(0,10):''; const proj=n=>new Promise(r=>mx.data.get({xpath:\"//Main.Project[Name='\"+n+\"']\",filter:{amount:1},callback:o=>r(o.length?['PROJECT',n,o[0].get('ApprovalFromManager'),o[0].get('ApprovalFromCustomer'),o[0].get('NeedsLineItems'),o[0].get('Archived'),o[0].get('ManagerName')||'',o[0].get('CustomerName')||'',o[0].get('ContactEmail')||''].join('|'):['PROJECT',n,'ABSENT'].join('|')),error:e=>r(['PROJECT',n,'ERROR',e.message].join('|'))})); const asg=q=>new Promise(r=>mx.data.get({xpath:\"//Main.Assignment[ConsultantName='\"+q[0]+\"'][Main.Assignment_Project/Main.Project/Name='\"+q[1]+\"']\",filter:{amount:5},callback:o=>r(o.length?['ASSIGN',q[0],q[1],d(o[0].get('StartDate')),d(o[0].get('EndDate')),o[0].get('Archived'),o[0].get('WeeklyHours')].join('|'):['ASSIGN',q[0],q[1],'ABSENT'].join('|')),error:e=>r(['ASSIGN',q[0],q[1],'ERROR',e.message].join('|'))})); return Promise.all([...P.map(proj),...A.map(asg)]).then(x=>x.join('\n')); }" 2>/dev/null | _tt_eval_str
 }
 
 # fx_reconcile_collect -- compare live configuration against the declared tables.
@@ -621,8 +668,8 @@ fx_config_snapshot() {
 # appending to a global is deliberate: the read loop runs in a pipeline subshell,
 # so a global assignment inside it would be discarded.
 fx_reconcile_collect() {
-  local snap f1 f2 f3 f4 f5 f6 f7 f8 row name mgr cust li
-  local want_mgr want_cust want_li horizon
+  local snap f1 f2 f3 f4 f5 f6 f7 f8 f9 row name mgr cust li email
+  local want_mgr want_cust want_li want_email horizon
 
   snap="$(fx_config_snapshot)"
   case "$snap" in
@@ -635,7 +682,7 @@ fx_reconcile_collect() {
   # assignment ending sooner than that is unusable even though it exists.
   horizon="$(date -d '+12 weeks' +%Y-%m-%d 2>/dev/null || echo '')"
 
-  printf '%s\n' "$snap" | while IFS='|' read -r f1 f2 f3 f4 f5 f6 f7 f8; do
+  printf '%s\n' "$snap" | while IFS='|' read -r f1 f2 f3 f4 f5 f6 f7 f8 f9; do
     [ -n "$f1" ] || continue
     if [ "$f1" = "PROJECT" ]; then
       if [ "$f3" = "ABSENT" ]; then
@@ -644,8 +691,9 @@ fx_reconcile_collect() {
         echo "    project '$f2' read failed: $f4"; continue
       fi
       for row in "${FX_PROJECTS[@]}"; do
-        IFS='|' read -r name mgr cust li <<< "$row"
+        IFS='|' read -r name mgr cust li email <<< "$row"
         [ "$name" = "$f2" ] || continue
+        want_email="$(printf '%s' "${email:-$FX_APPROVER_EMAIL}" | tr '[:upper:]' '[:lower:]')"
         if [ "$mgr"  = "Yes" ]; then want_mgr=true;  else want_mgr=false;  fi
         if [ "$cust" = "Yes" ]; then want_cust=true; else want_cust=false; fi
         if [ "$li"   = "Yes" ]; then want_li=true;   else want_li=false;   fi
@@ -654,6 +702,16 @@ fx_reconcile_collect() {
         [ "$f5" = "$want_li" ]   || echo "    project '$f2' NeedsLineItems is '$f5', table declares '$li'"
         [ "$f6" = "false" ]      || echo "    project '$f2' is ARCHIVED - it will not appear on the PM dashboard or as a consultant week row"
         [ "$f7" = "$FX_PROJECT_MANAGER" ] || echo "    project '$f2' ManagerName is '$f7', expected '$FX_PROJECT_MANAGER' (DS_ProjectsManaged retrieves via ProjectManager_Account, so the PM dashboard will not list it)"
+        # ContactEmail drift is worth reporting even though nothing here sets it by
+        # hand: the approval token is minted PER APPROVER ADDRESS, so an address
+        # edited on the environment splits one approver into two and the customer's
+        # existing link silently stops covering the new rows. Compared lower-cased
+        # because SUB_Project_ValidateForSave stores toLowerCase(trim(...)).
+        if [ "$cust" = "Yes" ]; then
+          [ -n "$f9" ] || echo "    project '$f2' requires customer approval but has NO ContactEmail - its entries will route to AwaitingCustomerApproval and no request will ever be sent"
+          [ -z "$f9" ] || [ "$(printf '%s' "$f9" | tr '[:upper:]' '[:lower:]')" = "$want_email" ] \
+            || echo "    project '$f2' ContactEmail is '$f9', table declares '${email:-$FX_APPROVER_EMAIL}' - the token is minted per address, so this project's approver is not the one the tests remind"
+        fi
       done
     elif [ "$f1" = "ASSIGN" ]; then
       if [ "$f4" = "ABSENT" ]; then
