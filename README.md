@@ -6,7 +6,7 @@
 It drives a real browser through the real app — logging in, filling a timesheet, approving it,
 downloading the export — and reports PASS or FAIL for every step.
 
-![Steps](https://img.shields.io/badge/steps-97-1f6feb)
+![Steps](https://img.shields.io/badge/steps-99-1f6feb)
 ![Runtime](https://img.shields.io/badge/runtime-30–45%20min-6e7781)
 ![Driver](https://img.shields.io/badge/driver-playwright--cli-2ead33)
 ![CI](https://img.shields.io/badge/CI-manual%20trigger%20only-d29922)
@@ -20,7 +20,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 
 <table>
 <tr><td><b>What it tests</b></td><td>The running Titan Time web app, through a real browser</td></tr>
-<tr><td><b>How long</b></td><td>Roughly 90–130 minutes for all 97 steps</td></tr>
+<tr><td><b>How long</b></td><td>Roughly 90–130 minutes for all 99 steps</td></tr>
 <tr><td><b>What it changes</b></td><td>Only the <code>e2e_*</code> test consultants' data — never real timesheets</td></tr>
 <tr><td><b>Where it runs</b></td><td>Your machine, or GitHub, against local / dev / acceptance</td></tr>
 <tr><td><b>Who reads this page</b></td><td>Anyone who needs to know what is and isn't covered</td></tr>
@@ -141,7 +141,7 @@ flowchart LR
 Steps 1–64, grouped into eight blocks.
 
 > [!NOTE]
-> This walkthrough documents 64 steps; the suite currently discovers 97
+> This walkthrough documents 64 steps; the suite currently discovers 99
 > (`suites/expected-count.txt`). The blocks below are accurate for what they cover
 > and the gap is undocumented, not untested — `./run-tests.sh --list` is the
 > authoritative inventory. The badge and the table above are checked against
