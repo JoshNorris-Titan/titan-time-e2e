@@ -12,9 +12,12 @@
 #
 # Env:
 #   TT_BASE_URL   app origin (no trailing slash; default http://localhost:8080)
-#   TT_ROLE_PASS  password for the e2e_* role accounts (default E2ETest123!)
+#   TT_ROLE_PASS  password for the e2e_* role accounts. REQUIRED off localhost;
+#                 the built-in default is a localhost-only convenience.
 
 TT_BASE="${TT_BASE_URL:-http://localhost:8080}"
+# The default below is a LOCALHOST convenience and _tt_require_explicit_pass()
+# refuses it against any other target. See that function for why.
 TT_PASS="${TT_ROLE_PASS:-E2ETest123!}"
 
 # ---------------------------------------------------------------------------
@@ -764,8 +767,53 @@ _tt_auth_save() {
 # tt_login <username> <ready-text> [password]
 # Replays a cached session when possible; otherwise signs in for real and caches
 # the result. Same signature and same failure behaviour as before.
+# Refuse the built-in password against anything but localhost.
+#
+# This is the TT_BASE_URL incident of 2026-08-27 wearing different clothes. That one
+# is written up at length in run-tests.sh: a silent default meant a run intended for
+# dev went somewhere else entirely, and the resulting nonsense read as real data
+# drift. The fix there was to make the target impossible to leave implicit. The same
+# hole was left open one field over -- TT_ROLE_PASS still falls back to a literal
+# baked into this file.
+#
+# Off localhost that default is not merely wrong, it is wrong in the most expensive
+# way available: the accounts it is tried against are REAL, so the app answers
+# "wrong username or password" per account, which reads as the e2e users having been
+# changed or deprovisioned on the environment. The suite has a whole disambiguation
+# path for exactly that confusion (_tt_login_interactive tells a bad password apart
+# from a forced reset), and password-refresh/ exists because these logins really do
+# age out -- so the false signal lands in the one place there is already a plausible
+# true story for it. Repeated attempts across the role accounts can also trip real
+# lockouts, turning a misconfiguration into damage to the environment.
+#
+# Localhost keeps the default deliberately: a local app built from this repo's own
+# fixtures has that password by construction, and README's local-run instructions
+# depend on it.
+#
+# Checked at first login rather than at source time on purpose -- verify-lib-contract
+# sources every library with no environment at all and asserts total silence, so a
+# guard that fired on `source` would fail it.
+_TT_PASS_CHECKED=""
+_tt_require_explicit_pass() {
+  [ -z "$_TT_PASS_CHECKED" ] || return 0
+  _TT_PASS_CHECKED=1
+  [ -z "${TT_ROLE_PASS:-}" ] || return 0        # set explicitly: nothing to police
+  case "$TT_BASE" in
+    http://localhost*|https://localhost*|http://127.0.0.1*|https://127.0.0.1*) return 0 ;;
+  esac
+  tt_fail "TT_ROLE_PASS must be set explicitly for a non-local target ($TT_BASE).
+      Falling back to the built-in password would try a literal from lib/_login.sh
+      against the real e2e_* accounts. That does not fail as a misconfiguration --
+      it fails as 'wrong username or password' on every role, which looks exactly
+      like the accounts having been changed on the environment, and repeated
+      attempts can lock them. Same class of bug as the TT_BASE_URL default removed
+      on 2026-08-27; see the note in run-tests.sh.
+      Set TT_ROLE_PASS (CI takes it from the secret of the same name)."
+}
+
 tt_login() {
   local user="$1" ready="$2" pass="${3:-$TT_PASS}"
+  _tt_require_explicit_pass
 
   if _tt_auth_try "$user" "$ready"; then
     return 0
