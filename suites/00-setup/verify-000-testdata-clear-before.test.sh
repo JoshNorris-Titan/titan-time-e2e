@@ -14,6 +14,10 @@
 #   verify-001-fixtures                   rebuild projects + assignments
 #   verify-002-seed-isolation-control     seed the transactional control rows
 #
+# Also archives stray "E2E TT729 *" customers an interrupted earlier run left
+# behind — Main.Customer is untouched by the clear below, so nothing else ever
+# removes them (lib/_testdata.sh, tt_sweep_stray_customers).
+#
 # Clears each e2e consultant's timesheets, entries, line items, attachments,
 # expense reports, PDFs, approval workflows, change logs and approval emails,
 # AND their assignments plus the projects those assignments were on, via the
@@ -36,5 +40,12 @@ source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_testdata.sh"
 
 tt_clear_e2e_testdata "before"
+
+# Main.Customer survives the clear above by design, so rows created by
+# verify-tt729-new-customer-save and orphaned by an interrupted run are never
+# cleaned by it. Narrow, non-fatal, and here rather than in teardown because the
+# runs that leak are exactly the ones that never reach their teardown. See
+# lib/_testdata.sh.
+tt_sweep_stray_customers
 
 echo "PASS: verify-000-testdata-clear-before — e2e consultant test data cleared, depth=$TT_E2E_CLEAR_DEPTH ($TT_E2E_CONSULTANTS)"

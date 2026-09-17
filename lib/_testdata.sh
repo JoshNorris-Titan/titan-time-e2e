@@ -222,3 +222,43 @@ tt_clear_e2e_testdata() {
   done
   unset IFS
 }
+
+# tt_sweep_stray_customers — archive customers a previous run created and left.
+#
+# WHY THIS IS NOT THE TEST'S OWN JOB. verify-tt729-new-customer-save creates a real
+# Main.Customer and archives it in its tail step, which is correct and usually works.
+# But cleanup that lives at the end of a test only runs when the test gets there:
+# it is skipped when an earlier assertion fails, when the archive call itself is
+# refused (the test downgrades that to a WARN, on purpose — a leaked row should not
+# turn a green test red), and when the run is cut short by fail-fast, the deadline or
+# a cancelled job. Every one of those is a normal Tuesday for this suite.
+#
+# The rows are harmless individually and invisible in aggregate: Main.Customer is
+# never touched by the bookend clear ("Customers and accounts survive"), so they
+# accumulate in a list real people use, one per interrupted run, for as long as
+# nobody notices.
+#
+# Sweeping at SETUP rather than teardown is deliberate. Setup is the one step that
+# always runs — teardown runs too, but a sweep there can only clean the run it just
+# finished, and the rows worth worrying about are the ones left by a run that ended
+# badly enough not to reach its own teardown.
+#
+# SCOPE IS DELIBERATELY NARROW. Only names beginning "E2E TT729 " — the prefix that
+# test generates, with a run epoch appended. Nothing else in Main.Customer is
+# touched, and the fixture customers (E2E ClientApproval and friends) are not
+# matched. Archiving, not deleting, because Archived is the only lever the model
+# offers: cbCustomer constrains on [Archived = false()], so an archived row is gone
+# from every picker while remaining auditable.
+#
+# Never fatal. A sweep that cannot run is worth saying out loud, but it is not a
+# reason to fail the run before a single test has executed.
+TT_STRAY_CUSTOMER_PREFIX="${TT_STRAY_CUSTOMER_PREFIX:-E2E TT729 }"
+tt_sweep_stray_customers() {
+  local prefix="${1:-$TT_STRAY_CUSTOMER_PREFIX}" r
+  r="$(playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),20000); mx.data.get({ xpath: \"//Main.Customer[starts-with(CompanyName,'$prefix')][Archived=false()]\", filter:{amount:100}, callback: function(objs){ if(!objs || !objs.length){ clearTimeout(t); return res('none'); } objs.forEach(function(o){ o.set('Archived', true); }); mx.data.commit({ mxobjs: objs, callback: function(){ clearTimeout(t); res('swept:'+objs.length); }, error: function(e){ clearTimeout(t); res('ERR:commit-'+((e&&e.message)||'refused')); } }); }, error: function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'retrieve-refused')); } }); } catch(e) { res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str)"
+  case "$r" in
+    none)     echo "  sweep: no stray '${prefix}*' customers left by earlier runs" ;;
+    swept:*)  echo "  sweep: archived ${r#swept:} stray '${prefix}*' customer(s) left by an earlier run" ;;
+    *)        echo "  WARN: could not sweep stray '${prefix}*' customers ($r) — check the Customers list by hand" >&2 ;;
+  esac
+}

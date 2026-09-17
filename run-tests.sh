@@ -24,6 +24,7 @@
 #   ./run-tests.sh verify-smoke-login.test.sh   run one script
 #   ./run-tests.sh --list
 #   ./run-tests.sh --expect-count 52        fail unless exactly 52 tests are found
+#   ./run-tests.sh --deadline 195           stop starting steps after 195m, still tear down
 #   ./run-tests.sh --junit results.xml --skip-file ci-skip.txt
 #   ./run-tests.sh --no-fail-fast           run the whole suite even after a failure
 #
@@ -91,6 +92,22 @@ HEALTH_CHECK=1
 # Teardown is deliberately exempt -- skipping it would leak the seeded rows into the
 # next run, which is the failure mode lib/_testdata.sh was written to stop.
 FAIL_FAST=1
+# Stop starting new steps once the run has been going this long (minutes), then go
+# straight to teardown. Empty means no deadline.
+#
+# This exists because the OUTER kill is not survivable. GitHub's `timeout-minutes`
+# and a shell `timeout` both land as SIGTERM/SIGKILL on this process, and on_signal
+# closes the browser and exits 130 -- it does NOT run 99-teardown, because there is
+# no safe way to run a multi-minute cleanup from a signal handler that may be seconds
+# from SIGKILL. A run guillotined that way leaves the e2e consultants' timesheets,
+# assignments and projects on the target environment, and the NEXT run trips over
+# them: 00-setup's clear is what establishes the known starting state, so its absence
+# does not fail loudly, it fails as somebody else's mysterious red.
+#
+# An INTERNAL deadline is survivable: it is checked between steps, where the runner
+# is free to spend the several minutes teardown needs. Set it comfortably below the
+# outer ceiling so teardown fits in the gap.
+DEADLINE_MIN=""
 TARGETS=()
 
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
@@ -103,6 +120,7 @@ while [ $# -gt 0 ]; do
     --timeout|-t)       TIMEOUT="$2"; TIMEOUT_EXPLICIT=1; shift 2 ;;
     --list|-l)          LIST_ONLY=1; shift ;;
     --expect-count)     EXPECT_COUNT="$2"; shift 2 ;;
+    --deadline)         DEADLINE_MIN="$2"; shift 2 ;;
     --verbose|-v)       VERBOSE=1; shift ;;
     --skip-health-check) HEALTH_CHECK=0; shift ;;
     --no-fail-fast|--keep-going) FAIL_FAST=0; shift ;;
@@ -230,6 +248,13 @@ fi
 # verify-*.test.sh glob, or drop a folder, and the runner happily reports
 # "3 tests: 3 passed" with exit 0. Same class of bug as an assertion that cannot
 # fail, one level up. CI should always pass --expect-count.
+if [ -n "$DEADLINE_MIN" ]; then
+  case "$DEADLINE_MIN" in
+    ''|*[!0-9]*) echo "--deadline needs a number of minutes, got: $DEADLINE_MIN" >&2; exit 2 ;;
+  esac
+  [ "$DEADLINE_MIN" -gt 0 ] || { echo "--deadline must be greater than 0" >&2; exit 2; }
+fi
+
 if [ -n "$EXPECT_COUNT" ]; then
   case "$EXPECT_COUNT" in
     ''|*[!0-9]*) echo "--expect-count needs a number, got: $EXPECT_COUNT" >&2; exit 2 ;;
@@ -379,6 +404,10 @@ RUN_START=$(date +%s)
 
 # Set to the name of the step that tripped fail-fast, empty while the run is healthy.
 ABORTED_BY=""
+# Human-readable reason, so a deadline abort does not get reported as a step failing.
+ABORTED_WHY=""
+# Set when the deadline trips, so the run cannot exit 0 with steps never run.
+DEADLINE_TRIPPED=""
 
 # is_teardown <path> — does this script still run after a fail-fast abort?
 #
@@ -401,6 +430,23 @@ for script in "${SCRIPTS[@]}"; do
   name="$(basename "$script" .test.sh)"
   base="$(basename "$script")"
 
+  # Deadline: checked BETWEEN steps, never inside one. A step already running is
+  # left to finish or hit its own --timeout; killing it mid-write is the thing the
+  # deadline exists to avoid. Teardown is exempt by the same is_teardown() contract
+  # fail-fast uses, so the clear still runs no matter how late it is.
+  if [ -n "$DEADLINE_MIN" ] && [ -z "$ABORTED_BY" ] && ! is_teardown "$script"; then
+    elapsed=$(( $(date +%s) - RUN_START ))
+    if [ "$elapsed" -ge $(( DEADLINE_MIN * 60 )) ]; then
+      ABORTED_BY="$name"
+      ABORTED_WHY="the ${DEADLINE_MIN}m deadline passed (${elapsed}s elapsed)"
+      DEADLINE_TRIPPED=1
+      echo "----------------------------------------------------------------"
+      echo "deadline: ${DEADLINE_MIN}m is up before '$name'. Running teardown, then reporting."
+      echo "          Everything from here is NOTRUN, not passed."
+      echo "----------------------------------------------------------------"
+    fi
+  fi
+
   # Fail-fast: everything after the first failure is reported as "not run" rather
   # than silently dropped, so the totals still add up to the discovered count and
   # --expect-count keeps meaning something.
@@ -408,7 +454,7 @@ for script in "${SCRIPTS[@]}"; do
     echo "NOTRUN $name"
     NOTRUN=$((NOTRUN+1))
     { echo "    <testcase name=\"$(printf '%s' "$name" | xml_escape)\" time=\"0\">"
-      echo "      <skipped message=\"not run - suite aborted after $(printf '%s' "$ABORTED_BY" | xml_escape) failed\"/>"
+      echo "      <skipped message=\"not run - suite aborted: $(printf '%s' "$ABORTED_WHY" | xml_escape)\"/>"
       echo "    </testcase>"; } >> "$CASES_FILE"
     continue
   fi
@@ -459,6 +505,7 @@ for script in "${SCRIPTS[@]}"; do
     # on it would misreport which step actually broke.
     if [ "$FAIL_FAST" -eq 1 ] && [ -z "$ABORTED_BY" ] && ! is_teardown "$script"; then
       ABORTED_BY="$name"
+      ABORTED_WHY="'$name' failed"
       echo "----------------------------------------------------------------"
       echo "fail-fast: stopping after '$name'. Running teardown, then reporting."
       echo "           (use --no-fail-fast to run the whole suite regardless)"
@@ -493,9 +540,16 @@ rm -f "$CASES_FILE"
 echo "----------------------------------------------------------------"
 if [ "$NOTRUN" -gt 0 ]; then
   echo "$TOTAL tests: $PASSED passed, $FAILED failed, $SKIPPED skipped, $NOTRUN not run  (${TOTAL_TIME}s)"
-  echo "ABORTED after '$ABORTED_BY' — $NOTRUN step(s) never ran, so this run says nothing about them."
+  echo "ABORTED — $ABORTED_WHY — $NOTRUN step(s) never ran, so this run says nothing about them."
 else
   echo "$TOTAL tests: $PASSED passed, $FAILED failed, $SKIPPED skipped  (${TOTAL_TIME}s)"
+fi
+
+# A deadline abort with no failures would otherwise exit 0 -- a green run that never
+# ran a third of the suite is precisely the false green --expect-count exists to stop.
+if [ -n "$DEADLINE_TRIPPED" ]; then
+  echo "FAILING the run: the deadline cut it short, so this is not a green baseline." >&2
+  exit 1
 fi
 
 [ "$FAILED" -eq 0 ]

@@ -108,6 +108,12 @@ jobs:
     # before 99-teardown, which leaves e2e test data on the target environment
     # for the next run to trip over. 210 restores roughly the headroom ratio 150
     # gave 89. An unused ceiling costs nothing; billing is actual runtime.
+    #
+    # This is the OUTER ceiling and it is not survivable: it lands as a signal, and
+    # run-tests.sh cannot run a multi-minute teardown from a signal handler. The step
+    # below therefore also passes --deadline 195, an internal clock that stops starting
+    # new steps with ~15m to spare and still runs 99-teardown. If you raise or lower
+    # this number, move that one with it and keep the gap.
     timeout-minutes: 210
 
     steps:
@@ -206,7 +212,23 @@ jobs:
           fi
 
           rc=0
-          ./run-tests.sh --skip-file ci-skip.txt $FF || rc=$?
+          # --expect-count: the discovery gate. Without it the RUN ITSELF cannot fail --
+          # rename a test out of the verify-*.test.sh glob and the runner reports
+          # "95 tests: 95 passed" with exit 0. run-tests.sh's own header says CI should
+          # always pass it, suites/expected-count.txt says the same number belongs here,
+          # and until now the nightly was the one workflow that did not. Keep it in step
+          # with suites/expected-count.txt, deliberately, in the same commit as the test
+          # that changed the count.
+          #
+          # --deadline: the INTERNAL clock, and the reason timeout-minutes alone is not
+          # enough. GitHub's ceiling arrives as a signal; run-tests.sh's handler closes
+          # the browser and exits without running 99-teardown, so a guillotined run
+          # leaves e2e timesheets, assignments and projects on dev for the NEXT run to
+          # trip over -- which surfaces as somebody else's mysterious red, not as this
+          # run's failure. The internal deadline is checked between steps, where there
+          # is room to spend the few minutes teardown needs. 195 leaves ~15m of headroom
+          # under timeout-minutes: 210; keep that gap when either number moves.
+          ./run-tests.sh --skip-file ci-skip.txt --expect-count 99 --deadline 195 $FF || rc=$?
 
           if [ -s "${TT_PW_TRACE_FILE:-}" ]; then
             echo
