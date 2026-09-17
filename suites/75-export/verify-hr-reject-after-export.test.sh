@@ -67,7 +67,7 @@ TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do c
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_tt683.sh"
 # For tt_click_button_exact / tt_dismiss_dialogs, which the comment popup needs.
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 CONSULTANT_NAME="${TT_EXPORT_CONSULTANT:-E2E Consultant}"
 REJECT_COMMENT="E2E automated post-export reject - hours returned to the assignment"

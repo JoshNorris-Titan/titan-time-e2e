@@ -11,11 +11,11 @@
 #    route is covered (verify-customer-token-reject), the after-export route is
 #    covered (verify-hr-reject-after-export), the manager route is covered as of
 #    verify-pm-reject-action. This one existed only as un-asserted setup: the
-#    lib/_tt692693.sh fixtures reject entries so later steps have something to
+#    lib/_rejection.sh fixtures reject entries so later steps have something to
 #    resubmit, and nothing checks that the reject did what it claims.
 #
 # 2. IT SETTLES A CONTRADICTION THE SUITE HAS CARRIED SINCE AUGUST.
-#    lib/_tt692693.sh:16 states that the inline dashboard buttons
+#    lib/_rejection.sh:16 states that the inline dashboard buttons
 #    btn<Tab>Reject / btn<Tab>Approve / btnProcessEntry are "dead controls (no
 #    server call)". TT-686 - "Sent, weekly, and Monthly: selecting the reject
 #    button keeps the timesheet on the screen" - is the ticket that FIXED them,
@@ -67,7 +67,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 TAB="WEEKLY TO PROCESS"
 CUSER="${TT_HRREJECT_USER:-e2e_consultant}"
@@ -123,7 +123,7 @@ if ! tt_hr_reject_card_for_project "$CNAME" "$PROJECT" "$TAB" "$COMMENT"; then
   echo "FAIL: pressing Reject on the '$PROJECT' card in $TAB did not lead to a rejection."
   echo "      Either no card for that consultant+project was found in any week of the"
   echo "      picker, or the Reject control did not open the comment page."
-  echo "      The second is the one that matters: lib/_tt692693.sh:16 claims these inline"
+  echo "      The second is the one that matters: lib/_rejection.sh:16 claims these inline"
   echo "      buttons are dead controls, TT-686 says they were fixed on 2026-08-18, and"
   echo "      Main.ACT_HRDashboard_ApproveOrReject is a real server action behind"
   echo "      btnProcessReject. If the control is genuinely dead, TT-686 has regressed."

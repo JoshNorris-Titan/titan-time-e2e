@@ -57,7 +57,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 source "$TT_ROOT/lib/_tt683.sh"
 
 TAB="MONTHLY TO BE INVOICED"
@@ -97,7 +97,7 @@ hir_select_month() {
 # hir_count — cards on the CURRENTLY SELECTED month whose first line is $CNAME.
 #
 # Scoped from the row's own Reject button and capped at 500 characters, for the
-# reason lib/_tt692693.sh documents at length: walk far enough up and the
+# reason lib/_rejection.sh documents at length: walk far enough up and the
 # ancestor spans several cards, so a neighbouring row's text satisfies the match
 # and the count is of the gallery rather than of the consultant.
 hir_count() {

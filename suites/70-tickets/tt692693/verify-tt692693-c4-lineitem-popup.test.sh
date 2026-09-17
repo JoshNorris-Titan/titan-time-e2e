@@ -46,7 +46,7 @@ set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_tt654.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 CUSER="${TT_C4_USER:-e2e_consultant}"
 CNAME="${TT_C4_NAME:-E2E Consultant}"

@@ -14,7 +14,7 @@
 #   HRDashboardTab row whose Status is ToProcess.
 # So a genuine "not in the process queue" means one of those three disagrees. Every
 # read below is paged and scoped so that conclusion is actually available; the
-# previous version of this test could not support it. See lib/_tt692693.sh.
+# previous version of this test could not support it. See lib/_rejection.sh.
 #
 # tt-timeout: 10m
 #
@@ -30,7 +30,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 CUSER="${TT_C2_USER:-e2e_consultant2}"
 CNAME="${TT_C2_NAME:-E2E Consultant Two}"

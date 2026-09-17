@@ -53,7 +53,8 @@ F5 first — tests written against unsaved model changes test the previous build
 
 - **Layout:** tests live under `suites/<NN-area>/`. The numeric prefix is the run order —
   `00-setup` (clear, then build) → `10-smoke` → `20-consultant` → `30-approval` → `40-hr` →
-  `50-titan-manager` → `60-email` → `70-tickets/<ticket>/` → `80-platform` → `99-teardown`.
+  `50-titan-manager` → `60-email` → `70-tickets/<ticket>/` → `75-export` → `76-bulk` →
+  `80-platform` → `85-security` → `99-teardown`.
   Put a new test in the area it exercises; ticket-specific regressions go in
   `70-tickets/tt<ticket>/`. `lib/` holds shared helpers, `seeders/` the destructive data
   builders (never picked up by the runner, which only matches `verify-*.test.sh`).

@@ -4,18 +4,19 @@
 # The suite knows how many steps it is supposed to have, and says so when that
 # changes. No browser, no app, about a second.
 #
-# WHY THIS EXISTS. run-tests.sh already solves this with --expect-count, and its
-# own comment says "CI should always pass --expect-count". CI does not pass it.
-# So today a test that is renamed out of the verify-*.test.sh glob, or a folder
-# that stops being discovered, produces a run that reports "82 tests: 82 passed"
-# and a green tick - the run itself cannot fail, which is the failure mode this
-# suite has already been bitten by once (see suites/10-smoke/verify-helper-selftest
-# and the note about a green tick that ran nothing).
+# WHY THIS EXISTS. run-tests.sh solves this with --expect-count, and its own
+# comment says "CI should always pass --expect-count". For a long time CI did not,
+# so a test renamed out of the verify-*.test.sh glob produced a run reporting
+# "82 tests: 82 passed" and a green tick - the run itself could not fail, which is
+# the failure mode this suite has already been bitten by once (see
+# suites/10-smoke/verify-helper-selftest and the note about a green tick that ran
+# nothing).
 #
-# The right fix is one line in .github/workflows/e2e.yml. That is a workflow
-# change, which the autofix loop is forbidden to make and which needs a human, so
-# this stands in for it from INSIDE the suite - where a step is just another step
-# and needs nobody's permission to run.
+# The nightly NOW passes --expect-count. This step is still not redundant: it
+# guards from inside the suite, so it also covers a local run, a manual dispatch,
+# and the case where CI is passing a stale number on the command line. It needs
+# nobody's permission to run and the autofix loop cannot edit it away, because the
+# loop is forbidden to touch workflows.
 #
 # HOW IT WORKS. suites/expected-count.txt holds the number. This counts what the
 # runner would discover, using the runner's own glob, and fails when the two
@@ -69,6 +70,48 @@ if [ "$ACTUAL" -ne "$EXPECTED" ]; then
   echo "      Run ./run-tests.sh --list to see exactly what is discovered."
   echo "      Update suites/expected-count.txt DELIBERATELY - never to make this pass."
   exit 1
+fi
+
+# --------------------------------------------------- the README's headline totals
+#
+# The badge and the intro table are the first two numbers anybody reads, and they
+# had drifted three ways at once: the badge said 51, the intro said 51, the
+# walkthrough header said 91, and the suite discovered 96. Nothing checked them,
+# because they are prose. They are mechanical enough to check, so check them.
+#
+# Only the two TOTALS are policed. The walkthrough's per-step numbering (step 51,
+# steps 51-52) is a different sequence and is not derived from this count, so it is
+# deliberately left alone - a guard that failed every time a step was inserted
+# mid-list would be turned off within a week.
+README="$TT_ROOT/README.md"
+if [ -f "$README" ]; then
+  doc_fails=0
+
+  badge="$(grep -o 'badge/steps-[0-9]\+-' "$README" | head -1 | sed 's/badge\/steps-//; s/-$//')"
+  if [ -z "$badge" ]; then
+    echo "FAIL: README.md has no steps badge to check (expected .../badge/steps-<N>-...)"
+    doc_fails=$((doc_fails+1))
+  elif [ "$badge" != "$EXPECTED" ]; then
+    echo "FAIL: README.md's badge says $badge step(s); suites/expected-count.txt says $EXPECTED."
+    doc_fails=$((doc_fails+1))
+  fi
+
+  intro="$(grep -o 'for all [0-9]\+ steps' "$README" | head -1 | sed 's/for all //; s/ steps//')"
+  if [ -z "$intro" ]; then
+    echo "FAIL: README.md's intro table has no 'for all <N> steps' total to check"
+    doc_fails=$((doc_fails+1))
+  elif [ "$intro" != "$EXPECTED" ]; then
+    echo "FAIL: README.md's intro table says $intro step(s); suites/expected-count.txt says $EXPECTED."
+    doc_fails=$((doc_fails+1))
+  fi
+
+  if [ "$doc_fails" -ne 0 ]; then
+    echo ""
+    echo "      The count moved and the README did not. Update both in the same change,"
+    echo "      the same way suites/expected-count.txt is updated - deliberately."
+    exit 1
+  fi
+  echo "  README badge and intro total both read $EXPECTED"
 fi
 
 echo "PASS: verify-run-budget - the suite discovers $ACTUAL tests, which is what suites/expected-count.txt declares"

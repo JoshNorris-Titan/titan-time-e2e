@@ -45,7 +45,7 @@ set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_tt654.sh"
-source "$TT_ROOT/lib/_tt692693.sh"
+source "$TT_ROOT/lib/_rejection.sh"
 
 PROJ="$TT654_PROJECT_LINEITEMS"
 CUSER="$TT654_CONSULTANT"
@@ -53,7 +53,7 @@ CNAME="${TT654_CONSULTANT_NAME:-E2E Consultant}"
 
 # ------------------------------------------------------------- local helpers
 #
-# tt_make_rejected_entry (lib/_tt692693.sh) cannot seed this project: it fills
+# tt_make_rejected_entry (lib/_rejection.sh) cannot seed this project: it fills
 # the aggregate day cells directly, and on a NeedsLineItems row those are
 # read-only — hours come from the task rows. So the seed below uses the TT-654
 # line-item helpers instead.
@@ -64,7 +64,7 @@ CNAME="${TT654_CONSULTANT_NAME:-E2E Consultant}"
 # first-match-by-name helper would happily reject or reopen the wrong one — a
 # run that proves nothing while reporting green.
 
-# Both live in lib/_tt692693.sh now, under tt_-prefixed names, because
+# Both live in lib/_rejection.sh now, under tt_-prefixed names, because
 # verify-tt692693-c4 needed the identical pair: it asks for a rejected 'E2E Line
 # Items' entry and used the name-only helpers, so it rejected and then reopened a
 # different project's entry and reported a failure it had manufactured. Two

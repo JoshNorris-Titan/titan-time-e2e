@@ -1,0 +1,49 @@
+# Refuse a pull request that makes the suite weaker.
+#
+# The e2e-autofix loop opens and merges its own PRs into a repository with no branch
+# protection and no reviewer. Its rails are sound and its ledger shows it has kept to
+# them, but they live in a Markdown skill file: nothing in GitHub prevents a future or
+# carelessly-edited version from turning a red test green by making it toothless. This
+# is the mechanical half of that skill's Step 4. The logic lives in
+# tools/guard-suite-strength.sh so it can be run locally before pushing:
+#
+#   ./tools/guard-suite-strength.sh origin/main
+#
+# NOTE: this check reports, it does not block, until somebody turns it into a required
+# status check. `main` has no branch protection, so a red tick here still allows a
+# merge -- including an automated one. Settings -> Branches -> add a rule requiring
+# "suite strength" is the other half, and it is Josh's call, not something a workflow
+# can grant itself.
+name: Suite strength
+
+on:
+  pull_request:
+    # `labeled`/`unlabeled` are included so adding the override label re-runs the check
+    # instead of leaving a stale red tick that has to be dismissed by hand.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The guard diffs against the base, so it needs more than the tip commit.
+          # 0 is the blunt option and this repo is small; a shallow fetch here would
+          # fail on exactly the long-running branches most worth checking.
+          fetch-depth: 0
+
+      - name: Check the change does not weaken the suite
+        env:
+          # The one deliberate escape hatch. Labels are visible on the PR and in its
+          # timeline, which is the point: this makes a weakening change loud, not
+          # impossible. The autofix loop is forbidden to use it -- every finding the
+          # guard reports is an escalation under its own rails.
+          GUARD_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'weakens-suite-on-purpose') && '1' || '' }}
+        run: |
+          chmod +x ./tools/guard-suite-strength.sh
+          ./tools/guard-suite-strength.sh "origin/${{ github.base_ref }}"

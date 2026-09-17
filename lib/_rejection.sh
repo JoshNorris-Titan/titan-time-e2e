@@ -1,10 +1,26 @@
 #!/usr/bin/env bash
-# Shared fixtures for the TT-692 / TT-693 timesheet change set (focus loss,
-# line-item rollup, rejected-resubmit parity).
+# The rejection / resubmit / line-item-popup driving surface: opening the Review &
+# Edit popup, rejecting as HR or PM, resubmitting, and reading a consultant's history
+# back afterwards.
+#
+# NAMED FOR WHAT IT DOES, NOT WHERE IT CAME FROM. This was lib/_tt692693.sh until
+# 2026-09-17. It was written for that change set (focus loss, line-item rollup,
+# rejected-resubmit parity) and never left it: 24 files source it, across
+# 20-consultant, 30-approval, 40-hr, 75-export, 70-tickets/tt654 and
+# 70-tickets/tt692693, and its functions were already generically named (tt_popup_open,
+# tt_hr_reject_first, tt_consultant_history_load) rather than tt692693_*. A general
+# driving library filed under a pair of Jira numbers is a discoverability tax: anyone
+# looking for "is resubmit-after-rejection covered" had to know to open a ticket lib.
+#
+# The TESTS under suites/70-tickets/tt692693/ deliberately did NOT move with it. The
+# runner discovers and runs by sorted path, several of those steps draw from the shared
+# fresh-week pool, and 75-export depends on what 70-tickets leaves behind -- so re-filing
+# them changes run order, which is load-bearing here. That is a separate change, and one
+# that needs a green run to justify itself.
 #
 # Source AFTER lib/_login.sh:
 #   source "$(dirname "$0")/lib/_login.sh"
-#   source "$(dirname "$0")/lib/_tt692693.sh"
+#   source "$(dirname "$0")/lib/_rejection.sh"
 #
 # Design notes for this change set:
 #  * The Review & Edit popup (Main.AssignmentEntry_RejectionReview) uses GENERATED

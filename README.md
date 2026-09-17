@@ -6,7 +6,7 @@
 It drives a real browser through the real app — logging in, filling a timesheet, approving it,
 downloading the export — and reports PASS or FAIL for every step.
 
-![Steps](https://img.shields.io/badge/steps-51-1f6feb)
+![Steps](https://img.shields.io/badge/steps-99-1f6feb)
 ![Runtime](https://img.shields.io/badge/runtime-30–45%20min-6e7781)
 ![Driver](https://img.shields.io/badge/driver-playwright--cli-2ead33)
 ![CI](https://img.shields.io/badge/CI-manual%20trigger%20only-d29922)
@@ -20,7 +20,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 
 <table>
 <tr><td><b>What it tests</b></td><td>The running Titan Time web app, through a real browser</td></tr>
-<tr><td><b>How long</b></td><td>Roughly 30–45 minutes for all 51 steps</td></tr>
+<tr><td><b>How long</b></td><td>Roughly 90–130 minutes for all 99 steps</td></tr>
 <tr><td><b>What it changes</b></td><td>Only the <code>e2e_*</code> test consultants' data — never real timesheets</td></tr>
 <tr><td><b>Where it runs</b></td><td>Your machine, or GitHub, against local / dev / acceptance</td></tr>
 <tr><td><b>Who reads this page</b></td><td>Anyone who needs to know what is and isn't covered</td></tr>
@@ -33,7 +33,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 | | Section | |
 |---|---|---|
 | 1 | [How a run works](#1-how-a-run-works) | What the conductor does |
-| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ All 91 steps |
+| 2 | [**The script, step by step**](#2-the-script-step-by-step) | ⭐ Steps 1–64, walked through |
 | 3 | [Files that aren't part of the run](#3-files-that-arent-part-of-the-run) | Seeders, probes, quality check |
 | 4 | [Settings the suite reads](#4-settings-the-suite-reads) | Addresses and logins |
 | 5 | [Running it automatically](#5-running-it-automatically-on-github) | The GitHub workflow |
@@ -138,7 +138,15 @@ flowchart LR
 
 ## 2. The script, step by step
 
-All 91 steps, grouped into eight blocks.
+Steps 1–64, grouped into eight blocks.
+
+> [!NOTE]
+> This walkthrough documents 64 steps; the suite currently discovers 99
+> (`suites/expected-count.txt`). The blocks below are accurate for what they cover
+> and the gap is undocumented, not untested — `./run-tests.sh --list` is the
+> authoritative inventory. The badge and the table above are checked against
+> `suites/expected-count.txt` by `verify-run-budget`, so the totals cannot drift
+> again; this prose count has to be extended by hand as steps are added.
 
 > [!NOTE]
 > The walkthrough below does not cover every step. `verify-timesheet-locks-after-submit`
@@ -918,9 +926,11 @@ so uploads nothing, silently. Only one run happens at a time, because the suite 
 data on the target environment.
 
 > [!NOTE]
-> It is **manual-trigger only** right now. A weekly schedule is written but commented out on
-> purpose: the suite has never had a recorded clean run, and a build that is always red teaches
-> everyone to ignore it. Switch the schedule on after one clean baseline.
+> The nightly **is live**. The schedule described above as commented-out was switched on once the
+> suite reached a clean baseline, and it has since run green end to end (2026-09-16). Two things
+> follow that are easy to miss: a nightly writes to shared dev every night whether or not anyone
+> is watching, and nothing in GitHub *gates* on it — there is no `pull_request` trigger and no
+> branch protection, so a red nightly blocks nothing and only stops mattering when someone looks.
 
 ---
 
