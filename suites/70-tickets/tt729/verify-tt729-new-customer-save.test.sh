@@ -71,10 +71,14 @@ tt_wait_for ".mx-name-cbCustomer" "TT-729 New Assignment popup"
 # Deliberately nothing is filled in first. If btnNewCustomer's formValidations were
 # ever changed back from "None" to "All", the empty assignment form would block here and
 # txtCompanyName would never render, so tt_wait_for below goes red.
-present="$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnNewCustomer'))" 2>/dev/null | _tt_eval_str)"
-[ "$present" = "true" ] || tt_fail "TT-729: no New Customer button (.mx-name-btnNewCustomer) beside the Customer picker on Assignment_NewEdit"
+# The "+" beside the Customer picker was re-created as btnAddCustomer (icon only) on
+# 2026-09-24; until that deploys everywhere the button is still btnNewCustomer, so match
+# either name.
+NEW_CUSTOMER_BTN=".mx-name-btnAddCustomer, .mx-name-btnNewCustomer"
+present="$(playwright-cli eval "() => String(!!document.querySelector('$NEW_CUSTOMER_BTN'))" 2>/dev/null | _tt_eval_str)"
+[ "$present" = "true" ] || tt_fail "TT-729: no New Customer button ($NEW_CUSTOMER_BTN) beside the Customer picker on Assignment_NewEdit"
 
-playwright-cli click ".mx-name-btnNewCustomer" >/dev/null 2>&1
+playwright-cli click "$NEW_CUSTOMER_BTN" >/dev/null 2>&1
 sleep 3
 tt_wait_for ".mx-name-txtCompanyName input" "TT-729 New Customer popup (is btnNewCustomer still formValidations=None?)"
 echo "  ok: New Customer popup opened from an untouched assignment form"
