@@ -9,9 +9,17 @@
 # why. The Tooltip widget renders its trigger inside two <div>s, and a div is
 # block-level -- so the look-alike could not share a line with its siblings and
 # dropped onto a second row. On the HR dashboard's Client Approval card that
-# pushed "Reissue link" down; on the Pending card it stacked "Submit 0-hour
-# entries" under "Remind". Rows with an unavailable action were visibly taller
-# than the rows around them and the buttons stopped lining up down the list.
+# pushed the (since removed) "Reissue link" button down; on the Pending card it
+# stacked "Submit 0-hour entries" under "Remind". Rows with an unavailable action
+# were visibly taller than the rows around them and the buttons stopped lining
+# up down the list.
+#
+# "Reissue link" is gone (approval links are now one per email and nothing
+# cancels them), so the gated look-alike is alone in its action container
+# (cntClientCardR0C1) and there is no same-container sibling left to share a
+# line with. B therefore measures against what the eye still compares: the
+# View / Approve buttons in the adjacent container (cntClientCardR0C2) on the
+# SAME card, and the height of a card whose Remind is still available.
 #
 # The fix is Atlas's own "Show inline" design property on the Tooltip, which adds
 # .widget-tooltip-inline (display: inline-block). This test asserts the RENDERED
@@ -20,15 +28,25 @@
 #
 # WHY IT CAN FAIL. Before the fix the wrapper computed display:block and the two
 # buttons' top edges differed by a full button height (~39px measured in the
-# mirror). Assertion B compares those top edges, so it went red on the old model
-# and goes green on the new one. That is the property this suite keeps asking for
+# mirror). Assertion B compared those top edges, so it went red on the old model
+# and went green on the new one. With the look-alike alone in its container, a
+# block wrapper no longer has a sibling to push it down -- C (the wrapper is not
+# a block box) is now the assertion that catches the original regression
+# directly, and B catches its visible symptom by any route (a taller card, a
+# gated button out of line with the card's other actions). That is the property this suite keeps asking for
 # and rarely gets -- see "Assertions that cannot fail" in CLAUDE.md.
 #
 # WHAT IT ASSERTS
 #   A. the Client Approval tab shows a GATED card -- btnClientRemindBlocked is
 #      present. Fatal otherwise: everything below would be vacuous.
-#   B. the gated look-alike and btnClientReissue share a line: their top edges
-#      agree within half a button height.
+#   B. the gated look-alike sits on its card's button line and does not make
+#      the card taller:
+#        B1. its top edge agrees, within half a button height, with the first
+#            of btnClientView / btnClientApprove on the same card;
+#        B2. if any card on the tab still shows an available Remind, the gated
+#            card's height agrees with that card's within half a button height.
+#            When every card is gated there is nothing to compare, and B2 says
+#            so rather than passing.
 #   C. the Tooltip wrapper around the look-alike is not a block box.
 #
 # HOW IT REACHES THE GATED STATE. Reminding a customer twice about the same
@@ -95,47 +113,80 @@ REPORT="$(playwright-cli eval "() => {
   const wrap = blocked.closest('.widget-tooltip');
   if (!wrap) return 'NO-WRAPPER';
 
-  // Its sibling button on the same row, inside the same card.
-  const card = wrap.parentElement;
-  const reissue = card ? card.querySelector('.mx-name-btnClientReissue') : null;
-  if (!reissue) return 'NO-REISSUE';
+  // The card is the lowest ancestor holding a View/Approve action -- at most
+  // one of each -- and exactly one remind control (real or gated). Stopping
+  // there keeps the search from climbing into the list and borrowing another
+  // card's button.
+  const ACT = '.mx-name-btnClientView, .mx-name-btnClientApprove';
+  const REM = '.mx-name-btnClientRemind, .mx-name-btnClientRemindBlocked';
+  const cardOf = (el) => {
+    let c = el.parentElement;
+    while (c && c.querySelectorAll(ACT).length === 0) c = c.parentElement;
+    if (!c) return null;
+    const n = (q) => c.querySelectorAll(q).length;
+    if (n('.mx-name-btnClientView') > 1 || n('.mx-name-btnClientApprove') > 1 || n(REM) !== 1) return null;
+    return c;
+  };
+  const card = cardOf(wrap);
+  if (!card) return 'NO-SIBLING';
+  const sib = card.querySelector(ACT);
+
+  // A card whose Remind is still available, for the height comparison (B2).
+  let refH = '';
+  for (const r of document.querySelectorAll('.mx-name-btnClientRemind')) {
+    const rc = cardOf(r);
+    if (rc && rc !== card) { refH = String(Math.round(rc.getBoundingClientRect().height)); break; }
+  }
 
   const wr = wrap.getBoundingClientRect();
-  const rr = reissue.getBoundingClientRect();
+  const sr = sib.getBoundingClientRect();
   const br = blocked.getBoundingClientRect();
   const cs = getComputedStyle(wrap);
   return [
     cs.display,
     Math.round(wr.top),
-    Math.round(rr.top),
+    Math.round(sr.top),
     Math.round(br.height),
-    Math.round(rr.height)
+    Math.round(sr.height),
+    Math.round(card.getBoundingClientRect().height),
+    refH
   ].join('|');
 }" 2>/dev/null | _tt_eval_str)"
 
 case "$REPORT" in
   NO-BLOCKED)  tt_fail "the gated look-alike vanished between counting it and measuring it" ;;
   NO-WRAPPER)  tt_fail "the gated look-alike is not inside a .widget-tooltip wrapper -- the two-control pattern changed shape, and this test no longer measures what it claims" ;;
-  NO-REISSUE)  tt_fail "no .mx-name-btnClientReissue beside the gated look-alike, so there is no sibling to share a line with" ;;
+  NO-SIBLING)  tt_fail "could not find the gated look-alike's card: no ancestor holds one card's btnClientView/btnClientApprove and exactly one remind control, so there is no sibling on the same card to measure against" ;;
   *ERR*|'')    tt_fail "could not measure the gated card's button row" ;;
 esac
 
-IFS='|' read -r DISPLAY WRAP_TOP REISSUE_TOP BLOCKED_H REISSUE_H <<EOF
+IFS='|' read -r DISPLAY WRAP_TOP SIB_TOP BLOCKED_H SIB_H CARD_H REF_H <<EOF
 $REPORT
 EOF
 
-note "wrapper display=$DISPLAY  wrapper top=${WRAP_TOP}px  reissue top=${REISSUE_TOP}px  heights ${BLOCKED_H}/${REISSUE_H}px"
+note "wrapper display=$DISPLAY  wrapper top=${WRAP_TOP}px  view/approve top=${SIB_TOP}px  heights ${BLOCKED_H}/${SIB_H}px  card ${CARD_H}px  available-remind card ${REF_H:-none}px"
 
 # Half a button height: comfortably inside the same line, comfortably outside a
 # stacked one (a wrapped row differed by a full button height).
-TOL=$(( ${REISSUE_H:-38} / 2 ))
+TOL=$(( ${SIB_H:-38} / 2 ))
 [ "$TOL" -lt 8 ] && TOL=8
-DELTA=$(( WRAP_TOP - REISSUE_TOP )); [ "$DELTA" -lt 0 ] && DELTA=$(( -DELTA ))
+DELTA=$(( WRAP_TOP - SIB_TOP )); [ "$DELTA" -lt 0 ] && DELTA=$(( -DELTA ))
 
 if [ "$DELTA" -le "$TOL" ]; then
-  note "B ok: the gated button and Reissue share a line (top edges ${DELTA}px apart, tolerance ${TOL}px)"
+  note "B1 ok: the gated button is on its card's button line (top edges ${DELTA}px from View/Approve, tolerance ${TOL}px)"
 else
-  bad "B: the gated button sits ${DELTA}px from Reissue's top edge (tolerance ${TOL}px) -- the unavailable action has wrapped onto its own line, making this card taller than the rows around it."
+  bad "B1: the gated button sits ${DELTA}px from the card's View/Approve top edge (tolerance ${TOL}px) -- the unavailable action has dropped off the card's button line, making this card taller than the rows around it."
+fi
+
+if [ -z "$REF_H" ]; then
+  note "B2 not measured: every card on the tab is gated, so there is no card with an available Remind to compare heights against (B1 and C still ran)"
+else
+  HDELTA=$(( CARD_H - REF_H )); [ "$HDELTA" -lt 0 ] && HDELTA=$(( -HDELTA ))
+  if [ "$HDELTA" -le "$TOL" ]; then
+    note "B2 ok: the gated card is ${CARD_H}px tall against ${REF_H}px for a card with Remind available (tolerance ${TOL}px)"
+  else
+    bad "B2: the gated card is ${CARD_H}px tall against ${REF_H}px for a card with Remind available (tolerance ${TOL}px) -- the unavailable action is making its row taller than the rows around it."
+  fi
 fi
 
 if [ "$DISPLAY" = "block" ]; then
