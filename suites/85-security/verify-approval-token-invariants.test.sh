@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Every approval token is bounded and attributable — it has an approver and an
-# expiry, and no live one has already expired.
+# expiry, and no expiry is further out than a token's lifetime allows.
 #
 # tt-timeout: 8m
 #
@@ -12,9 +12,18 @@
 #     in memory, so a token with no approver email is a link with no scope.
 #   * ExpiresAt bounds how long a leaked link stays useful. DS_Projects_ByToken
 #     refuses a token past it. A token with no expiry never stops working.
-#   * A token that is past ExpiresAt but still marked live is the exact state that
-#     refusal exists to catch, and the one a lifetime change is most likely to
-#     produce - the window is moving from 30 days to 7.
+#   * An ExpiresAt far in the future is a token that is bounded in name only - the
+#     state a lifetime change or a date-arithmetic slip is most likely to produce
+#     (the window has moved from 30 days to 7).
+#
+# HOW TOKENS LIVE NOW. Every approval email mints its own token, nothing revokes
+# one any more, and a token ends only at its own ExpiresAt. So a token past
+# ExpiresAt and not Revoked is simply an expired token - not a defect - and this
+# step used to fail on exactly that (its old check C). The nightly
+# Core.SUB_Retention_Purge DELETES tokens past ExpiresAt or Revoked, so expired
+# rows do not linger either. The refusal of an expired token at the link is
+# DS_Projects_ByToken's own XPath ([ExpiresAt > '[%CurrentDateTime%]']); this
+# step does not exercise it.
 #
 # The suite's token coverage is all about FORGED or CONSUMED tokens
 # (verify-anon-bad-token, verify-anon-token-value-gate, verify-token-replay-refused).
@@ -25,8 +34,23 @@
 # WHAT IT ASSERTS, over every ApprovalToken the admin session can see:
 #   A. none has an empty ApproverEmail;
 #   B. none has an empty ExpiresAt;
-#   C. none is past its ExpiresAt while its TokenStatus is not Revoked;
+#   C. none expires more than TT_TOKEN_MAX_LIFETIME_DAYS (default 30, the old and
+#      longer window, so a correctly minted 7-day token never trips it) plus one
+#      day of clock slack from now - a mint can only set ExpiresAt to its own
+#      moment plus the lifetime, so anything further out was minted with the
+#      wrong lifetime. Expired rows awaiting the purge are counted and reported,
+#      not failed;
 #   D. something was examined.
+#
+# WHY ZERO ROWS STILL FAILS, even though the purge can legitimately empty the
+# table on a quiet environment. Within a suite run it cannot: suites/30-approval
+# sends customer-approval mail minutes before this step, each mail mints a token,
+# nothing revokes it and the purge takes only expired ones - so the tokens this
+# run minted are still there. An empty read here therefore means this session
+# could not see them (see the access note below), not that there are none. Run
+# on its own after a quiet spell, outside the suite, this step can fail on a
+# correctly empty table; that is the price of not letting "could not look" read
+# as a pass.
 #
 # WHY IT RUNS AS ADMIN. Main.ApprovalToken is one of only two entities with a
 # genuine data-layer denial for staff roles - that is what verify-role-token-denial
@@ -78,7 +102,10 @@ NOW_MS=$(( $(date -u +%s) * 1000 ))
 checked=0
 no_email=0
 no_expiry=0
-stale=0
+overlong=0
+expired=0
+MAX_DAYS="${TT_TOKEN_MAX_LIFETIME_DAYS:-30}"
+HORIZON_MS=$(( NOW_MS + (MAX_DAYS + 1) * 86400000 ))
 
 IFS='|'
 for row in $T; do
@@ -93,11 +120,10 @@ for row in $T; do
   [ -n "$email" ] && [ "$email" != "null" ] || no_email=$((no_email+1))
   if [ -z "$exp" ] || [ "$exp" = "null" ]; then
     no_expiry=$((no_expiry+1))
+  elif [ "$exp" -gt "$HORIZON_MS" ] 2>/dev/null; then
+    overlong=$((overlong+1))
   elif [ "$exp" -lt "$NOW_MS" ] 2>/dev/null; then
-    case "$status" in
-      Revoked) : ;;
-      *)       stale=$((stale+1)) ;;
-    esac
+    expired=$((expired+1))
   fi
   IFS='|'
 done
@@ -112,9 +138,10 @@ unset IFS
   && note "B ok: every token has an expiry" \
   || bad "B: $no_expiry of $checked token(s) have no ExpiresAt. A bearer link with no expiry never stops working."
 
-[ "$stale" -eq 0 ] \
-  && note "C ok: no live token is past its expiry" \
-  || bad "C: $stale token(s) are past ExpiresAt and not Revoked. That is the state DS_Projects_ByToken's refusal exists to catch, and the one a lifetime change is most likely to produce - the window is moving from 30 days to 7."
+[ "$overlong" -eq 0 ] \
+  && note "C ok: no token expires more than ${MAX_DAYS} day(s) (+1 slack) from now" \
+  || bad "C: $overlong of $checked token(s) expire more than ${MAX_DAYS} day(s) (+1 slack) from now. A mint sets ExpiresAt to its own moment plus the lifetime, so these were minted with the wrong lifetime - a link that outlives what the window promises."
+note "info: $expired token(s) are past ExpiresAt and awaiting the nightly purge (expected under per-email tokens, not a failure)"
 
 # ------------------------------------------------------------------- D. did we look?
 [ "$checked" -gt 0 ] \
@@ -125,4 +152,4 @@ if [ "$fails" -ne 0 ]; then
   echo "FAIL: verify-approval-token-invariants — $fails problem(s) across $checked token(s)."
   exit 1
 fi
-echo "PASS: verify-approval-token-invariants — all $checked token(s) name an approver, carry an expiry, and none is live past it."
+echo "PASS: verify-approval-token-invariants — all $checked token(s) name an approver, carry an expiry, and none expires beyond the ${MAX_DAYS}-day lifetime."
