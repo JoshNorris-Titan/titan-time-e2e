@@ -60,7 +60,7 @@ n_of() {
   case "$n" in ERR:*|''|*[!0-9]*) printf 'ERR' ;; *) printf '%s' "$n" ;; esac
 }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 note "session roles: $(tt_authz_roles)"
 
 TOTAL="$(n_of "//Main.Timesheet[$OWNED]$NOTDRAFT")"

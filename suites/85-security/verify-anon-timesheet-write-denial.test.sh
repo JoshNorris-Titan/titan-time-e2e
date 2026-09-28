@@ -55,7 +55,7 @@ ALL_TS="//Main.Timesheet"
 MINE_TS="//Main.Timesheet[Main.Timesheet_Account/Administration.Account/FullName = 'E2E Consultant']"
 
 # ------------------------------------------------------------------ control, as HR
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 BEFORE_ALL="$(tt_authz_expect_count "control: all timesheets" "$ALL_TS")"
 TS_STATUS_BEFORE="$(tt_authz_readback "$MINE_TS" 'Status')"
 case "$TS_STATUS_BEFORE" in
@@ -98,7 +98,7 @@ case "$O" in
 esac
 
 # ------------------------------------------------------------------ C/E. read back
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 AFTER_ALL="$(tt_authz_expect_count "readback: all timesheets" "$ALL_TS")"
 if [ "$AFTER_ALL" -le "$BEFORE_ALL" ]; then
   note "C ok: timesheet count is $AFTER_ALL (was $BEFORE_ALL) - nothing was forged"

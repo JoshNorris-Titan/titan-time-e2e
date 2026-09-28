@@ -29,7 +29,7 @@ CNAME="${TT_C3_NAME:-E2E Consultant Two}"
 PROJECT="${TT_C3_PROJECT:-E2E Sandbox}"
 
 # baseline queue depth before we add anything
-tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
+tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
 Q0="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
 echo "manager-approval cards for '$CNAME' before: $Q0"
 
@@ -63,7 +63,7 @@ else
 fi
 
 # the queue must have grown by exactly ONE
-tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
+tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
 Q1="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
 echo "manager-approval cards for '$CNAME' after: $Q1 (second-submit path: $SECOND)"
 

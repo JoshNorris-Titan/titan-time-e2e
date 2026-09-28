@@ -65,14 +65,14 @@ CNAME="${TT_INVREJECT_NAME:-E2E Consultant}"
 CUSER="${TT_INVREJECT_USER:-e2e_consultant}"
 COMMENT="E2E automated invoice-stage reject - week pulled back before export"
 
-hir_hr() { tt_login "e2e_hr" "WEEKLY TO PROCESS"; }
+hir_hr() { tt_login "e2e_hr" "$TT_HR_READY"; }
 
 # hir_open_tab — select the invoice tab and wait for its own gallery.
 #
 # Waits on galInvoiceEntries rather than on a week list, because this tab has no
 # week list. A wait on TT_HR_GAL_WEEKS here times out on a perfectly healthy tab.
 hir_open_tab() {
-  tt_try_click_text "$TAB" || return 1
+  tt_hr_try_click_tab "$TAB" || return 1
   sleep 3
   local i
   for i in $(seq 1 20); do

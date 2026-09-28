@@ -79,7 +79,7 @@ PR_MANUAL_PASS="${TT_MANUAL_PASS:-$PR_ROLE_PASS}"
 
 # ---------------------------------------------------------------- the roster
 #
-# username|password group|landing text
+# username|password group|landing text, or a `.mx-name-*` landing widget (see _tt_ready_js)
 #
 # The landing text is not decoration: it is what the verification step waits for, and so
 # it is also the cheapest proof that the account came back with its ROLE intact. An
@@ -96,7 +96,7 @@ PR_ACCOUNTS=(
   "e2e_consultant3|role|My Timesheets"
   "e2e_pm|role|Project Manager Dashboard"
   "e2e_pm2|role|Project Manager Dashboard"
-  "e2e_hr|role|WEEKLY TO PROCESS"
+  "e2e_hr|role|.mx-name-cardKpiProcess"
   "e2e_tm|role|Add Customer"
 )
 
@@ -126,7 +126,7 @@ PR_ACCOUNTS+=(
   "manual_consultant3|manual|My Timesheets"
   "manual_pm|manual|Project Manager Dashboard"
   "manual_pm2|manual|Project Manager Dashboard"
-  "manual_hr|manual|WEEKLY TO PROCESS"
+  "manual_hr|manual|.mx-name-cardKpiProcess"
   "manual_tm|manual|Add Customer"
 )
 

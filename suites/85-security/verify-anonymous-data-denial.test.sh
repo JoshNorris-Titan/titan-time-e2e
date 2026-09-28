@@ -82,7 +82,7 @@ UNREACHABLE="//Main.ChangeLog //Main.ApprovalToken"
 # --------------------------------------- 1. control: the retrieve machinery works
 # Asked as HR, who is entitled to Main.ChangeLog. A number here proves the call
 # shape is sound and the environment has rows, so a later zero is about access.
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 control="$(tt_authz_expect_count "control (e2e_hr)" "//Main.ChangeLog")"
 echo "  control: e2e_hr retrieved $control change-log row(s) with the same call"
 if [ "$control" -eq 0 ]; then

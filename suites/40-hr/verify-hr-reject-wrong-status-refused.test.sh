@@ -61,7 +61,7 @@ status_of() {
   playwright-cli eval "() => new Promise(res => { try { const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ guid: '$1', callback:function(o){ clearTimeout(t); res(o ? String(o.get('Status')) : 'ERR:gone'); }, error:function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'refused')); } }); } catch(e){ res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
 }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 note "session roles: $(tt_authz_roles)"
 
 # ------------------------------------------------------------------ A. the control

@@ -44,7 +44,7 @@ CB='.mx-name-cbProcessConsultant'
 card_count() { playwright-cli eval "() => { const g=document.querySelector('$GAL'); if(!g) return '-1'; return String(g.querySelectorAll('.mx-name-cardConsultantRow, [class*=card]').length || g.children.length); }" 2>/dev/null | _tt_eval_str; }
 gal_text()   { playwright-cli eval "() => { const g=document.querySelector('$GAL'); return g ? (g.innerText||'').replace(/\\s+/g,' ') : ''; }" 2>/dev/null | _tt_eval_str; }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 sleep 3
 
 [ "$(playwright-cli eval "() => String(!!document.querySelector('$GAL'))" 2>/dev/null | _tt_eval_str)" = "true" ] \

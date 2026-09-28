@@ -21,7 +21,7 @@ owned_js() {
 }
 CARD="(b => { let p=b; for(let i=0;i<12;i++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||'').trim(); if(!t) continue; const f=t.split('\n')[0].trim(); if($(owned_js)) return p; } return null; })"
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 sleep 3
 
 echo "KPI counts (ALL consultants):"
@@ -29,7 +29,7 @@ for c in Pending:cardKpiPending Manager:cardKpiManager Client:cardKpiCustomer Pr
   printf '  %-9s %s\n' "${c%%:*}" "$(pw "() => { const e=document.querySelector('.mx-name-${c##*:}'); if(!e) return 'NA'; const m=(e.innerText||'').trim().match(/(\d+)\s*$/); return m?m[1]:'NA'; }")"
 done
 
-pw "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='WEEKLY TO PROCESS' && getComputedStyle(e).cursor==='pointer'); if(el){el.click(); return 'Y';} return 'N'; }" >/dev/null
+tt_hr_try_click_tab "Weekly to process" >/dev/null
 sleep 3
 
 WEEKS="$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }")"

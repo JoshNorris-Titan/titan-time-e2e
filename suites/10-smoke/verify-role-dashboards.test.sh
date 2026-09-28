@@ -29,7 +29,7 @@ login_role() {
 
 login_role "e2e_consultant" "My Timesheets"             "Consultant"
 login_role "e2e_pm"         "Project Manager Dashboard" "ProjectManager"
-login_role "e2e_hr"         "WEEKLY TO PROCESS"         "HR"
+login_role "e2e_hr"         "$TT_HR_READY"         "HR"
 login_role "e2e_tm"         "Add Customer"              "TitanManager"
 
 echo "PASS: verify-role-dashboards — all four roles landed on their dashboards"

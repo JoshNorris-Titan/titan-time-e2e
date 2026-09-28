@@ -159,7 +159,7 @@ RELOADED="$(tt_rejected_count)"
 # tab: 'E2E Line Items' requires no approval, so the status expression routes a
 # resubmit straight back to ToProcess. Asserting MANAGER APPROVAL here was
 # asserting a queue this project never uses.
-tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
+tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
 LANDED="WEEKLY TO PROCESS"
 INQ="$(tt_hr_count_cards_for "$CNAME" "$LANDED")"
 echo "'$CNAME' cards in $LANDED: $INQ"

@@ -54,7 +54,7 @@ lineitems() {
   playwright-cli eval "() => new Promise(res => { try { const t=setTimeout(()=>res('ERR:timeout'),20000); mx.data.get({ xpath: \"//Main.LineItem[starts-with(Main.LineItem_AssignmentEntry/Main.AssignmentEntry/Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName,'E2E ')]\", filter:{amount:500}, callback:function(o){ clearTimeout(t); res((o||[]).map(l=>String(l.getReference('Main.LineItem_AssignmentEntry'))+'~'+String(l.get('Hours'))+'~'+String(l.get('Name')||'')).join('|')); }, error:function(e){ clearTimeout(t); res('ERR:'+((e&&e.message)||'refused')); } }); } catch(e){ res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str
 }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 note "session roles: $(tt_authz_roles)"
 
 E="$(entries)"

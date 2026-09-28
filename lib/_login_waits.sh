@@ -109,6 +109,62 @@ tt_try_click_text() {
   return 0
 }
 
+# --------------------------------------------------------------- HR dashboard tabs
+#
+# TT_HR_READY — what tt_login waits on for an HR account. A WIDGET, not a caption
+# (see _tt_ready_js below): the Weekly-to-process stage tile, which only the HR
+# dashboard renders, inside the counters data view, so its presence also means the
+# dashboard's data has loaded.
+TT_HR_READY='.mx-name-cardKpiProcess'
+
+# _tt_hr_tab_names <tab> — "<tile> <pane>" widget names for an HR stage tab.
+#
+# <tab> is the tab's caption in ANY case, so the old upper-case captions the
+# callers and seeders still pass ("MANAGER APPROVAL") resolve the same as today's
+# sentence case ("Manager approval"), and a short key (manager, client, process,
+# invoice, sent, pending) works too. Prints nothing for an unknown tab.
+#
+# WHY TABS ARE CLICKED BY WIDGET NOW. Model 5124c78e (2026-09-21) retitled the six
+# stage tiles from upper to sentence case. tt_click_text matches with an exact ===,
+# so every HR tab switch in the suite stopped finding its tile. The tiles have
+# been named cardKpi* since the dashboard rebuild, and each opens a conditionally
+# rendered pane (cntPane*), which gives the click something to be PROVEN against.
+_tt_hr_tab_names() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/^ *//' -e 's/ *$//')" in
+    pending)                                echo "cardKpiPending cntPanePending" ;;
+    "manager approval"|manager)             echo "cardKpiManager cntPaneManager" ;;
+    "client approval"|client|customer)      echo "cardKpiCustomer cntPaneClient" ;;
+    "weekly to process"|process|toprocess)  echo "cardKpiProcess cntPaneProcess" ;;
+    "monthly to be invoiced"|invoice)       echo "cardKpiInvoice cntPaneInvoice" ;;
+    sent)                                   echo "cardKpiSent cntPaneSent" ;;
+  esac
+}
+
+# tt_hr_try_click_tab <tab> — switch the HR dashboard to <tab>. Returns 1 when the
+# tab is unknown or its pane never appeared; never exits the test.
+#
+# Clicks the tile and then WAITS FOR ITS PANE, re-clicking while it is absent (a
+# tile click is idempotent - it just re-selects that tab). A click that returned
+# 'ok' is not evidence the tab changed; the pane is.
+tt_hr_try_click_tab() {
+  local names tile pane i r
+  names="$(_tt_hr_tab_names "$1")"
+  [ -n "$names" ] || { echo "  (tt_hr_try_click_tab: '$1' is not an HR dashboard tab)" >&2; return 1; }
+  tile="${names% *}"; pane="${names#* }"
+  for i in 1 2 3 4 5 6 7 8; do
+    r="$(playwright-cli eval "() => { if (document.querySelector('.mx-name-$pane')) return 'OPEN'; const t=document.querySelector('.mx-name-$tile'); if (!t) return 'NOTILE'; t.click(); return 'CLICKED'; }" 2>/dev/null | _tt_eval_str)"
+    [ "$r" = "OPEN" ] && { sleep 1; return 0; }
+    sleep 2
+  done
+  echo "  (tt_hr_try_click_tab: '$1' - pane .mx-name-$pane never appeared after clicking .mx-name-$tile; last: ${r:-unreadable})" >&2
+  return 1
+}
+
+# tt_hr_click_tab <tab> [label] — tt_hr_try_click_tab, fatal on a miss.
+tt_hr_click_tab() {
+  tt_hr_try_click_tab "$1" || tt_fail "HR dashboard tab '$1' could not be opened (${2:-$1})"
+}
+
 # _tt_login_form_variant — which sign-in form is on screen right now:
 #   'old' = the stock Mendix /login.html form (#usernameInput)
 #   'new' = the custom Core.Login page (mx widgets, input.form-control)
@@ -150,6 +206,31 @@ _tt_login_form_variant() {
   echo ""
 }
 
+# _tt_ready_js <ready> — the JavaScript boolean expression tt_login waits on.
+#
+# A <ready> that starts with `.mx-name-` is a WIDGET, matched by selector; anything
+# else is landing TEXT, matched case-sensitively anywhere in the body, as it always
+# was.
+#
+# WHY A WIDGET FORM EXISTS. On 2026-09-21 (model 5124c78e) the HR stage tiles were
+# retitled from "WEEKLY TO PROCESS" to "Weekly to process". Nothing else about the
+# dashboard changed, and every HR login in the suite failed on the caption alone --
+# proven on cloud dev by the 2026-09-27 password-verify run ("signed in via
+# Core.Login but never reached a dashboard showing 'WEEKLY TO PROCESS'"). A widget
+# name is the contract the model owns; a caption is copy. TT_HR_READY
+# (lib/_login_core.sh) is the HR landing marker, and the next caption edit cannot
+# break it.
+#
+# `.mx-name-` rather than a `css:` prefix on purpose: some callers pack
+# user:ready:role into one colon-separated string, and no landing text starts with
+# a dot. Must not contain a single quote.
+_tt_ready_js() {
+  case "$1" in
+    .mx-name-*) printf "!!document.querySelector('%s')" "$1" ;;
+    *)          printf "(document.body ? document.body.innerText.indexOf('%s') >= 0 : false)" "$1" ;;
+  esac
+}
+
 # _tt_login_submit <variant> <user> <pass> <ready>
 # Fill and submit the form on screen, then wait for the outcome. Exit codes:
 #   0 signed in and the dashboard shows <ready>
@@ -175,7 +256,7 @@ _tt_login_submit() {
   fi
 
   for _ in $(seq 1 60); do
-    if playwright-cli eval "() => String(location.pathname.indexOf('index.html') >= 0 && document.body.innerText.indexOf('$ready') >= 0)" 2>/dev/null | grep -qiw true; then
+    if [ "$(playwright-cli eval "() => String(location.pathname.indexOf('index.html') >= 0 && $(_tt_ready_js "$ready"))" 2>/dev/null | _tt_eval_str)" = "true" ]; then
       return 0
     fi
     # Core.Force_PasswordReset: "In order to proceed with the Titan Timesheet

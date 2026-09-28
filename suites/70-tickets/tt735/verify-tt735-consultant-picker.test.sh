@@ -50,7 +50,7 @@ set -euo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 
 # Main.CreateTimesheet is reachable from the navigation ("Create Timesheet"), and its
 # allowedRoles are [Main.HR], so this is the account that can open it.

@@ -94,7 +94,7 @@ seed_login() {
 
     # Identity + landing text in ONE eval — see the COST note on pw().
     for j in $(seq 1 12); do
-      r="$(pw "() => { let n=''; try{ n=mx.session.userObject.jsonData.attributes.Name.value; }catch(e){} if(n==='$user' && document.body.innerText.indexOf('$ready')>=0) return 'READY'; if(/Invalid Credentials|is incorrect/i.test(document.body.innerText||'')) return 'BADCREDS'; return n||'-'; }")"
+      r="$(pw "() => { let n=''; try{ n=mx.session.userObject.jsonData.attributes.Name.value; }catch(e){} if(n==='$user' && $(_tt_ready_js "$ready")) return 'READY'; if(/Invalid Credentials|is incorrect/i.test(document.body.innerText||'')) return 'BADCREDS'; return n||'-'; }")"
       case "$r" in
         READY)    return 0 ;;
         BADCREDS) seed_log "  login: '$user' rejected — wrong password for this environment"; return 1 ;;
@@ -275,6 +275,13 @@ seed_kpis() {
 
 seed_click_tab() {
   local i
+  # An HR stage tab is clicked by WIDGET (lib/_login_waits.sh): its caption changed
+  # case on 2026-09-21 and the exact-text match below stopped finding it. Anything
+  # that is not an HR tab keeps the caption match.
+  if [ -n "$(_tt_hr_tab_names "$1")" ]; then
+    tt_hr_try_click_tab "$1" || return 1
+    sleep 3; return 0
+  fi
   for i in 1 2 3; do
     [ "$(pw "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$1' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'Y'; } return 'N'; }")" = "Y" ] && { sleep 4; return 0; }
     sleep 2

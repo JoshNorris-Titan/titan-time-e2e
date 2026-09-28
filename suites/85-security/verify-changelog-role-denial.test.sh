@@ -87,7 +87,7 @@ control_user=""
 control_rows=0
 tried=""
 
-for candidate in "e2e_hr:WEEKLY TO PROCESS:HR" "e2e_tm:Add Customer:TitanManager"; do
+for candidate in "e2e_hr:$TT_HR_READY:HR" "e2e_tm:Add Customer:TitanManager"; do
   user="${candidate%%:*}"
   rest="${candidate#*:}"
   land="${rest%:*}"

@@ -129,7 +129,7 @@ check_role() {
 
 check_role "e2e_consultant" "My Timesheets"               "Consultant"
 check_role "e2e_pm"         "Project Manager Dashboard"   "ProjectManager"
-check_role "e2e_hr"         "WEEKLY TO PROCESS"           "HR"
+check_role "e2e_hr"         "$TT_HR_READY"           "HR"
 check_role "e2e_tm"         "Add Customer"                "TitanManager"
 
 # The administrator is checked LAST and separately. It is the account most likely

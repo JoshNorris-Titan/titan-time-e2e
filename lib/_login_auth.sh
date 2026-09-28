@@ -56,7 +56,7 @@ _tt_auth_try() {
   # the session actually belongs to as well, the same way lib/_seed.sh does.
   local r
   for i in $(seq 1 10); do
-    r="$(playwright-cli eval "() => { let n=''; try { n = mx.session.userObject.jsonData.attributes.Name.value; } catch (e) {} const landed = document.body ? document.body.innerText.indexOf('$ready') >= 0 : false; if (n && n !== '$user') return 'WHO:' + n; return String(n === '$user' && landed); }" 2>/dev/null | _tt_eval_str)"
+    r="$(playwright-cli eval "() => { let n=''; try { n = mx.session.userObject.jsonData.attributes.Name.value; } catch (e) {} const landed = $(_tt_ready_js "$ready"); if (n && n !== '$user') return 'WHO:' + n; return String(n === '$user' && landed); }" 2>/dev/null | _tt_eval_str)"
     case "$r" in
       true)   return 0 ;;
       WHO:*)  echo "  (cached session belonged to ${r#WHO:}, not $user - logging in properly)" >&2

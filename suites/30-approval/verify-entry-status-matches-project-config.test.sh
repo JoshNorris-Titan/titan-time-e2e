@@ -60,7 +60,7 @@ count_where() {
   tt_authz_count "//Main.AssignmentEntry[$OWNED][Status='$1']$2"
 }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 note "session roles: $(tt_authz_roles)"
 
 PROJ="Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Project/Main.Project"

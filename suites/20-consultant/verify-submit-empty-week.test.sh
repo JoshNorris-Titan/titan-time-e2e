@@ -83,7 +83,7 @@ case "$STATUS" in
 esac
 
 # ------------------------------------------------------- C/D. where did the entries go
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 OWNED="Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName = '$CNAME'"
 TOPROCESS="$(tt_authz_count "//Main.AssignmentEntry[$OWNED][Status='ToProcess']")"
 AWAIT_M="$(tt_authz_count "//Main.AssignmentEntry[$OWNED][Status='AwaitingManagerApproval']")"

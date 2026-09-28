@@ -72,7 +72,7 @@ first_guid() {
 }
 
 # ------------------------------------------------------- control, as an entitled user
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 note "control session roles: $(tt_authz_roles)"
 
 GUID="$(first_guid "$PENDING")"
@@ -117,7 +117,7 @@ case "$REJECT" in
 esac
 
 # ------------------------------------------------- E. the only assertion that proves it
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 AFTER="$(tt_authz_readback "$PENDING" 'Status')"
 case "$AFTER" in
   ERR:*) bad "E: could not read the entry back after the attempt ($AFTER), so this step cannot say whether anything moved" ;;

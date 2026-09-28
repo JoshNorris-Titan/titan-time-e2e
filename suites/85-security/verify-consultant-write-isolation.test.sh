@@ -62,7 +62,7 @@ MY_ENT="$(ent_of "$MINE")"
 THEIR_ENT="$(ent_of "$THEIRS")"
 
 # ------------------------------------------------- control reads, as an entitled user
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 THEIR_MON_BEFORE="$(tt_authz_readback "$THEIR_ENT" 'Monday')"
 MY_STATUS_BEFORE="$(tt_authz_readback "$MY_ENT" 'Status')"
 case "$THEIR_MON_BEFORE" in
@@ -102,7 +102,7 @@ case "$W" in
   *)     bad "C: '$ME' wrote Monday=23 on an entry belonging to '$THEIRS' and the call returned [$W]" ;;
 esac
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 THEIR_MON_AFTER="$(tt_authz_readback "$THEIR_ENT" 'Monday')"
 if [ "$THEIR_MON_AFTER" = "$THEIR_MON_BEFORE" ]; then
   note "D ok: $THEIRS Monday is still $THEIR_MON_AFTER"
@@ -121,7 +121,7 @@ case "$S" in
   *)     bad "E: '$ME' set their own entry Status and the call returned [$S]" ;;
 esac
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 MY_STATUS_AFTER="$(tt_authz_readback "$MY_ENT" 'Status')"
 if [ "$MY_STATUS_AFTER" = "$MY_STATUS_BEFORE" ]; then
   note "F ok: $MINE Status is still $MY_STATUS_AFTER"

@@ -84,14 +84,14 @@ REJECT_COMMENT="E2E automated post-export reject - hours returned to the assignm
 # and the run would have blamed "no tab exposes the button" instead of the caption.
 hre_open_reject_tab() {
   local lbl labels
-  tt_login "e2e_hr" "WEEKLY TO PROCESS"
+  tt_login "e2e_hr" "$TT_HR_READY"
   if [ "$(hre_has_reject_button)" = "true" ]; then echo "(landing tab)"; return 0; fi
   labels="$(tt683_tab_labels)"
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    tt_try_click_text "$lbl" || { IFS='|'; continue; }
+    tt_hr_try_click_tab "$lbl" || { IFS='|'; continue; }
     sleep 2
     if [ "$(hre_has_reject_button)" = "true" ]; then echo "$lbl"; return 0; fi
     IFS='|'
