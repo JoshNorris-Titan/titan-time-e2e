@@ -45,12 +45,12 @@ else
   echo "        environment; it only means this check cannot show you a sample."
 fi
 
-# The sort matters: the grid pages at 20, and without a newest-first order a fresh
+# The sort matters: the list shows 20 rows, and without a newest-first order a fresh
 # message can land on a page no read would ever look at.
 sorted="$(_tt_mail_sort_newest)"
 case "$sorted" in
-  desc) echo "  sorted newest-first: yes" ;;
-  nocol) echo "  WARNING: no 'Sent Date' column found — new mail may not be on page one" ;;
+  desc)  echo "  sorted newest-first: yes" ;;
+  NOHDR) echo "  WARNING: no Sent header (.mx-name-hdrSent) found — new mail may not be on page one" ;;
   *)     echo "  WARNING: could not sort newest-first (state: $sorted) — new mail may not be on page one" ;;
 esac
 

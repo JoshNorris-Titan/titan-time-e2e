@@ -41,9 +41,13 @@ catcher, which cleared the whole inbox on every prepare.
 Two consequences, worth knowing rather than discovering:
 
 - Two byte-for-byte identical mails collapse into one new row.
-- Only rows the grid renders are visible. It pages at 20, so the helpers sort
+- Only rows the list renders are visible. It shows 20 (then "Load more"), and since
+  2026-09-28 it returns at most the first 200, so the helpers keep it sorted
   newest-first; if that sort ever fails they say so rather than quietly reading
-  nothing.
+  nothing. A message that is still queued has no Sent date and sorts to the far end,
+  which is why `tt_mail_find` searches by recipient instead of reading page one.
+- The page's search box does not refresh the list by itself; the helpers click the
+  Sent header to make a search take effect (see `lib/_login_mail.sh`).
 
 ## What it costs
 

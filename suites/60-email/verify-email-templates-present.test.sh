@@ -503,7 +503,9 @@ echo "  sent $sent_count of 12 types through the Email Tester"
 #
 # Core.EmailsSent_Overview gained a recipient filter for this on 2026-08-28, so
 # the question can now be asked directly, per address, via tt_mail_find. Sort
-# order and page size stop mattering entirely.
+# order and page size stop mattering entirely. (Since 2026-09-28 that filter is the
+# list's "Recipient or subject" search box, .mx-name-fltSearch, which also matches
+# subjects; tt_mail_find counts only rows whose recipient IS the address.)
 #
 # THE ROW EXISTS IMMEDIATELY. SUB_SendEmail_Template commits the message before
 # it returns, so there is nothing to wait for the queue to do - which is why this
@@ -660,12 +662,13 @@ fi
 if [ -n "$nofilter" ]; then
   fail=1
   echo "FAIL: verify-email-templates-present - the Emails Sent page has no recipient filter"
-  echo "      (.mx-name-filterEmailsSentTo). This step needs it to ask whether a message"
+  echo "      (.mx-name-fltSearch). This step needs it to ask whether a message"
   echo "      exists for a given address; without it the only alternative is reading page"
   echo "      one of a grid sorted by SentDate, which is empty for every message that has"
   echo "      not been DELIVERED - i.e. for exactly the ones this step creates."
-  echo "      The filter was added to Core.EmailsSent_Overview on 2026-08-28, so this"
-  echo "      environment is running a build from before that. Redeploy it and run again."
+  echo "      The search box arrived with the list rebuild of 2026-09-28 (before it, a"
+  echo "      recipient filter since 2026-08-28), so this environment is running a build"
+  echo "      the suite does not know, or the box was renamed. Check the page."
   echo "      NOTHING is being claimed about the template rows either way - the per-type"
   echo "      result is suppressed above precisely so this cannot be misread as twelve"
   echo "      missing templates."

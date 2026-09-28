@@ -46,7 +46,13 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 tt_mail_prepare || tt_fail "could not open the Emails Sent admin page, so no message could be read"
 
 # ------------------------------------------------------------------ A. find a message
-MAIL="$(tt_mail_find "$ADDR" 2>/dev/null)"
+# tt_mail_find_message, not tt_mail_find. Until 2026-09-28 this read tt_mail_find,
+# which prints only "FOUND|<status>|<error>" (or NONE) and never the message, so MAIL
+# was never empty, B and C searched a status line for placeholders, and D measured
+# the length of the word FOUND: all four assertions passed whatever the mail said.
+# tt_mail_find_message returns the newest message addressed to exactly $ADDR -
+# subject, plain body and HTML content - and nothing at all when there is none.
+MAIL="$(tt_mail_find_message "$ADDR")"
 if [ -z "$MAIL" ]; then
   tt_fail "no message was found for '$ADDR', so this step has nothing to inspect and no verdict to give. suites/30-approval and 60-email cause messages to that address; run the suite in order, or point TT_MERGE_ADDR at an address that has one."
 fi
