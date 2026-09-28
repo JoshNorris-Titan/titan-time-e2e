@@ -25,6 +25,16 @@
 #      zero and the total across the HR dashboard's stage counters is unchanged.
 #      Leaving one queue is not the same as reaching the next, and a rollback or a
 #      delete would satisfy B on its own.
+#   D. The Pending Approval card leaves the page WITHOUT a reload. Until 2026-09-28
+#      the queue emptied but the card stayed — heading, Approve All and an empty
+#      list — until the page was reloaded: its visibility reads a count that only
+#      the page load computed. B cannot see that, because it reloads between
+#      re-counts, and tt_pm_pending_rows reports an empty-but-present gallery as 0
+#      just as it does an absent one. So D is read BEFORE any reload, from the two
+#      named widgets inside the card: the card is gone when neither
+#      galPMPendingEntries nor btnPMApproveAll is on the page. (The card container
+#      itself has an auto-generated name, which this suite must not select on.)
+#      D is reported last, so a failure there does not hide what B and C found.
 #
 # Consumes every entry awaiting e2e_pm's approval.
 set -uo pipefail
@@ -80,7 +90,21 @@ tt_login "$PM" "Project Manager Dashboard"
 playwright-cli click ".mx-name-btnPMApproveAll" >/dev/null 2>&1
 tt_clear_dialogs 8 "Approve" \
   || tt_fail "the Approve All confirmation was not dismissed: ${TT_DIALOG_BLOCKED:-unknown dialog}"
-sleep 5
+
+# D is read here, before the first reload below can hide the answer. Polled in the
+# page: the card should go as soon as the approval's response is applied.
+cleared_in_place="$(playwright-cli eval "() => new Promise(res => {
+  const deadline = Date.now() + 20000;
+  const tick = () => {
+    const up = (document.body.innerText || '').indexOf('$TT_PM_DASH_ANCHOR') >= 0;
+    const card = document.querySelector('.mx-name-galPMPendingEntries') || document.querySelector('.mx-name-btnPMApproveAll');
+    if (up && !card) return res('gone');
+    if (Date.now() >= deadline) return res(up ? 'still-there' : 'ERR:dashboard-not-on-screen');
+    setTimeout(tick, 500);
+  };
+  tick();
+})" 2>/dev/null | _tt_eval_str)"
+echo "  card after Approve All, before any reload: $cleared_in_place"
 
 after=""
 for _ in $(seq 1 10); do
@@ -102,9 +126,19 @@ fi
 echo "  queue emptied: $before -> 0"
 
 # ------------------------------------------- C. they arrived, they did not vanish
+# pa_card_verdict — D, reported after B and C so a stuck card does not hide them.
+pa_card_verdict() {
+  case "$cleared_in_place" in
+    gone) ;;
+    still-there) tt_fail "Approve All emptied '$PM' queue, but the Pending Approval card (galPMPendingEntries / btnPMApproveAll) was still on the dashboard 20s later without a reload. Its visibility reads a count computed when the page loaded; the approval must make that count be recomputed." ;;
+    *) tt_fail "could not read whether the Pending Approval card left the page after Approve All (got [$cleared_in_place]) - the dashboard was not on screen, so this is NOT evidence either way" ;;
+  esac
+}
+
 case "$stages_before" in
   MISSING:*|NAN:*)
-    echo "PASS: verify-pm-approve-all - Approve All cleared all $before entr(ies) from '$PM' queue (stage totals were unreadable, so arrival was not checked)"
+    pa_card_verdict
+    echo "PASS: verify-pm-approve-all - Approve All cleared all $before entr(ies) from '$PM' queue and the card left the page without a reload (stage totals were unreadable, so arrival was not checked)"
     exit 0 ;;
 esac
 
@@ -126,4 +160,6 @@ if [ "$mgr_after" -ge "$mgr_before" ] && [ "$mgr_before" -gt 0 ]; then
   tt_fail "the manager-approval counter did not fall ($mgr_before -> $mgr_after) even though '$PM' queue emptied, so the entries did not leave that stage"
 fi
 
-echo "PASS: verify-pm-approve-all - cleared all $before entr(ies) from '$PM' queue; manager stage $mgr_before -> $mgr_after with no loss from the pipeline ($tot_before -> $tot_after)"
+pa_card_verdict
+
+echo "PASS: verify-pm-approve-all - cleared all $before entr(ies) from '$PM' queue and the card left the page without a reload; manager stage $mgr_before -> $mgr_after with no loss from the pipeline ($tot_before -> $tot_after)"
