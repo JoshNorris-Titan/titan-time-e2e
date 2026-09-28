@@ -186,6 +186,8 @@ FX_CUSTOMER="${FX_CUSTOMER:-Costco}"
 
 FX_CREATED=0
 FX_PRESENT=0
+FX_LAST_ASSIGNMENTS=""
+declare -A FX_CUSTOMER_OF=()
 FX_MISSING=""
 FX_DRIFT=""
 
@@ -330,14 +332,27 @@ fx_create_project() {
   local name="$1" mgr="$2" cust="$3" li="$4" email="${5:-$FX_APPROVER_EMAIL}" i ok=""
 
   fx_log "creating project '$name' (manager=$mgr customer=$cust lineItems=$li approver=$email)"
-  playwright-cli click ".mx-name-btnAddProject" >/dev/null 2>&1
+
+  # btnAddProject IS NO LONGER UNIQUE. Since the model's "New Project from the
+  # assignment popup" work (Assignment_NewEdit renamed its New Project button to
+  # btnAddProject), the same name exists on the dashboard AND inside the assignment
+  # popup, which opens a different form (Assignment_NewProject) that also has a
+  # txtProjectName. So a bare `playwright-cli click .mx-name-btnAddProject` with any
+  # popup up is a strict-mode miss ("Add Project popup did not open"), and a
+  # txtProjectName check alone cannot tell the two forms apart. Hence: close
+  # popups, click the button that is NOT inside a dialog, and require the
+  # dashboard's form - Project_NewEdit, whose save is btnSave, where
+  # Assignment_NewProject's is btnNewProjectSave. Re-clicks while the form is
+  # absent, the same swallowed-click lesson as fx_view.
+  fx_close_modals || fx_log "note    a popup is still open before Add Project"
+  local d r
+  d="$(_tt_dialog_js)"
   for i in 1 2 3 4 5 6 7 8; do
-    if playwright-cli eval "() => String(!!document.querySelector('.mx-name-txtProjectName'))" 2>/dev/null | grep -qiw true; then
-      ok=1; break
-    fi
+    r="$(playwright-cli eval "() => { if (document.querySelector('.mx-name-txtProjectName') && !document.querySelector('.mx-name-btnNewProjectSave')) return 'OPEN'; if (document.querySelector('.mx-name-btnNewProjectSave')) return 'WRONGFORM'; if ($d) return 'DIALOG'; const b=[...document.querySelectorAll('.mx-name-btnAddProject')].find(e=>!e.closest('.modal-dialog, .mx-window, .modal-content, [role=dialog]')); if (!b) return 'NOBUTTON'; b.click(); return 'CLICKED'; }" 2>/dev/null | _tt_eval_str)"
+    [ "$r" = "OPEN" ] && { ok=1; break; }
     sleep 1
   done
-  [ -n "$ok" ] || tt_fail "fixtures: Add Project popup did not open (txtProjectName never appeared)"
+  [ -n "$ok" ] || tt_fail "fixtures: Add Project popup did not open (Project_NewEdit's txtProjectName never appeared; last: ${r:-unreadable})"
 
   tt_fill ".mx-name-txtProjectName input" "$name"
 
@@ -361,6 +376,10 @@ fx_create_project() {
   fx_view "cardProjects" "galProjects"
   fx_exists "txtProjectSearch" "galProjects" "$name" \
     || tt_fail "fixtures: created project '$name' but it is not in the list afterwards — the save was rejected"
+  # This step just picked its customer, so fx_ensure_assignments need not read it
+  # back off the projects gallery (~18s a lookup on dev). A wrong customer would
+  # still surface there: cbProject would not offer the project under it.
+  FX_CUSTOMER_OF[$name]="$FX_CUSTOMER"
   fx_log "created '$name'"
 }
 
@@ -556,8 +575,11 @@ fx_create_assignment() {
   sleep 4
   tt_clear_dialogs 4 >/dev/null 2>&1 || true
 
-  # Prove it landed rather than trusting the click.
-  case "$(fx_consultant_assignments "$consultant")" in
+  # Prove it landed rather than trusting the click. The read is kept in
+  # FX_LAST_ASSIGNMENTS so fx_ensure_assignments can reuse it for the consultant's
+  # next rows instead of opening the same popup again straight away.
+  FX_LAST_ASSIGNMENTS="$(fx_consultant_assignments "$consultant")"
+  case "$FX_LAST_ASSIGNMENTS" in
     *"$project"*) fx_log "created '$consultant' -> '$project'" ;;
     *) tt_fail "fixtures: saved assignment '$consultant' -> '$project' but it is not on the consultant afterwards — the save was rejected" ;;
   esac
@@ -603,7 +625,17 @@ fx_ensure_assignments() {
     # A customer we cannot read is a REPORTED gap, not a reason to abort the run:
     # the remaining rows still have something useful to say, and the STILL MISSING
     # list is the artefact this step exists to produce.
-    customer="$(fx_project_customer "$project")"
+    # Cached per project for the run: FX_ASSIGNMENTS names the same project more
+    # than once, and nothing in this step changes which customer owns it. Only a
+    # plain customer name is cached; every discriminated failure is re-asked.
+    customer="${FX_CUSTOMER_OF[$project]:-}"
+    if [ -z "$customer" ]; then
+      customer="$(fx_project_customer "$project")"
+      case "$customer" in
+        ""|NOPROJECT|NOCUSTOMER|NOSTATUS|ARCHIVED:*) ;;
+        *) FX_CUSTOMER_OF[$project]="$customer" ;;
+      esac
+    fi
     why=""
     case "$customer" in
       NOPROJECT)  why="project '$project' is not in the projects list" ;;
@@ -620,7 +652,13 @@ fx_ensure_assignments() {
 
     fx_create_assignment "$consultant" "$project" "$hours" "$customer"
     FX_CREATED=$((FX_CREATED+1))
-    have="$(fx_consultant_assignments "$consultant")"   # refresh for later rows
+    # Refresh for later rows from the read-back fx_create_assignment just made
+    # (it fails the step unless that read showed the new project, so it is a
+    # complete, current list). This used to open the consultant popup a SECOND
+    # time for the identical answer: ~30s per created assignment, measured on dev
+    # 2026-09-28, when six assignments alone took 1090s of this step's 1200s
+    # budget and the five projects the next run must also rebuild did not fit.
+    have="$FX_LAST_ASSIGNMENTS"
   done
 }
 
