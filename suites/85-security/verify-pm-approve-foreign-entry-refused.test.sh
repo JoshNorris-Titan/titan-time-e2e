@@ -61,7 +61,7 @@ first_guid() {
 }
 
 # ------------------------------------------------------------------- B. the control
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 GUID="$(first_guid "$TARGET")"
 case "$GUID" in
   ERR:*) tt_fail "the control could not look for an entry awaiting '$OWNER_PM' ($GUID)" ;;
@@ -103,7 +103,7 @@ case "$A2" in
 esac
 
 # ------------------------------------------------------------------ E. did it move?
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 AFTER="$(tt_authz_readback "$TARGET" 'Status')"
 case "$AFTER" in
   ERR:notfound) bad "E: the entry is no longer awaiting '$OWNER_PM' - it left that status while only '$OTHER_PM' acted on it" ;;

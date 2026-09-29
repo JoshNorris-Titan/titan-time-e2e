@@ -72,8 +72,8 @@ TOKEN_DRAIN_MAX="${TOKEN_DRAIN_MAX:-10}"
 # --------------------------------------------------------- 1. get a live token
 tt_mail_prepare
 TS=$(date +%s%3N)
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
-tt_click_text "CLIENT APPROVAL"
+tt_login "e2e_hr" "$TT_HR_READY"
+tt_hr_click_tab "Client approval"
 sleep 2
 
 if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
@@ -88,8 +88,8 @@ else
   # the admin's page. verify-customer-token-approve documents this at length.
   tt_mail_prepare
   TS=$(date +%s%3N)
-  tt_login "e2e_hr" "WEEKLY TO PROCESS"
-  tt_click_text "CLIENT APPROVAL"
+  tt_login "e2e_hr" "$TT_HR_READY"
+  tt_hr_click_tab "Client approval"
   sleep 2
   WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
     || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"

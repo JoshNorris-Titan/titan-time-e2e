@@ -47,7 +47,7 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 ENTITIES="Main.Timesheet Main.AssignmentEntry Main.Customer Main.Project Main.Assignment Main.LineItem Main.AttachmentDocument"
 
 # ---------------------------------------------------------- controls, as an entitled user
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 note "control session roles: $(tt_authz_roles)"
 CONTROLS=""
 for e in $ENTITIES; do

@@ -90,7 +90,7 @@ for U in $CONSULTANTS; do
 done
 IFS="$OLD"
 
-if seed_login_role "e2e_hr" "WEEKLY TO PROCESS"; then
+if seed_login_role "e2e_hr" "$TT_HR_READY"; then
   echo "  hr 'e2e_hr': OK  (session=$(seed_whoami))"
   HR_OK=1
 else
@@ -146,7 +146,7 @@ IFS="$OLD"
 # ------------------------------------------------------------------ 6. HR dashboard
 echo
 echo "[5] HR dashboard"
-if [ "${HR_OK:-0}" = "1" ] && seed_login_role "e2e_hr" "WEEKLY TO PROCESS"; then
+if [ "${HR_OK:-0}" = "1" ] && seed_login_role "e2e_hr" "$TT_HR_READY"; then
   sleep 2
   echo "  KPIs (pending manager client process invoice sent): $(seed_kpis)"
   for TAB in "MANAGER APPROVAL" "CLIENT APPROVAL" "WEEKLY TO PROCESS" "MONTHLY TO BE INVOICED" "SENT"; do

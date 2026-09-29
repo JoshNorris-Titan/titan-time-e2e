@@ -80,6 +80,8 @@ pw() { playwright-cli eval "$1" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e '
 # test and wrong for a long seeder: one unclickable tab must not throw away an
 # hour of submitted work. Returns 1 instead.
 click_text_soft() {
+  # HR stage tabs by widget (lib/_login_waits.sh): the captions changed case 2026-09-21.
+  if [ -n "$(_tt_hr_tab_names "$1")" ]; then tt_hr_try_click_tab "$1" || return 1; sleep 2; return 0; fi
   [ "$(pw "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$1' && getComputedStyle(e).cursor==='pointer'); if (el) { el.click(); return 'Y'; } return 'N'; }")" = "Y" ] || return 1
   sleep 2
 }
@@ -468,7 +470,7 @@ approve_owned_on_week() {
 # already have walked past.
 hr_approve_round() {
   local total=0 tab weeks w got OLD
-  tt_login "e2e_hr" "WEEKLY TO PROCESS" >&2
+  tt_login "e2e_hr" "$TT_HR_READY" >&2
 
   OLD="$IFS"; IFS='|'
   for tab in $TABS; do
@@ -501,7 +503,7 @@ hr_approve_round() {
 # trusting the submit/approve tallies.
 count_toprocess() {
   local weeks w total=0 n OLD
-  tt_login "e2e_hr" "WEEKLY TO PROCESS" >&2
+  tt_login "e2e_hr" "$TT_HR_READY" >&2
   wait_sel ".mx-name-cardKpiProcess" 10 || true
   log "    KPIs: pending=$(kpi cardKpiPending) manager=$(kpi cardKpiManager) client=$(kpi cardKpiCustomer) toprocess=$(kpi cardKpiProcess) invoice=$(kpi cardKpiInvoice) sent=$(kpi cardKpiSent)"
   click_text_soft "WEEKLY TO PROCESS" || true

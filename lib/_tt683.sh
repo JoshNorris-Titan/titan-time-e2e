@@ -45,8 +45,14 @@
 # hardcoded. The tab strip was not part of the widget-naming pass (see
 # lib/_tt647.sh) and the awaiting-export tab's label lives in
 # Main.HRDashboardTab/TabLabel as DATA, so it cannot be read out of the model.
+#
+# NO LONGER DISCOVERED (2026-09-28). The discovery kept only ALL-CAPS captions,
+# and model 5124c78e (2026-09-21) retitled the six stage tiles to sentence case, so
+# it returned nothing and every walk below it gave up having tried no tab at all.
+# The tiles are now named widgets (cardKpi*), clicked through tt_hr_try_click_tab,
+# which accepts these captions in any case - so the list is simply the six tabs.
 tt683_tab_labels() {
-  playwright-cli eval "() => { const s=new Set([...document.querySelectorAll('h4,h5,div,span,a,li')].filter(e=>e.childElementCount===0 && getComputedStyle(e).cursor==='pointer').map(e=>(e.innerText||'').trim()).filter(t=>t.length>2 && t.length<40 && t===t.toUpperCase())); return [...s].join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^\"//' -e 's/\"$//'
+  echo "Pending|Manager approval|Client approval|Weekly to process|Monthly to be invoiced|Sent"
 }
 
 # MATCH THE WIDGET NAME, NOT THE CAPTION. The control on MONTHLY TO BE INVOICED
@@ -64,7 +70,7 @@ tt683_has_export_button() {
 # "Export All" button. Prints the tab label.
 tt683_open_export_tab() {
   local lbl labels
-  tt_login "e2e_hr" "WEEKLY TO PROCESS"
+  tt_login "e2e_hr" "$TT_HR_READY"
   if tt683_has_export_button; then echo "(landing tab)"; return 0; fi
   labels="$(tt683_tab_labels)"
   local IFS='|'
@@ -75,7 +81,7 @@ tt683_open_export_tab() {
     # when a caption is missing, and 2>/dev/null on it hid the reason — one tab
     # caption this dashboard happened not to render would kill the run here rather
     # than let the walk try the next tab, and kill it printing nothing at all.
-    tt_try_click_text "$lbl" || { IFS='|'; continue; }
+    tt_hr_try_click_tab "$lbl" || { IFS='|'; continue; }
     sleep 2
     if tt683_has_export_button; then echo "$lbl"; return 0; fi
     IFS='|'
@@ -216,7 +222,7 @@ tt683_zip_button_caption() {
 # verify-tt683-a0 drives these. They are here rather than in the test so a1/a2
 # can top up their own preconditions if they are ever run standalone.
 
-TT683_TAB_TOPROCESS="WEEKLY TO PROCESS"
+TT683_TAB_TOPROCESS="Weekly to process"
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +561,7 @@ _tt683_week_pairings() {
 tt683_process_all_toprocess() {
   local max="${1:-6}" scope="${2:-tab}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have
   tt_login "e2e_hr" "$TT683_TAB_TOPROCESS"
-  tt_click_text "$TT683_TAB_TOPROCESS" "HR To Process tab"
+  tt_hr_click_tab "$TT683_TAB_TOPROCESS" "HR To Process tab"
   tt_wait_for "$TT_HR_GAL_WEEKS" "To Process available-weeks list"
 
   labels="$(tt683_toprocess_weeks)"

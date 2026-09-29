@@ -60,6 +60,7 @@ _tt647.sh:TT647_TAB_MANAGER
 _tt647.sh:TT647_TAB_CLIENT
 _login.sh:TT_BASE
 _login.sh:TT_DIALOG_SEL
+_login.sh:TT_HR_READY
 _login.sh:TT_HR_GAL_MONTHS
 _login.sh:TT_HR_GAL_INVOICE
 _login.sh:TT_HR_BTN_INVOICE_VIEW

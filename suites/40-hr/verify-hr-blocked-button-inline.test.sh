@@ -55,8 +55,8 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
 count_sel() { playwright-cli eval "() => String(document.querySelectorAll('$1').length)" 2>/dev/null | _tt_eval_str; }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
-tt_click_text "CLIENT APPROVAL"
+tt_login "e2e_hr" "$TT_HR_READY"
+tt_hr_click_tab "Client approval"
 sleep 3
 
 # --------------------------------------------------------- A. a gated card to measure
@@ -73,7 +73,7 @@ if [ "${GATED:-0}" -eq 0 ]; then
   tt_hr_remind_e2e_entry "$CONSULTANT" "$PROJECT" >/dev/null || \
     note "note: no remindable card matched; measuring whatever the tab shows"
   sleep 3
-  tt_click_text "CLIENT APPROVAL"
+  tt_hr_click_tab "Client approval"
   sleep 3
   GATED="$(count_sel "$TT_HR_BTN_REMIND_BLOCKED")"
 fi

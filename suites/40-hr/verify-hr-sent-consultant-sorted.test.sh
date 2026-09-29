@@ -15,10 +15,10 @@ set -euo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 
 # Switch to the Sent tab (auto-named control -> click by text).
-tt_click_text "SENT" "HR Sent tab"
+tt_hr_click_tab "Sent" "HR Sent tab"
 tt_wait_for ".mx-name-cbSentConsultant" "Sent tab consultant dropdown"
 
 # Open the consultant dropdown and assert ascending order.

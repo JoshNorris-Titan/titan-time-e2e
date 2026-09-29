@@ -10,8 +10,8 @@
 # header claimed to confirm. It could not have failed for the reason it existed.
 #
 # WHAT IT CHECKS NOW
-#   A. The tab captions are present - but only the ones the login did not already
-#      prove, so the assertion can fail.
+#   A. Each stage tile carries its own caption (all six: the login now waits on a
+#      widget, so it proves none of them).
 #   B. All six stage counters render, and render a number. Nothing checked this
 #      before, so a renamed or dropped card was invisible.
 #   C. They are not all zero. Main.DS_CalculateNumStatus derives every counter from
@@ -42,12 +42,42 @@ hd_kpi() {
   playwright-cli eval "() => { const e=document.querySelector('.mx-name-$1'); if(!e) return 'MISSING'; const m=(e.innerText||'').match(/(\\d+)\\s*\$/); return m ? m[1] : 'NAN'; }" 2>/dev/null | _tt_eval_str
 }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 
-# ---------------------------------------------------- A. captions the login did not prove
-# "WEEKLY TO PROCESS" is deliberately absent from this list: tt_login already waited
-# for it, so asserting it again would be free.
-tt_assert_all "HR dashboard stages" "PENDING" "MANAGER APPROVAL" "CLIENT APPROVAL"
+# ------------------------------------------------------------- A. the stage captions
+# Each stage tile must carry its own caption. The login waits on a WIDGET
+# (TT_HR_READY) since 2026-09-28, so it proves no caption at all and all six are
+# asserted here - each inside ITS OWN tile rather than anywhere on the page, which
+# the old body-wide check could not tell apart ("Sent" and "Pending" appear
+# elsewhere on this dashboard).
+#
+# The captions are sentence case since model 5124c78e (2026-09-21), which changed
+# them from "WEEKLY TO PROCESS" etc. That edit is what this step exists to notice:
+# the old upper-case captions are no longer on the page and the check fails on them.
+# Matched case-sensitively on purpose.
+HD_CAPTIONS="cardKpiPending:Pending
+cardKpiManager:Manager approval
+cardKpiCustomer:Client approval
+cardKpiProcess:Weekly to process
+cardKpiInvoice:Monthly to be invoiced
+cardKpiSent:Sent"
+
+# hd_caption <card> <caption> — OK, MISSING (no tile), or the tile's text when the
+# caption is not in it.
+hd_caption() {
+  playwright-cli eval "() => { const e=document.querySelector('.mx-name-$1'); if(!e) return 'MISSING'; const t=(e.innerText||'').replace(/\s+/g,' ').trim(); return t.indexOf('$2') >= 0 ? 'OK' : 'TEXT:'+t; }" 2>/dev/null | _tt_eval_str
+}
+
+badcap=""
+while IFS=: read -r card caption; do
+  r="$(hd_caption "$card" "$caption")"
+  [ "$r" = "OK" ] || badcap="$badcap
+      $card should read '$caption' but: $r"
+done <<< "$HD_CAPTIONS"
+if [ -n "$badcap" ]; then
+  echo "FAIL: verify-hr-dashboard-summary - stage caption(s) wrong or missing:$badcap"
+  exit 1
+fi
 
 # ------------------------------------------------------------ B. the counters render
 missing=""

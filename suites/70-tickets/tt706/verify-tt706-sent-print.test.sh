@@ -61,8 +61,8 @@ trap cleanup EXIT
 mkdir -p "$WORK"
 
 # ---------------------------------------------------------------- 1. the tab
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
-tt_click_text "$TAB" "HR '$TAB' tab"
+tt_login "e2e_hr" "$TT_HR_READY"
+tt_hr_click_tab "$TAB" "HR '$TAB' tab"
 tt_wait_for "$TT_HR_GAL_WEEKS" "'$TAB' available-weeks list"
 
 WEEKS="$(tt683_toprocess_weeks)"   # reads TT_HR_GAL_WEEKS, whichever tab is open

@@ -47,8 +47,8 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
 count_sel() { playwright-cli eval "() => String(document.querySelectorAll('$1').length)" 2>/dev/null | _tt_eval_str; }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
-tt_click_text "CLIENT APPROVAL"
+tt_login "e2e_hr" "$TT_HR_READY"
+tt_hr_click_tab "Client approval"
 sleep 3
 
 OPEN_BEFORE="$(count_sel "$TT_HR_BTN_REMIND")"
@@ -73,7 +73,7 @@ else
     note "note: no remindable card matched '$CONSULTANT' / '$PROJECT'; asserting on whatever the tab shows"
   fi
   sleep 3
-  tt_click_text "CLIENT APPROVAL"
+  tt_hr_click_tab "Client approval"
   sleep 3
 fi
 

@@ -736,7 +736,7 @@ fi
 
 if [ "${SEED_SKIP_HR:-0}" != "1" ] && [ "$PROVE" != "1" ]; then
   log "=== HR stages ==="
-  if seed_login_role "e2e_hr" "WEEKLY TO PROCESS"; then
+  if seed_login_role "e2e_hr" "$TT_HR_READY"; then
     log "  KPIs before (pending manager client process invoice sent): $(seed_kpis)"
     # Depth order, and approve_mgr LAST: its output sits on CLIENT APPROVAL, the tab
     # entries were observed drifting off within ~10 minutes, so it is left as fresh as

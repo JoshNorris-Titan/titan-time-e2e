@@ -170,8 +170,8 @@ tt_hr_click_view_for() {
 # the "Review Timesheet Entry" popup with a comment.
 # (The inline btnReject is a dead control — must go through View -> popup.)
 tt_hr_reject_first() {
-  local who="$1" tab="${2:-MANAGER APPROVAL}" comment="${3:-E2E automated reject for TT-693 testing}"
-  tt_click_text "$tab"; sleep 3
+  local who="$1" tab="${2:-Manager approval}" comment="${3:-E2E automated reject for TT-693 testing}"
+  tt_hr_click_tab "$tab"; sleep 3
 
   local opened="" labels lbl
   # try the currently-shown week first, then every week in the picker
@@ -230,7 +230,7 @@ tt_hr_reject_first() {
 # status that way and its slice stopped three rows above the row it had submitted.
 tt_make_rejected_entry() {
   local cuser="$1" cname="$2" proj="$3"
-  local tabs="${4:-MANAGER APPROVAL|WEEKLY TO PROCESS|CLIENT APPROVAL}" wk
+  local tabs="${4:-Manager approval|Weekly to process|Client approval}" wk
   export TT_REJECTED_WEEK=""
 
   if [ "${TT_FORCE_NEW_REJECT:-0}" != "1" ]; then
@@ -362,8 +362,8 @@ tt_open_review_for_project() {
 tt_hr_reject_card_for_project() {
   local who="$1" proj="$2" tab="$3" comment="${4:-E2E automated reject for TT-693 testing}"
   local lbl labels opened="" card
-  tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
-  tt_try_click_text "$tab" || { echo "  (no '$tab' tab on the HR dashboard)"; return 1; }
+  tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
+  tt_hr_try_click_tab "$tab" || { echo "  (no '$tab' tab on the HR dashboard)"; return 1; }
   sleep 3
   labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
   local IFS='|'
@@ -416,7 +416,7 @@ tt_hr_reject_card_for_project() {
 # flags (lib/_fixtures.sh), so this never assumes one.
 tt_hr_reject_project() {
   local who="$1" proj="$2"
-  local tabs="${3:-MANAGER APPROVAL|WEEKLY TO PROCESS|CLIENT APPROVAL}"
+  local tabs="${3:-Manager approval|Weekly to process|Client approval}"
   local comment="${4:-E2E automated reject for TT-693 testing}"
   local tab attempt
   local IFS='|'
@@ -482,7 +482,7 @@ tt_make_rejected_lineitem_entry() {
   # 2) reject it. A NeedsLineItems project with no approval stage routes straight
   #    to ToProcess, so WEEKLY TO PROCESS leads here; the approval tabs stay in
   #    the list so this still works if the fixture is ever given an approval step.
-  tt_hr_reject_project "$cname" "$proj" "WEEKLY TO PROCESS|MANAGER APPROVAL|CLIENT APPROVAL" || {
+  tt_hr_reject_project "$cname" "$proj" "Weekly to process|Manager approval|Client approval" || {
     echo "  HR could not find a '$proj' card for '$cname' to reject on any tab"
     return 1
   }
@@ -594,8 +594,8 @@ tt692693_count_cards_here() {
 # blindness in the tt647_* helpers and added tt_gallery_load_all for it; these
 # helpers never adopted it. Do not add a new read of this gallery without it.
 tt_hr_count_cards_for() {
-  local who="$1" tab="${2:-MANAGER APPROVAL}" labels lbl total=0 n
-  tt_click_text "$tab" >/dev/null 2>&1; sleep 3
+  local who="$1" tab="${2:-Manager approval}" labels lbl total=0 n
+  tt_hr_click_tab "$tab" >/dev/null 2>&1; sleep 3
   tt692693_hr_tab_state "counting '$who' on '$tab'"
   labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
   labels="${labels%\"}"; labels="${labels#\"}"
@@ -644,7 +644,7 @@ tt_hr_count_cards_for() {
 tt_hr_count_cards_for_week() {
   local who="$1" tab="$2" week="$3" key sel
   key="$(tt_week_key "$week")"; [ -n "$key" ] || key="$week"
-  tt_click_text "$tab" >/dev/null 2>&1; sleep 3
+  tt_hr_click_tab "$tab" >/dev/null 2>&1; sleep 3
   tt692693_hr_tab_state "counting '$who' on '$tab' for week '$key'"
   sel="$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$key')===0); if(!el) return 'absent'; el.click(); return 'ok'; }" 2>/dev/null | sed -n '2p' | tr -d '"')"
   case "$sel" in

@@ -74,14 +74,14 @@ BTN='.mx-name-btnRejectAfterExport'
 # over candidate tabs.
 herg_open_reject_tab() {
   local lbl labels
-  tt_login "e2e_hr" "WEEKLY TO PROCESS"
+  tt_login "e2e_hr" "$TT_HR_READY"
   if [ "$(herg_has_button)" = "true" ]; then echo "(landing tab)"; return 0; fi
   labels="$(tt683_tab_labels)"
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    tt_try_click_text "$lbl" || { IFS='|'; continue; }
+    tt_hr_try_click_tab "$lbl" || { IFS='|'; continue; }
     sleep 2
     if [ "$(herg_has_button)" = "true" ]; then echo "$lbl"; return 0; fi
     IFS='|'

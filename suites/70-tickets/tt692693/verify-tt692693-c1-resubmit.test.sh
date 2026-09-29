@@ -80,7 +80,7 @@ case "$HIST" in
 esac
 
 # 5) it reached the Manager Approval queue
-tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
+tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
 INQ="$(tt_hr_count_cards_for "$CNAME" "MANAGER APPROVAL")"
 echo "'$CNAME' cards in MANAGER APPROVAL: $INQ"
 [ "${INQ:-0}" -ge 1 ] || tt_fail "C1: resubmitted entry did not appear in the Manager Approval queue"

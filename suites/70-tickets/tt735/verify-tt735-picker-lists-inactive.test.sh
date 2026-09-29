@@ -58,7 +58,7 @@ picker_options() {
   playwright-cli eval "() => { const w=document.querySelector('$CB'); if(!w) return '-1'; const sel=w.querySelector('select'); if(sel) return String([...sel.options].filter(o=>(o.value||'')!=='' && (o.text||'').trim()!=='').length); const items=w.querySelectorAll('[role=option], li'); return String(items.length); }" 2>/dev/null | _tt_eval_str
 }
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 sleep 2
 
 # The picker lives behind the create-on-behalf control; open it the way the

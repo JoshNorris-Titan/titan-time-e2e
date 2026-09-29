@@ -84,7 +84,7 @@ echo "consultant sees for $WEEK: ${HIST:-(week not found in history)}"
 # summed over every week the consultant has -- a leftover card from an earlier test's
 # week would otherwise satisfy "it reached the process queue" on its own. See
 # tt_hr_count_cards_for_week.
-tt_login "e2e_hr" "WEEKLY TO PROCESS" >/dev/null 2>&1
+tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
 INPROC="$(tt_hr_count_cards_for_week "$CNAME" "WEEKLY TO PROCESS" "$WEEK")"
 INMGR="$(tt_hr_count_cards_for_week "$CNAME" "MANAGER APPROVAL" "$WEEK")"
 echo "'$CNAME' in MANAGER APPROVAL=$INMGR  |  in WEEKLY TO PROCESS=$INPROC"

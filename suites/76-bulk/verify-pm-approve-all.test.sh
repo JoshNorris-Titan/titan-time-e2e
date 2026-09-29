@@ -67,7 +67,7 @@ echo "  '$PM' has $before entr(ies) awaiting approval"
   || tt_fail "no .mx-name-btnPMApproveAll on the PM dashboard"
 
 # --------------------------------- record the pipeline before, as administrator
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 stages_before="$(pa_stage_totals)"
 case "$stages_before" in
   MISSING:*|NAN:*) echo "  note: stage counters unreadable ($stages_before) - C will be skipped" ;;
@@ -108,7 +108,7 @@ case "$stages_before" in
     exit 0 ;;
 esac
 
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 stages_after="$(pa_stage_totals)"
 case "$stages_after" in
   MISSING:*|NAN:*) tt_fail "stage counters became unreadable after the approval ($stages_after)" ;;

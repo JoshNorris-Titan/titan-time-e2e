@@ -49,13 +49,13 @@ si_whoami() {
 # that already log in as them, not guessed. The list ends by revisiting the first
 # identity: that return trip is what exercises the cache rather than a fresh login.
 ROLES="e2e_consultant|My Timesheets
-e2e_hr|WEEKLY TO PROCESS
+e2e_hr|$TT_HR_READY
 e2e_pm|Project Manager Dashboard
 e2e_tm|Add Customer
 e2e_consultant|My Timesheets"
 
 # ------------------------------------------------- 0. the probe must work at all
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 probe="$(si_whoami)"
 if [ -z "$probe" ]; then
   tt_fail "the session-identity probe returned nothing, so this step cannot tell who it is logged in as. Every assertion below would pass vacuously; refusing to report a result."

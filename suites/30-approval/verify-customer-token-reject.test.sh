@@ -58,8 +58,8 @@ case "$BEFORE" in ''|*[!0-9]*) tt_fail "could not read the consultant's rejected
 echo "rejected entries before: $BEFORE"
 
 # --------------------------------------------------------- 1. get a pending entry
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
-tt_click_text "CLIENT APPROVAL"
+tt_login "e2e_hr" "$TT_HR_READY"
+tt_hr_click_tab "Client approval"
 sleep 2
 
 TS=$(date +%s%3N)
@@ -81,8 +81,8 @@ else
   # above already has this order.
   tt_mail_prepare
   TS=$(date +%s%3N)
-  tt_login "e2e_hr" "WEEKLY TO PROCESS"
-  tt_click_text "CLIENT APPROVAL"
+  tt_login "e2e_hr" "$TT_HR_READY"
+  tt_hr_click_tab "Client approval"
   sleep 2
   WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
     || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"

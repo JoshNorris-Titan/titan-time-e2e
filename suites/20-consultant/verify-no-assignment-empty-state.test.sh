@@ -46,7 +46,7 @@ present() { playwright-cli eval "() => String(!!document.querySelector('.mx-name
 count_of() { playwright-cli eval "() => String(document.querySelectorAll('$1').length)" 2>/dev/null | _tt_eval_str; }
 
 # -------------------------------------------------------------- A. really no assignments
-tt_login "e2e_hr" "WEEKLY TO PROCESS"
+tt_login "e2e_hr" "$TT_HR_READY"
 NA="$(tt_authz_count "//Main.Assignment[ConsultantName = '$CNAME']")"
 case "$NA" in
   ERR:*)       note "A: could not confirm through the data layer ($NA); relying on the fixture contract that '$CNAME' has no assignments" ;;

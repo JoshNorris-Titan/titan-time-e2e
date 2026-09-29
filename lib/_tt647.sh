@@ -48,10 +48,10 @@ tt647_session_fullname() {
   playwright-cli eval "() => { try { const a = mx.session.userObject.jsonData.attributes; return (a.FullName && a.FullName.value) || (a.Email && a.Email.value) || ''; } catch (e) { return ''; } }" 2>/dev/null | _tt_eval_str
 }
 
-TT647_TAB_TOPROCESS="WEEKLY TO PROCESS"
-TT647_TAB_MANAGER="MANAGER APPROVAL"
-TT647_TAB_CLIENT="CLIENT APPROVAL"
-TT647_TAB_SENT="SENT"
+TT647_TAB_TOPROCESS="Weekly to process"
+TT647_TAB_MANAGER="Manager approval"
+TT647_TAB_CLIENT="Client approval"
+TT647_TAB_SENT="Sent"
 
 # TT647_GAL -- the entries gallery. Named once because EVERY read of it has to go
 # through tt647_load_cards first; see below.
@@ -80,8 +80,8 @@ tt647_load_cards() {
 # tt647_hr_open_tab <TAB TEXT> — log in as HR and switch to the named tab.
 tt647_hr_open_tab() {
   local tab="$1"
-  tt_login "e2e_hr" "WEEKLY TO PROCESS"
-  tt_click_text "$tab" "HR '$tab' tab"
+  tt_login "e2e_hr" "$TT_HR_READY"
+  tt_hr_click_tab "$tab" "HR '$tab' tab"
   tt_wait_for "$TT_HR_GAL_WEEKS" "'$tab' available-weeks list"
   tt647_log_tab_state "opened '$tab'"
 }

@@ -88,7 +88,7 @@ hprg_weeks() {
 # when the probe had only ever touched one (run 34885953025).
 hprg_open_tab() {
   local w="" _
-  tt_click_text "$TAB" >/dev/null 2>&1
+  tt_hr_click_tab "$TAB" >/dev/null 2>&1
   for _ in $(seq 1 20); do
     w="$(hprg_weeks)"
     [ -n "$w" ] && [ "$w" != "null" ] && break
