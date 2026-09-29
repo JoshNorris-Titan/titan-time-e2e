@@ -61,6 +61,8 @@ source "$_TT_LIB_DIR/_login_assert.sh"
 # shellcheck source=/dev/null
 source "$_TT_LIB_DIR/_login_gallery.sh"
 # shellcheck source=/dev/null
+source "$_TT_LIB_DIR/_hr_groups.sh"
+# shellcheck source=/dev/null
 source "$_TT_LIB_DIR/_login_tokens.sh"
 # shellcheck source=/dev/null
 source "$_TT_LIB_DIR/_login_mail.sh"

@@ -289,6 +289,9 @@ seed_click_tab() {
   return 1
 }
 
+# seed_tab_weeks — the weeks (or, on Monthly, the months) the open HR tab offers,
+# pipe joined: the picker's labels on Manager/Client, the group labels on the tabs
+# rebuilt as groups on 2026-09-28 (To Process, Sent, Monthly). lib/_hr_groups.sh.
 seed_tab_weeks() {
-  pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; return [...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))].join('|'); }"
+  tt_hr_week_labels
 }

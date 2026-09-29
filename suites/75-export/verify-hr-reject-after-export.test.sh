@@ -52,9 +52,10 @@
 #
 # SELECTORS. btnRejectAfterExport, cardConsultants, galConsultants, cardConsultantRow,
 # txtConsultantName, txtConsultantSearch and the popup's txtRejectionComment are all
-# real names. The two values read out of unnamed widgets are anchored on LABEL TEXT
-# instead: 'TOTAL HOURS' on the HR card, and 'WORKED/BUDGETED HOURS' in the popup,
-# whose value widget is the auto-named text18 inside a list view and could not be
+# real names, and since the 2026-09-28 Sent rebuild so are the Sent row's cells
+# (txtSentConsultant, txtSentProject, txtSentTotalHours). The one value still read
+# out of an unnamed widget is anchored on LABEL TEXT instead: 'WORKED/BUDGETED
+# HOURS' in the popup, whose value widget is the auto-named text18 inside a list view and could not be
 # renamed anyway — it lives in a snippet, which the model tooling cannot reach. The
 # popup's footer Reject is still the auto-named actionButton1, so it is pressed by
 # caption.
@@ -74,65 +75,57 @@ REJECT_COMMENT="E2E automated post-export reject - hours returned to the assignm
 
 # ---------------------------------------------------------------------- helpers
 
-# hre_open_reject_tab — land on whichever HR tab exposes the post-export Reject.
-# The tab-switch controls were never named, so tabs are selected by their caption;
-# which tab carries this button is a model decision, so it is discovered, not assumed.
+# hre_open_reject_tab - open the Sent tab and expand the week holding an exported
+# entry of our consultant's. Prints the tab label; returns 1 when no Sent week
+# holds one.
 #
-# tt_try_click_text, not tt_click_text: the fatal version EXITS THE WHOLE TEST when a
-# caption is missing, which is exactly wrong in a loop over candidate targets — and
-# this caller runs inside $( ), so its diagnosis would have been captured into $TAB
-# and the run would have blamed "no tab exposes the button" instead of the caption.
+# SENT IS WEEK GROUPS SINCE 2026-09-28 (model b2202878 / 771be886). The post-export
+# Reject (.mx-name-btnRejectAfterExport) is on each Sent ROW, and a row exists only
+# while its week's group is expanded - only the newest starts that way, and only the
+# last 8 weeks are listed until "Load more weeks" is pressed. So "the tab that shows
+# the button" is no longer a question a tab walk can answer: the button is on Sent,
+# and whether it is in the DOM depends on which week is open. This used to walk
+# every tab looking for a visible button; it now opens Sent by widget and searches
+# its weeks, Load more included, for the consultant's row.
 hre_open_reject_tab() {
-  local lbl labels
   tt_login "e2e_hr" "$TT_HR_READY"
-  if [ "$(hre_has_reject_button)" = "true" ]; then echo "(landing tab)"; return 0; fi
-  labels="$(tt683_tab_labels)"
-  local IFS='|'
-  for lbl in $labels; do
-    [ -n "$lbl" ] || continue
-    unset IFS
-    tt_hr_try_click_tab "$lbl" || { IFS='|'; continue; }
-    sleep 2
-    if [ "$(hre_has_reject_button)" = "true" ]; then echo "$lbl"; return 0; fi
-    IFS='|'
-  done
-  unset IFS
-  return 1
+  tt_hr_try_click_tab "Sent" || return 1
+  tt_hr_wait_pane "Sent week groups" >/dev/null
+  tt_hr_find_group_for "$CONSULTANT_NAME" all >/dev/null || return 1
+  echo "Sent"
 }
 
 hre_has_reject_button() {
   playwright-cli eval "() => String([...document.querySelectorAll('.mx-name-btnRejectAfterExport')].some(b => b.offsetParent !== null))" 2>/dev/null | _tt_eval_str
 }
 
-# hre_card_facts — pick an exported card for our consultant and read PROJECT, WEEK
-# and TOTAL HOURS off it. Values are taken as "the line after the label", which is
-# how the card stacks its label/value pairs; that survives the widget renumbering
-# that auto-generated names do not.
+# hre_card_facts [project] - "<week>~~<consultant>~~<project>~~<hours>~~" for the
+# first expanded Sent row whose consultant cell is exactly $CONSULTANT_NAME (and,
+# given one, whose project matches), preferring a row with hours - rejecting a
+# 0-hour entry would move nothing and make the hours assertion vacuous.
 #
-# It picks a card with HOURS > 0 when there is one. Export All exports everything
-# awaiting export, so the Sent tab routinely holds several of our cards and some of
-# them are zero-hour weeks — and a zero-hour entry makes the whole point of this
-# test vacuous: 0 subtracted from the assignment total is indistinguishable from the
-# subtraction never happening.
+# Read from the row's named cells (txtSentConsultant / txtSentProject /
+# txtSentTotalHours); the old card carried PROJECT / WEEK / TOTAL HOURS labels to
+# anchor on, the table row carries values only. The week is the row's GROUP.
 hre_card_facts() {
-  playwright-cli eval "() => { const btns=[...document.querySelectorAll('.mx-name-btnRejectAfterExport')].filter(b=>b.offsetParent!==null); const cards=[]; for(const b of btns){ let p=b; for(let k=0;k<12;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length<1500 && t.indexOf('$CONSULTANT_NAME')>=0 && t.toUpperCase().indexOf('TOTAL HOURS')>=0){ const lines=t.split('\\n').map(s=>s.trim()).filter(Boolean); const after=(lbl)=>{ const i=lines.findIndex(x=>x.toUpperCase()===lbl); return (i>=0 && i+1<lines.length) ? lines[i+1] : ''; }; cards.push({project:after('PROJECT'), week:after('WEEK'), hours:after('TOTAL HOURS')}); break; } } } if(!cards.length) return ''; const num=(s)=>parseFloat(String(s).replace(/[^0-9.-]/g,''))||0; return JSON.stringify(cards.find(c=>num(c.hours)>0) || cards[0]); }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { $(_tt_hr_grp_js) if (HG.kind !== 'Sent') return ''; const c = (r, n) => ((r.querySelector('.mx-name-txtSent' + n) || {}).innerText || '').replace(/\s+/g, ' ').trim(); const num = s => parseFloat(String(s).replace(/[^0-9.-]/g, '')) || 0; const out = []; for (const x of HG.groups().filter(y => y.open)) for (const r of HG.rows(x.g)) { if (c(r, 'Consultant') !== '$CONSULTANT_NAME') continue; if (!r.querySelector('.mx-name-btnRejectAfterExport')) continue; out.push([x.key || x.label, c(r, 'Consultant'), c(r, 'Project'), c(r, 'TotalHours'), ''].join('~~')); } if (!out.length) return ''; return out.find(l => num(l.split('~~')[3]) > 0) || out[0]; }" 2>/dev/null | _tt_eval_str | grep -v '^null$'
 }
 
-# hre_card_present <project> — is an exported card for our consultant on THIS project
-# still on the tab? Matched exactly the way hre_click_reject matches, so "the card I
-# pressed Reject on" and "the card I am waiting to disappear" are the same notion.
-#
-# The disappearance check has to be project-scoped. It used to ask hre_card_facts,
-# which answers about the FIRST card for the consultant — so with two of our cards on
-# the Sent tab it kept answering "still there" about the sibling, and reported that
-# ACT_RejectAfterExport had refused a rejection that had in fact already happened.
+# hre_card_present <project> - is our consultant's row for <project> still in the
+# week it was found in? Re-expands that week first: rejecting refreshes the tab,
+# which puts the groups back to "newest open", and ABSENCE is this file's pass
+# condition - reading a collapsed group would call the row gone when it was only
+# folded away. A week that no longer exists at all has no rows, so that is 'false'.
 hre_card_present() {
-  playwright-cli eval "() => { const btns=[...document.querySelectorAll('.mx-name-btnRejectAfterExport')].filter(b=>b.offsetParent!==null); for(const b of btns){ let p=b; for(let k=0;k<12;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length<1500 && t.indexOf('$CONSULTANT_NAME')>=0 && t.indexOf('$1')>=0) return 'true'; } } return 'false'; }" 2>/dev/null | _tt_eval_str
+  tt_hr_select_week "$WEEK" || { echo false; return 0; }
+  if [ -n "$(tt_hr_row_facts "$CONSULTANT_NAME" "$1")" ]; then echo true; else echo false; fi
 }
 
-# hre_click_reject <project> — press Reject on the card for our consultant + project.
 hre_click_reject() {
-  playwright-cli eval "() => { const btns=[...document.querySelectorAll('.mx-name-btnRejectAfterExport')].filter(b=>b.offsetParent!==null); for(const b of btns){ let p=b; for(let k=0;k<12;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length<1500 && t.indexOf('$CONSULTANT_NAME')>=0 && t.indexOf('$1')>=0){ b.click(); return 'clicked'; } } } return 'nf'; }" 2>/dev/null | _tt_eval_str
+  case "$(tt_hr_row_click "$CONSULTANT_NAME" "$1" ".mx-name-btnRejectAfterExport")" in
+    ok) echo clicked ;;
+    *)  echo nf ;;
+  esac
 }
 
 # hre_confirm_reject_popup <comment> — the second half of the reject: fill the
@@ -274,9 +267,9 @@ if ! hre_find_exported; then
 fi
 echo "post-export reject lives on tab: $TAB"
 
-PROJECT="$(printf '%s' "$FACTS" | sed -n 's/.*"project":"\([^"]*\)".*/\1/p')"
-WEEK="$(printf '%s' "$FACTS"    | sed -n 's/.*"week":"\([^"]*\)".*/\1/p')"
-HOURS_RAW="$(printf '%s' "$FACTS" | sed -n 's/.*"hours":"\([^"]*\)".*/\1/p')"
+WEEK="$(printf '%s' "$FACTS" | awk -F'~~' '{print $1}')"
+PROJECT="$(printf '%s' "$FACTS" | awk -F'~~' '{print $3}')"
+HOURS_RAW="$(printf '%s' "$FACTS" | awk -F'~~' '{print $4}')"
 HOURS="$(hre_num "$HOURS_RAW")"
 
 [ -n "$PROJECT" ] || tt_fail "could not read PROJECT off the exported card: $FACTS"
@@ -293,6 +286,8 @@ echo "assignment total hours worked, before: $BEFORE"
 
 # -------------------------------------------------------- 3. reject after export
 TAB="$(hre_open_reject_tab)" || tt_fail "could not return to the post-export reject tab"
+tt_hr_select_week "$WEEK" \
+  || tt_fail "could not re-open Sent week '$WEEK', where the exported '$PROJECT' entry was found a moment ago"
 rc="$(hre_click_reject "$PROJECT")"
 [ "$rc" = "clicked" ] \
   || tt_fail "could not press Reject on the exported card for '$PROJECT' (state: $rc)"

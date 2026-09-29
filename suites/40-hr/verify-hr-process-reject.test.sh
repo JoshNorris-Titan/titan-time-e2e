@@ -69,14 +69,14 @@ TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do c
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_rejection.sh"
 
-TAB="WEEKLY TO PROCESS"
+TAB="Weekly to process"
 CUSER="${TT_HRREJECT_USER:-e2e_consultant}"
 CNAME="${TT_HRREJECT_NAME:-E2E Consultant}"
 PROJECT="${TT_HRREJECT_PROJECT:-E2E Manager Approval}"
 COMMENT="E2E automated HR send-back - please correct and resubmit"
 
 # hpr_hr() — sign in as HR and land on the dashboard.
-hpr_hr() { tt_login "e2e_hr" "$TAB"; }
+hpr_hr() { tt_login "e2e_hr" "$TT_HR_READY"; }
 
 # hpr_seed — push one entry into ToProcess: consultant submits, PM approves.
 #
@@ -109,20 +109,21 @@ if [ "$BEFORE" -eq 0 ]; then
   BEFORE="$(tt_hr_count_cards_for "$CNAME" "$TAB")"
   BEFORE="${BEFORE:-0}"
 fi
-[ "$BEFORE" -gt 0 ] || tt_fail "no '$CNAME' card on $TAB even after seeding one. tt692693_hr_tab_state above says what the tab was showing - an empty week picker usually means a consultant or project filter is still set from an earlier step, not that the entry is missing."
+[ "$BEFORE" -gt 0 ] || tt_fail "no '$CNAME' card on $TAB even after seeding one. tt692693_hr_tab_state above says what the tab was showing - a tab listing no weeks usually means a consultant or project filter is still set from an earlier step, not that the entry is missing."
 echo "  $TAB holds $BEFORE '$CNAME' card(s) before the reject"
 
 # --------------------------------------------- 2. the reject control is live
-# tt_hr_reject_card_for_project walks the week picker, scopes the card to ONE
-# card (see its header for why that scoping is load-bearing), presses the card's
-# own Reject, types the comment into the page that opens, and confirms.
+# tt_hr_reject_card_for_project walks the tab's weeks (week GROUPS on this tab
+# since 2026-09-28, expanded one at a time), scopes the card to ONE row (see its
+# header for why that scoping is load-bearing), presses the row's own Reject, types
+# the comment into the page that opens, and confirms.
 #
 # Its return value is the assertion for A: it returns non-zero when no comment
 # page appeared, which is exactly what a dead control would look like.
 if ! tt_hr_reject_card_for_project "$CNAME" "$PROJECT" "$TAB" "$COMMENT"; then
   echo "FAIL: pressing Reject on the '$PROJECT' card in $TAB did not lead to a rejection."
   echo "      Either no card for that consultant+project was found in any week of the"
-  echo "      picker, or the Reject control did not open the comment page."
+  echo "      tab's week groups, or the Reject control did not open the comment page."
   echo "      The second is the one that matters: lib/_rejection.sh:16 claims these inline"
   echo "      buttons are dead controls, TT-686 says they were fixed on 2026-08-18, and"
   echo "      Main.ACT_HRDashboard_ApproveOrReject is a real server action behind"

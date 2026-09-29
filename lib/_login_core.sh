@@ -84,8 +84,12 @@ TT_PASS="${TT_ROLE_PASS:-E2ETest123!}"
 # not dismiss it. A row closed this way then renders
 # .mx-name-txtProcessZeroByHR on the To Process card, which is the cheapest
 # thing to assert the close actually happened.
-TT_HR_GAL_ENTRIES='.mx-name-galManagerEntries, .mx-name-galClientEntries, .mx-name-galProcessEntries, .mx-name-galSentEntries'
-TT_HR_GAL_WEEKS='.mx-name-galManagerAvailableWeeks, .mx-name-galClientAvailableWeeks, .mx-name-galProcessAvailableWeeks, .mx-name-galSentAvailableWeeks'
+# MANAGER AND CLIENT ONLY SINCE 2026-09-28. To Process and Sent lost their picker and
+# gallery (model b2202878 / 771be886) and became week GROUPS; their widgets, and the
+# "whichever tab is open" unions spanning both kinds (TT_HR_WEEKS_ANY,
+# TT_HR_ENTRIES_ANY, TT_HR_CARD_ANY), are in lib/_hr_groups.sh.
+TT_HR_GAL_ENTRIES='.mx-name-galManagerEntries, .mx-name-galClientEntries'
+TT_HR_GAL_WEEKS='.mx-name-galManagerAvailableWeeks, .mx-name-galClientAvailableWeeks'
 TT_HR_CB_CONSULTANT='.mx-name-cbManagerConsultant, .mx-name-cbClientConsultant, .mx-name-cbProcessConsultant, .mx-name-cbSentConsultant'
 TT_HR_CB_PROJECT='.mx-name-cbManagerProject, .mx-name-cbClientProject, .mx-name-cbProcessProject, .mx-name-cbSentProject'
 TT_HR_BTN_APPROVE='.mx-name-btnManagerApprove, .mx-name-btnClientApprove'
@@ -127,20 +131,16 @@ TT_HR_TXT_APPROVER1='.mx-name-txtProcessManagerApprover'
 TT_HR_TXT_APPROVER2='.mx-name-txtProcessClientApprover'
 # The per-entry CARD inside the entries gallery. Was the snippet's generated
 # container13, which is why a rename could never have been noticed by name alone.
-TT_HR_CARD='.mx-name-containerManagerCard, .mx-name-containerClientCard, .mx-name-containerProcessCard, .mx-name-containerSentCard'
+# Manager and Client only, like the two above; a To Process or Sent ROW is TT_HR_ROW.
+TT_HR_CARD='.mx-name-containerManagerCard, .mx-name-containerClientCard'
 
-# MONTHLY TO BE INVOICED, named separately for the reason given above: it is a
-# page-level tab, not one of the four HRDashboardTab snippet tabs, so it is
-# deliberately NOT in the unions and a helper written against them cannot see it.
+# MONTHLY TO BE INVOICED, named separately: it is a page-level tab, not one of the
+# HRDashboardTab tabs, so it is deliberately NOT in the unions above.
 #
-# ITS PICKER IS MONTHS, NOT WEEKS. There is no galInvoiceAvailableWeeks and no
-# HRDashboardTab row behind it — the filter is galAvailableMonths, which is why
-# tt_hr_count_cards_for and tt_hr_reject_card_for_project (both of which iterate
-# TT_HR_GAL_WEEKS) find nothing here however long they are left to run. A caller
-# on this tab has to walk the months itself; see
-# suites/75-export/verify-hr-invoice-reject.test.sh for the shape of that walk.
-TT_HR_GAL_MONTHS='.mx-name-galAvailableMonths'
-TT_HR_GAL_INVOICE='.mx-name-galInvoiceEntries'
+# ITS UNIT IS A MONTH, NOT A WEEK. Since 2026-09-28 the tab lists month GROUPS
+# (lstInvoiceMonths) rather than a month picker, each with its own Export; see
+# lib/_hr_groups.sh (TT_HR_LST_MONTHS, TT_HR_LST_INVOICE, TT_HR_INVOICE_ROW,
+# TT_HR_BTN_EXPORT_MONTH). galAvailableMonths and galInvoiceEntries are gone.
 TT_HR_BTN_INVOICE_VIEW='.mx-name-btnInvoiceView'
 TT_HR_BTN_INVOICE_REJECT='.mx-name-btnInvoiceReject'
 

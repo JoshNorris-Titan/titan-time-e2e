@@ -45,7 +45,7 @@ TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do c
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_rejection.sh"
 
-TAB="WEEKLY TO PROCESS"
+TAB="Weekly to process"
 CNAME="${TT_HRREJECT_NAME:-E2E Consultant}"
 GUARD_MSG="Please leave a comment before rejecting"
 WS="   "
@@ -65,13 +65,14 @@ WS="   "
 
 # ---------------------------------------------------------------------- helpers
 
-hprg_hr() { tt_login "e2e_hr" "$TAB"; }
+hprg_hr() { tt_login "e2e_hr" "$TT_HR_READY"; }
 
-# hprg_weeks - the week labels in this tab's picker, pipe joined. Same shape as
-# the one in lib/_rejection.sh; kept local because this file needs to STAY on the
-# week it found rather than sweep every week and forget which was which.
+# hprg_weeks - the weeks this tab offers, pipe joined. Since 2026-09-28 To Process
+# lists week GROUPS rather than a week picker (model b2202878 / 771be886);
+# tt_hr_week_labels reads either. Kept as a local name because this file needs to
+# STAY on the week it found rather than sweep every week and forget which was which.
 hprg_weeks() {
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | _tt_eval_str
+  tt_hr_week_labels
 }
 
 # hprg_open_tab - land on the tab and wait (<=20s) for its week picker to list
@@ -98,19 +99,20 @@ hprg_open_tab() {
   printf '%s' "$w"
 }
 
+# hprg_select_week <week> - make that week the one EXPANDED group: ok | nf. Its
+# rows exist only while it is expanded, and every other group is collapsed so the
+# count and the click below both see this week alone.
 hprg_select_week() {
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){ el.click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str
-  sleep 3
+  if tt_hr_select_week "$1"; then echo ok; else echo nf; fi
 }
 
-# hprg_click_reject - press the card's own Reject for our consultant on the
-# CURRENTLY selected week.
-#
-# Scoped the way lib/_rejection.sh documents at length: walk up from the button
-# only until the ancestor holds exactly ONE Reject, or a neighbouring card's text
-# satisfies the consultant match and the wrong entry gets pressed.
+# hprg_click_reject - press the Reject on our consultant's row in the expanded
+# week. The row is matched on its consultant CELL, exactly, and the button is taken
+# from inside that one row - so neither a neighbouring row whose text happens to
+# contain the name ('E2E Consultant' is a prefix of 'E2E Consultant Two') nor a
+# neighbouring row's button can be pressed.
 hprg_click_reject() {
-  playwright-cli eval "() => { const bs=[...document.querySelectorAll('$TT_HR_BTN_REJECT')].filter(b=>b.offsetParent!==null); for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<500 && el.querySelectorAll('$TT_HR_BTN_REJECT').length===1){ if(t.split('\n')[0].trim()==='$CNAME'){ b.click(); return 'ok'; } break; } } } return 'nf'; }" 2>/dev/null | _tt_eval_str
+  tt_hr_row_click "$CNAME" "" "$TT_HR_BTN_REJECT"
 }
 
 # hprg_set_comment <value> - write <value> into the popup's comment box and blur
@@ -162,9 +164,9 @@ hprg_probe() {
 # ------------------------------------------------- 1. borrow a card to press
 hprg_hr
 WEEKS="$(hprg_open_tab)"
-[ -n "$WEEKS" ] || tt692693_hr_tab_state "no week picker on '$TAB' after 20s"
+[ -n "$WEEKS" ] || tt692693_hr_tab_state "no weeks listed on '$TAB' after 20s"
 [ -n "$WEEKS" ] && [ "$WEEKS" != "null" ] \
-  || tt_fail "the '$TAB' tab shows no week picker, so there is no week to look in. tt692693_hr_tab_state above says what the tab was showing - an empty picker is usually a consultant or project filter left set by an earlier step, not a missing entry."
+  || tt_fail "the '$TAB' tab lists no week groups, so there is no week to look in. tt692693_hr_tab_state above says what the tab was showing - an empty tab is usually a consultant or project filter left set by an earlier step, not a missing entry."
 
 WEEK=""
 COUNT=0
@@ -259,8 +261,8 @@ tt_clear_dialogs 8 >/dev/null 2>&1 || true
 hprg_hr
 WEEKS_AFTER="$(hprg_open_tab)"
 if [ -z "$WEEKS_AFTER" ]; then
-  tt692693_hr_tab_state "re-count: no week picker on '$TAB' after 20s"
-  tt_fail "could not re-open '$TAB' to re-count: its week picker never filled, so there is nothing to compare against before=$COUNT. That says nothing about the guard either way."
+  tt692693_hr_tab_state "re-count: no weeks listed on '$TAB' after 20s"
+  tt_fail "could not re-open '$TAB' to re-count: it never listed a week, so there is nothing to compare against before=$COUNT. That says nothing about the guard either way."
 fi
 case "|$WEEKS_AFTER|" in
   *"|$WEEK|"*)
@@ -270,9 +272,9 @@ case "|$WEEKS_AFTER|" in
     AFTER="$(tt692693_count_cards_here "$CNAME")"
     AFTER="${AFTER:-0}" ;;
   *)
-    # A week with nothing left to process drops out of the picker, so its absence
-    # after the picker has loaded IS the cards having gone - count it as zero.
-    echo "  week '$WEEK' is no longer in the picker (now: $WEEKS_AFTER)"
+    # A week with nothing left to process drops out of the tab, so its absence
+    # after the tab has loaded IS the cards having gone - count it as zero.
+    echo "  week '$WEEK' is no longer listed (now: $WEEKS_AFTER)"
     AFTER=0 ;;
 esac
 if [ "$AFTER" -lt "$COUNT" ]; then

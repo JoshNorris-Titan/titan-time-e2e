@@ -515,19 +515,34 @@ _card_js() {
 wait_entries() {
   local i
   for i in $(seq 1 12); do
-    [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return String(!!g && (g.innerText||'').trim().length > 10); }")" = "true" ] && return 0
+    [ "$(pw "() => { const g=document.querySelector('$TT_HR_ENTRIES_ANY'); return String(!!g && (g.innerText||'').trim().length > 10); }")" = "true" ] && return 0
     sleep 2
   done
   return 1
 }
 
+# select_week <label> — select a week on the open tab: click it in the picker
+# (Manager/Client), or make it the one expanded week group (To Process, Sent - model
+# b2202878 / 771be886, 2026-09-28). Remembered in SEED_CUR_WEEK so owned_with can put
+# it back: acting on a row refreshes a grouped tab, which re-expands only the NEWEST
+# week, and a count read after that would be about a different week.
+SEED_CUR_WEEK=""
 select_week() {
   local i
   for i in 1 2 3; do
-    [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'Y';} return 'N'; }")" = "Y" ] && { sleep 3; wait_entries || true; return 0; }
+    if tt_hr_select_week "$1"; then SEED_CUR_WEEK="$1"; wait_entries || true; return 0; fi
     sleep 2
   done
   return 1
+}
+
+# _reselect_group — on a grouped tab, re-expand SEED_CUR_WEEK if the refresh folded
+# it. A no-op on a picker tab, where the selection survives an action.
+_reselect_group() {
+  [ -n "$SEED_CUR_WEEK" ] || return 0
+  case "$(tt_hr_pane_kind)" in
+    Process|Sent) tt_hr_select_week "$SEED_CUR_WEEK" >/dev/null 2>&1 || true ;;
+  esac
 }
 
 # owned_with <btn-selector> — owned cards still exposing the control.
@@ -544,7 +559,8 @@ select_week() {
 owned_with() {
   local c try
   for try in 1 2 3; do
-    c="$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'NOGAL'; let n=0; for(const b of [...g.querySelectorAll('$1')]){ if(card(b)) n++; } return String(n); }")"
+    _reselect_group
+    c="$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_ENTRIES_ANY'); if(!g) return 'NOGAL'; let n=0; for(const b of [...g.querySelectorAll('$1')]){ if(card(b)) n++; } return String(n); }")"
     case "$c" in NOGAL|''|*[!0-9]*) wait_entries || true ;; *) echo "$c"; return 0 ;; esac
   done
   echo 0
@@ -575,7 +591,7 @@ act_on_week() {
   while [ "$n" -lt 30 ]; do
     before="$(owned_with "$btn")"
     [ "$before" = "0" ] && break
-    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$btn')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
+    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_ENTRIES_ANY'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$btn')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
     sleep 2
     confirm_dialog "$re"
     sleep 2
@@ -604,7 +620,7 @@ reject_owned() {
   while [ "$n" -lt 30 ]; do
     before="$(owned_with "$TT_HR_BTN_REJECT")"
     [ "$before" = "0" ] && break
-    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$TT_HR_BTN_REJECT')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
+    [ "$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_ENTRIES_ANY'); if(!g) return 'N'; for(const b of [...g.querySelectorAll('$TT_HR_BTN_REJECT')]){ if(card(b)){ b.click(); return 'Y'; } } return 'N'; }")" = "Y" ] || break
     sleep 3
     pw "() => { const vis=[...document.querySelectorAll('.mx-window-content,.mx-dialog-content,.modal-content,[role=dialog]')].filter(d=>d.offsetParent!==null); const scope=vis.length? vis[vis.length-1] : document; const f=[...scope.querySelectorAll('textarea,input[type=text]')].filter(e=>e.offsetParent!==null && !e.disabled && !e.readOnly)[0]; if(!f) return 'NOFIELD'; const set=Object.getOwnPropertyDescriptor(f.constructor.prototype,'value').set; set.call(f,'Seeded rejection for regression testing'); f.dispatchEvent(new Event('input',{bubbles:true})); f.dispatchEvent(new Event('change',{bubbles:true})); f.blur(); return 'TYPED'; }" >/dev/null
     sleep 2
@@ -656,56 +672,61 @@ hr_drive_week() {
   esac
 }
 
-# hr_export_all — drive AwaitingExport -> Exported on MONTHLY TO BE INVOICED.
+# hr_export_all — drive AwaitingExport -> Exported on Monthly to be invoiced.
 #
-# THIS TAB IS DIFFERENT FROM THE OTHERS. It uses .mx-name-galInvoiceEntries and
-# .mx-name-galAvailableMonths rather than the galTab* widgets every other tab uses, which
-# is why the generic helpers read it as empty. It also has no per-card action: export is a
-# single page-level .mx-name-btnExportAll ("Export") that exports EVERYTHING on the tab in
-# one go (Main.ACT_ExportAll_HRDash), and it is month-scoped, not week-scoped.
+# EXPORT IS PER MONTH SINCE 2026-09-28 (model b2202878 / 771be886). The tab lists MONTH
+# groups, each with its own Export (.mx-name-btnInvoiceExportMonth, running
+# Main.ACT_HRDashboard_ExportMonth for that month); the page-level Export All and the
+# month picker are gone. So each month is expanded, censused and exported on its own.
 #
-# BULK MEANS IT CANNOT BE OWNERSHIP-FILTERED. Every other stage clicks a control on one
-# card at a time and only ever touches cards belonging to the e2e consultants. Export
-# cannot do that — so this REFUSES to run when the tab holds any entry that is not one of
-# ours, rather than exporting a colleague's timesheets as a side effect of seeding.
+# A MONTH'S EXPORT CANNOT BE OWNERSHIP-FILTERED. Every other stage clicks a control on one
+# row at a time and only ever touches rows belonging to the e2e consultants. Export takes
+# the whole month - so a month holding any row that is not one of ours is REFUSED and
+# left alone, rather than exporting a colleague's timesheets as a side effect of seeding.
 hr_export_all() {
-  seed_click_tab "MONTHLY TO BE INVOICED" || { log "    MONTHLY TO BE INVOICED: tab not clickable"; return 1; }
-  sleep 4
+  seed_click_tab "Monthly to be invoiced" || { log "    Monthly to be invoiced: tab not clickable"; return 1; }
+  wait_sel_soft ".mx-name-lstInvoiceMonths" || { log "    Monthly to be invoiced: month list not rendered"; return 1; }
 
-  local counts total owned
-  counts="$(pw "() => { const card=$(_card_js); const g=document.querySelector('.mx-name-galInvoiceEntries'); if(!g) return 'NOGAL'; const items=[...g.querySelectorAll('.widget-gallery-item')]; let own=0; for(const it of items){ const f=(it.innerText||'').trim().split('\n')[0].trim(); if(card(it)||$(owned_js)) own++; } return items.length+'/'+own; }")"
-  case "$counts" in
-    NOGAL|'') log "    MONTHLY TO BE INVOICED: entry gallery not rendered"; return 1 ;;
-  esac
-  total="${counts%%/*}"; owned="${counts##*/}"
-  log "    MONTHLY TO BE INVOICED: $total entr(ies) on the tab, $owned owned by the e2e consultants"
-
-  if [ "$total" = "0" ]; then
-    log "    nothing to export"
-    return 0
-  fi
-  if [ "$total" != "$owned" ]; then
-    log "    !! REFUSING to Export: $((total - owned)) entr(ies) on this tab belong to someone else."
-    log "       Export is a single bulk action with no per-card selection, so running it"
-    log "       would export their timesheets too. Clear the tab or export by hand."
-    return 1
-  fi
-
-  playwright-cli click ".mx-name-btnExportAll" >/dev/null 2>&1
-  sleep 3
-  confirm_dialog '^(export|yes|confirm|ok|continue)$'
-  sleep 3
-  seed_force_clear >/dev/null 2>&1 || true
-
-  # Verify against the dashboard, not the click: the invoice counter must fall.
-  local i after
-  for i in $(seq 1 10); do
-    after="$(pw "() => { const c=document.querySelector('.mx-name-cardKpiInvoice'); if(!c) return '?'; const m=(c.innerText||'').trim().match(/(\d+)\s*$/); return m?m[1]:'?'; }")"
-    case "$after" in ''|'?') : ;; *) [ "$after" -lt "$total" ] 2>/dev/null && { log "    exported — invoice count $total -> $after"; return 0; } ;;
-    esac
+  local months m c total owned done_=0 refused=0 r i ownexpr OLD
+  ownexpr="(t => { const f=t; return $(owned_js); })(t)"
+  months="$(tt_hr_week_labels)"
+  if [ -z "$months" ]; then log "    nothing to export"; return 0; fi
+  OLD="$IFS"; IFS='|'
+  for m in $months; do
+    IFS="$OLD"
+    [ -n "$m" ] || { IFS='|'; continue; }
+    case "$(tt_hr_group_expand "$m")" in OK:*) : ;; *) log "    $m: could not expand - skipped"; IFS='|'; continue ;; esac
+    c="$(tt_hr_group_census "$ownexpr")"; total="${c%%|*}"; owned="${c##*|}"
+    log "    $m: $total entr(ies), $owned owned by the e2e consultants"
+    if [ "${total:-0}" = "0" ]; then IFS='|'; continue; fi
+    if [ "$total" != "$owned" ]; then
+      log "    !! REFUSING to export $m: $((total - owned)) entr(ies) in it belong to someone else."
+      refused=$((refused + 1)); IFS='|'; continue
+    fi
+    r="$(tt_hr_export_month "$m")"
+    [ "$r" = "ok" ] || { log "    !! could not press $m's Export ($r)"; IFS='|'; continue; }
     sleep 3
+    confirm_dialog '^(export|yes|confirm|ok|continue)$'
+    sleep 3
+    seed_force_clear >/dev/null 2>&1 || true
+    done_=$((done_ + 1))
+    # The export refreshes the dashboard; put the tab back before the next month.
+    seed_click_tab "Monthly to be invoiced" >/dev/null 2>&1 || true
+    wait_sel_soft ".mx-name-lstInvoiceMonths" || true
+    IFS='|'
   done
-  log "    !! Export clicked but the invoice count did not fall (still ${after:-?})"
+  IFS="$OLD"
+  log "    exported $done_ month(s), refused $refused"
+  [ "$refused" = "0" ]
+}
+
+# wait_sel_soft <css> — NON-FATAL wait (~24s) for a selector.
+wait_sel_soft() {
+  local i
+  for i in $(seq 1 12); do
+    [ "$(pw "() => String(!!document.querySelector('$1'))")" = "true" ] && return 0
+    sleep 2
+  done
   return 1
 }
 

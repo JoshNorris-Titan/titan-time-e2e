@@ -65,43 +65,41 @@ BTN='.mx-name-btnRejectAfterExport'
 
 # ---------------------------------------------------------------------- helpers
 
-# herg_open_reject_tab - land on whichever HR tab exposes the post-export Reject.
+# herg_open_reject_tab - open the Sent tab and expand a week holding one of our
+# consultant's exported rows. Prints the tab label; returns 1 when none does.
 #
-# Same discovery as verify-hr-reject-after-export, and for the same reason: the
-# tab-switch controls were never named, and which tab carries this button is a
-# model decision. tt_try_click_text rather than tt_click_text - the fatal version
-# exits the whole test when a caption is missing, which is exactly wrong in a loop
-# over candidate tabs.
+# The post-export Reject is on the Sent tab's ROWS, and since 2026-09-28 (model
+# b2202878 / 771be886) Sent is a list of week GROUPS: a row exists only while its
+# week is expanded, only the newest starts that way, and only the last 8 weeks are
+# listed until "Load more weeks" is pressed. So this no longer walks the tabs
+# looking for a visible button - it opens Sent by widget and searches its weeks,
+# Load more included, for a row whose consultant cell is exactly $CNAME.
 herg_open_reject_tab() {
-  local lbl labels
   tt_login "e2e_hr" "$TT_HR_READY"
-  if [ "$(herg_has_button)" = "true" ]; then echo "(landing tab)"; return 0; fi
-  labels="$(tt683_tab_labels)"
-  local IFS='|'
-  for lbl in $labels; do
-    [ -n "$lbl" ] || continue
-    unset IFS
-    tt_hr_try_click_tab "$lbl" || { IFS='|'; continue; }
-    sleep 2
-    if [ "$(herg_has_button)" = "true" ]; then echo "$lbl"; return 0; fi
-    IFS='|'
-  done
-  unset IFS
-  return 1
+  tt_hr_try_click_tab "Sent" || return 1
+  tt_hr_wait_pane "Sent week groups" >/dev/null
+  tt_hr_find_group_for "$CNAME" all >/dev/null || return 1
+  echo "Sent"
 }
 
 herg_has_button() {
   playwright-cli eval "() => String([...document.querySelectorAll('$BTN')].some(b => b.offsetParent !== null))" 2>/dev/null | _tt_eval_str
 }
 
-# herg_count - Sent cards for our consultant, scoped from each Reject button and
-# capped so a walk up the tree cannot swallow a neighbouring card.
+# herg_count - $CNAME's rows across EVERY Sent week (Load more pressed, every week
+# expanded), matched on the consultant cell exactly. The whole tab rather than one
+# week, so the before/after comparison cannot be thrown by which week happens to be
+# open, and exact because 'E2E Consultant' is a prefix of 'E2E Consultant Two'.
 herg_count() {
-  playwright-cli eval "() => { const bs=[...document.querySelectorAll('$BTN')].filter(b=>b.offsetParent!==null); let m=0; for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<800 && el.querySelectorAll('$BTN').length===1){ if(t.indexOf('$CNAME')>=0) m++; break; } } } return String(m); }" 2>/dev/null | _tt_eval_str
+  tt_hr_sent_load_all >/dev/null 2>&1
+  tt_hr_expand_all >/dev/null 2>&1
+  tt_hr_count_rows_for "$CNAME"
 }
 
+# herg_click_reject - press the post-export Reject on the first $CNAME row, taken
+# from inside that row.
 herg_click_reject() {
-  playwright-cli eval "() => { const bs=[...document.querySelectorAll('$BTN')].filter(b=>b.offsetParent!==null); for(const b of bs){ let el=b; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(t.length>10 && t.length<800 && el.querySelectorAll('$BTN').length===1){ if(t.indexOf('$CNAME')>=0){ b.click(); return 'ok'; } break; } } } return 'nf'; }" 2>/dev/null | _tt_eval_str
+  tt_hr_row_click "$CNAME" "" "$BTN"
 }
 
 herg_set_comment() {

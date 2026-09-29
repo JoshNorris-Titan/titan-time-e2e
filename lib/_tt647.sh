@@ -39,6 +39,12 @@
 #    since the TT-724 phase 4 fold, but one name per tab where the retired snippet
 #    had a single generated container13. The card lookup still falls back to
 #    walking up from the named approver text widget if none of them matches.
+#  * TO PROCESS AND SENT HAVE NO WEEK PICKER SINCE 2026-09-28 (model b2202878 /
+#    771be886): they list week GROUPS, only the newest expanded, and their "cards"
+#    are table rows (cnt<Tab>Row). "Selecting a week" on those tabs means expanding
+#    that one group and collapsing the rest - tt_hr_select_week in lib/_hr_groups.sh
+#    does either, so every helper below works on both kinds of tab. Manager and
+#    Client approval kept their picker and gallery.
 
 # tt647_session_fullname -- the display name Core.SUB_Account_Name records in
 # ChangeLog/ChangeBy for the currently signed-in user (FullName, falling back to
@@ -55,7 +61,7 @@ TT647_TAB_SENT="Sent"
 
 # TT647_GAL -- the entries gallery. Named once because EVERY read of it has to go
 # through tt647_load_cards first; see below.
-TT647_GAL="$TT_HR_GAL_ENTRIES"
+TT647_GAL="$TT_HR_ENTRIES_ANY"
 
 # tt647_load_cards [label] -- page the entries gallery in fully, then echo how many
 # cards it holds.
@@ -73,8 +79,12 @@ TT647_GAL="$TT_HR_GAL_ENTRIES"
 # reached ToProcess (confirmed at the data layer) but sat past position 4, so the
 # card wait timed out and tt647_locate_entry reported "(none of the three HR tabs)".
 # Do not add a new read of this gallery without a tt647_load_cards in front of it.
+#
+# On a grouped tab (To Process, Sent) the same rule holds for the expanded group's
+# row list, which is a ListView with its own Load more; tt_hr_entries_load pages
+# whichever the open tab has.
 tt647_load_cards() {
-  tt_gallery_load_all "$TT647_GAL" "${1:-entries gallery}"
+  tt_hr_entries_load
 }
 
 # tt647_hr_open_tab <TAB TEXT> — log in as HR and switch to the named tab.
@@ -82,7 +92,7 @@ tt647_hr_open_tab() {
   local tab="$1"
   tt_login "e2e_hr" "$TT_HR_READY"
   tt_hr_click_tab "$tab" "HR '$tab' tab"
-  tt_wait_for "$TT_HR_GAL_WEEKS" "'$tab' available-weeks list"
+  tt_hr_wait_pane "'$tab' week list"
   tt647_log_tab_state "opened '$tab'"
 }
 
@@ -102,7 +112,7 @@ tt647_log_tab_state() {
   # rather than the week -- which is precisely how a3's log showed 4 cards before
   # the seed and 4 after two more entries landed in that same week.
   tt647_load_cards >/dev/null 2>&1 || true
-  s="$(playwright-cli eval "() => { const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('$TT_HR_GAL_WEEKS'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; const g=document.querySelector('$TT_HR_GAL_ENTRIES'); const cards=g?g.querySelectorAll('$TT_HR_TXT_APPROVER1,$TT_HR_BTN_APPROVE').length:0; return 'consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + ' | cardsInSelectedWeek=' + cards; }" 2>/dev/null | _tt_eval_str)"
+  s="$(playwright-cli eval "() => { $(_tt_hr_grp_js) const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\\s+/g,' ').trim(); return v || txt || '(empty)'; }; let weeks; if (HG.kind) { weeks = HG.groups().map(x => x.label + (x.open ? ' [open]' : '')); } else { const wk=document.querySelector('$TT_HR_GAL_WEEKS'); weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; } const g=document.querySelector('$TT_HR_ENTRIES_ANY'); const cards=g?g.querySelectorAll('$TT_HR_TXT_APPROVER1,$TT_HR_BTN_APPROVE').length:0; return 'kind=' + (HG.kind || 'picker') + ' | consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)') + (HG.kind === 'Sent' ? ' | ' + ((document.querySelector('$TT_HR_TXT_SENT_WINDOW')||{}).innerText||'') + (document.querySelector('$TT_HR_BTN_SENT_LOADMORE') ? ' (+ Load more)' : '') : '') + ' | cardsInSelectedWeek=' + cards; }" 2>/dev/null | _tt_eval_str)"
   echo "  [tab] $label: $s"
 }
 
@@ -111,18 +121,18 @@ tt647_log_tab_state() {
 # Prints the matched week label, returns 0. Returns 1 if no week matches.
 tt647_select_week_with() {
   local needle="$1" labels lbl
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const set=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - [A-Z][a-z]{2} \\d{2}/.test(t)))]; return set.join('|'); }" 2>/dev/null | sed -n '2p')
-  labels="${labels%\"}"; labels="${labels#\"}"
+  # Every week the tab offers - on Sent that includes the weeks behind "Load more
+  # weeks", because this walk is what concludes "no entry anywhere".
+  labels="$(tt_hr_week_labels all)"
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
-    sleep 4
+    tt_hr_select_week "$lbl" || { IFS='|'; continue; }
     # Load the whole week before concluding it does not hold the needle -- this walk
     # decides "no entry anywhere", so a first-page-only read makes it lie.
     tt647_load_cards "week $lbl" >/dev/null 2>&1 || true
-    if playwright-cli eval "() => String((((document.querySelector('$TT_HR_GAL_ENTRIES')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
+    if [ "$(playwright-cli eval "() => String((((document.querySelector('$TT_HR_ENTRIES_ANY')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | _tt_eval_str)" = "true" ]; then
       echo "$lbl"
       return 0
     fi
@@ -146,18 +156,17 @@ tt647_select_week_with() {
 # against an entry that had reached ToProcess with no approval at all (both
 # lines 'N/A'). Both looked like product defects and were not.
 tt647_select_exact_week() {
-  local frag="$1" r
-  r=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nogallery'; const el=[...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).find(e=>(e.innerText||'').trim().indexOf('$frag')===0); if(!el) return 'nf'; el.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)
-  case "$r" in
-    ok)
-      sleep 4
-      # Selecting a week re-runs Main.DS_EntriesForTab, so the gallery comes back at
-      # page 1. Every caller reads it straight afterwards; page it in here so none of
-      # them has to remember.
-      tt647_load_cards "week $frag" >/dev/null 2>&1 || true
-      return 0
-      ;;
-  esac
+  local frag="$1"
+  # On Sent the week may be older than the 8-week window; page the window out first
+  # so "not offered" means not on the tab, not merely not loaded yet.
+  [ "$(tt_hr_pane_kind)" = "Sent" ] && tt_hr_sent_load_all >/dev/null 2>&1
+  if tt_hr_select_week "$frag"; then
+    # Selecting a week re-runs the tab's data source, so the list comes back at
+    # page 1. Every caller reads it straight afterwards; page it in here so none of
+    # them has to remember.
+    tt647_load_cards "week $frag" >/dev/null 2>&1 || true
+    return 0
+  fi
   return 1
 }
 
@@ -179,7 +188,7 @@ tt647_wait_for_card() {
   for i in $(seq 1 "$tries"); do
     if tt647_select_exact_week "$frag"; then
       week_seen=1
-      if playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'false'; const t=g.innerText||''; return String(t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0)); }" 2>/dev/null | grep -qiw true; then
+      if [ "$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_ENTRIES_ANY'); if(!g) return 'false'; const hit=t=>t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0); return String([...g.querySelectorAll('$TT_HR_CARD_ANY')].some(c => hit(c.innerText||''))); }" 2>/dev/null | _tt_eval_str)" = "true" ]; then
         return 0
       fi
     fi
@@ -195,10 +204,11 @@ tt647_wait_for_card() {
   # earlier test narrows the picker and hides the week, with the entry sitting
   # correctly in the queue the whole time.
   tt647_log_tab_state "card wait gave up on week '$frag'"
-  weeks="$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return '(no week picker)'; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(Boolean))]; return s.length ? s.join(' / ') : '(picker is empty)'; }" 2>/dev/null | _tt_eval_str)"
+  weeks="$(tt_hr_week_labels | sed 's/|/ \/ /g')"
+  [ -n "$weeks" ] || weeks="(none - the tab lists no weeks)"
 
   if [ -z "$week_seen" ]; then
-    TT647_WAIT_ERR="week '$frag' was never offered by this tab's week picker. Weeks on offer: $weeks. The entry may be in the queue but hidden by a consultant/project filter left set on this tab, or it may not have reached this status at all."
+    TT647_WAIT_ERR="week '$frag' was never offered by this tab (its week picker or its week groups). Weeks on offer: $weeks. The entry may be in the queue but hidden by a consultant/project filter left set on this tab, or it may not have reached this status at all."
   else
     TT647_WAIT_ERR="week '$frag' WAS selectable, but no card in it matches '$needle'${needle2:+ + '$needle2'} after ~$((tries * 6))s, with $(tt647_load_cards) card(s) fully paged in. The week is in this queue, so routing worked; the specific entry is what is missing."
   fi
@@ -235,7 +245,7 @@ tt647_locate_entry() {
     # tt647_select_exact_week pages the gallery in, so this read sees every card in
     # the week rather than the first four.
     tt647_select_exact_week "$frag" || continue
-    if playwright-cli eval "() => String((((document.querySelector('$TT_HR_GAL_ENTRIES')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | grep -qiw true; then
+    if [ "$(playwright-cli eval "() => String((((document.querySelector('$TT_HR_ENTRIES_ANY')||{}).innerText)||'').indexOf('$needle') >= 0)" 2>/dev/null | _tt_eval_str)" = "true" ]; then
       found="${found:+$found, }$tab"
     fi
   done
@@ -254,7 +264,7 @@ tt647_card_lines() {
   local needle="$1" needle2="${2:-}" out
   # The card may be past the gallery's first page of four.
   tt647_load_cards >/dev/null 2>&1 || true
-  out=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return ''; const hit=t=>t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0); let cards=[...g.querySelectorAll('$TT_HR_CARD')]; if(!cards.length){ cards=[...g.querySelectorAll('$TT_HR_TXT_APPROVER1')].map(e=>{let p=e; for(let i=0;i<9;i++){ if(!p.parentElement) break; p=p.parentElement; if(hit(p.innerText||'')) return p; } return null;}).filter(Boolean); } const c=cards.find(x=>hit(x.innerText||'')); if(!c) return ''; const a=c.querySelector('$TT_HR_TXT_APPROVER1'); const b=c.querySelector('$TT_HR_TXT_APPROVER2'); return (((a&&a.innerText)||'').trim())+'~~'+(((b&&b.innerText)||'').trim()); }" 2>/dev/null | sed -n '2p')
+  out=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_ENTRIES_ANY'); if(!g) return ''; const hit=t=>t.indexOf('$needle')>=0 && ('$needle2'==='' || t.indexOf('$needle2')>=0); let cards=[...g.querySelectorAll('$TT_HR_CARD_ANY')]; if(!cards.length){ cards=[...g.querySelectorAll('$TT_HR_TXT_APPROVER1')].map(e=>{let p=e; for(let i=0;i<9;i++){ if(!p.parentElement) break; p=p.parentElement; if(hit(p.innerText||'')) return p; } return null;}).filter(Boolean); } const c=cards.find(x=>hit(x.innerText||'')); if(!c) return ''; const a=c.querySelector('$TT_HR_TXT_APPROVER1'); const b=c.querySelector('$TT_HR_TXT_APPROVER2'); return (((a&&a.innerText)||'').trim())+'~~'+(((b&&b.innerText)||'').trim()); }" 2>/dev/null | sed -n '2p')
   out="${out%\"}"; out="${out#\"}"
   echo "$out"
 }
