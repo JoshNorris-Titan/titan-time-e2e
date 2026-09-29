@@ -186,12 +186,22 @@ FX_CUSTOMER="${FX_CUSTOMER:-Costco}"
 
 FX_CREATED=0
 FX_PRESENT=0
-FX_LAST_ASSIGNMENTS=""
 declare -A FX_CUSTOMER_OF=()
 FX_MISSING=""
 FX_DRIFT=""
+# "|name|" for each FX_CONSULTANTS entry the dashboard gallery could not find, so
+# fx_ensure_assignments reports their rows instead of failing on the picker.
+FX_NO_CONSULTANT=""
 
-fx_log() { echo "  [fixtures] $*"; }
+# Every line carries the seconds since fx_ensure_all started (FX_T0), so a slow
+# step shows WHERE its time went. Before 2026-09-29 the only number anyone had was
+# the step total (1021s on dev against a 1200s budget), which cannot tell eleven
+# slow objects from one retry loop.
+FX_T0=""
+fx_log() {
+  if [ -n "$FX_T0" ]; then echo "  [fixtures] +$(( SECONDS - FX_T0 ))s $*"
+  else echo "  [fixtures] $*"; fi
+}
 
 # ---------------------------------------------------------------- navigation
 #
@@ -263,6 +273,15 @@ fx_view() {
 
   fx_close_modals || fx_log "note    a popup is still open before switching to '$card'"
 
+  # Already on that view? Then there is nothing to click. The gallery is only in
+  # the DOM while its card's view is showing (the success check below relies on
+  # exactly that), so this reads the same signal BEFORE clicking instead of only
+  # after. Saves a click, an eval and a settle-sleep on every call that did not
+  # need to move - most of fx_create_assignment's calls.
+  if [ "$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-$gal') && !$(_tt_dialog_js))" 2>/dev/null | _tt_eval_str)" = "true" ]; then
+    return 0
+  fi
+
   for i in $(seq 1 12); do
     playwright-cli click ".mx-name-$card" >/dev/null 2>&1
     if [ "$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-$gal'))" 2>/dev/null | _tt_eval_str)" = "true" ]; then
@@ -298,6 +317,101 @@ fx_exists() {
   local box="$1" gal="$2" name="$3" text
   text="$(fx_search "$box" "$gal" "$name")"
   case "$text" in *"$name"*) return 0 ;; *) return 1 ;; esac
+}
+
+# ------------------------------------------------------- one-call form drivers
+#
+# WHY THE FORMS ARE FILLED IN ONE playwright-cli CALL
+# ---------------------------------------------------
+# Every playwright-cli invocation is a fresh node process: ~2.2-2.6s before it
+# does anything. Filling a form a field at a time (tt_fill = fill + blur,
+# tt_combobox_select_text = count + click + pick + a fixed 2s, a date = four
+# calls) cost ~15 calls per project and ~22 per assignment - measured on dev
+# 2026-09-29, ~50s per project and ~66s per assignment, most of it node startup
+# and fixed sleeps rather than the app.
+#
+# _FX_FORM_JS is a Playwright snippet run by `playwright-cli run-code`, so a whole
+# form is one process. It is not a shortcut around the checks the per-call
+# helpers made - it keeps each of them and adds two:
+#   * fill() is Playwright's own, which waits for the input to be visible,
+#     ENABLED and editable. That is the readiness signal the 2026-09-29 flake
+#     (txtProjectName still disabled) lacked, applied to every field.
+#   * a combobox pick waits for the wanted option to render rather than sleeping,
+#     retries the open only while no options show (the same rule as
+#     tt_combobox_select_text: clicking an open combobox toggles it shut), and
+#   * AFTER everything is filled, every field is read back and compared with what
+#     was asked for before Save is pressed. A cascade that reset a dependent
+#     combobox (customer gates project) or a date the picker rejected is caught
+#     here, by name, instead of surfacing as a saved row with the wrong values.
+# Each step's failure is returned as "ERR:<step>: <reason>", never thrown past
+# the caller, so the fixture log says which field it was.
+#
+# The spec is a list of steps: ["fill", sel, value] | ["combo", sel, text] |
+# ["radio", groupName, Yes|No] | ["date", sel, value, blurSel] |
+# ["check-validation"] | ["click", sel].
+_FX_FORM_JS='async page => {
+  const T = 15000;
+  const S = __SPEC__;
+  const short = e => String((e && e.message) || e).split("\n")[0].slice(0, 200);
+  const optJs = w => [...document.querySelectorAll("[role=option]")].find(e => (e.innerText || "").trim().indexOf(w) === 0);
+  const val = async (sel, wide) => page.evaluate(([s, wide]) => { const el = document.querySelector(s); if (!el) return null; const i = el.matches("input") ? el : el.querySelector("input"); const v = i ? (i.value || "") : ""; return wide ? (v + " " + (el.innerText || "")).trim() : v; }, [sel, wide]);
+  const combo = async (cb, want) => {
+    for (let i = 0; i < 6; i++) {
+      if (await page.locator("[role=option]").count() === 0) await page.locator(cb).click({ timeout: T });
+      try {
+        await page.waitForFunction(w => [...document.querySelectorAll("[role=option]")].some(e => (e.innerText || "").trim().indexOf(w) === 0), want, { timeout: 4000 });
+      } catch (e) { continue; }
+      const picked = await page.evaluate(w => { const o = [...document.querySelectorAll("[role=option]")].find(e => (e.innerText || "").trim().indexOf(w) === 0); if (o) { o.click(); return true; } return false; }, want);
+      if (!picked) continue;
+      await page.waitForFunction(([s, w]) => { const el = document.querySelector(s); const i = el && el.querySelector("input"); const v = (i ? (i.value || "") : "") + " " + ((el && el.innerText) || ""); return v.indexOf(w) >= 0 && !document.querySelector("[role=option]"); }, [cb, want], { timeout: T });
+      return;
+    }
+    const n = await page.locator("[role=option]").count();
+    throw new Error("\x27" + want + "\x27 never offered (options showing: " + n + ")");
+  };
+  const radio = async (rb, want) => {
+    const r = await page.evaluate(([rb, w]) => { const g = document.querySelector(".mx-name-" + rb); if (!g) return "NOGROUP"; const ls = [...g.querySelectorAll("label")]; const l = ls.find(x => (x.innerText || "").trim().toLowerCase() === w.toLowerCase()); if (!l) return "NOOPT:" + ls.map(x => (x.innerText || "").trim()).join(","); l.click(); return "OK"; }, [rb, want]);
+    if (r !== "OK") throw new Error(r);
+    await page.waitForFunction(([rb, w]) => { const g = document.querySelector(".mx-name-" + rb); const c = g && g.querySelector("input:checked"); if (!c) return false; const l = c.closest("label") || (c.id && g.querySelector("label[for=\x27" + c.id + "\x27]")) || c.parentElement; return !!l && (l.innerText || "").trim().toLowerCase() === w.toLowerCase(); }, [rb, want], { timeout: 5000 });
+  };
+  const checks = [];
+  for (const st of S) {
+    const [kind, a, b, c] = st;
+    try {
+      if (kind === "fill") { const l = page.locator(a); await l.fill(b, { timeout: T }); await l.evaluate(e => e.blur()); checks.push([a, b, false]); }
+      else if (kind === "combo") { await combo(a, b); checks.push([a, b, true]); }
+      else if (kind === "radio") { await radio(a, b); }
+      else if (kind === "date") { const l = page.locator(a); await l.fill("", { timeout: T }); await l.click({ timeout: T }); await l.pressSequentially(b); await page.locator(c).click({ timeout: T }); checks.push([a, b, false]); }
+      else if (kind === "check-validation") {
+        const bad = await page.evaluate(() => [...document.querySelectorAll(".mx-validation-message")].filter(e => e.offsetParent !== null).map(e => (e.innerText || "").trim()).filter(Boolean).join(" ~ "));
+        if (bad) return "ERR:validation: the form rejected the input before save: " + bad;
+        for (const [sel, want, wide] of checks) { const got = await val(sel, wide); if (got === null || got.indexOf(want) < 0) return "ERR:readback: " + sel + " holds \x27" + got + "\x27, expected \x27" + want + "\x27"; }
+      }
+      else if (kind === "click") { await page.locator(a).click({ timeout: T }); }
+      else return "ERR:spec: unknown step " + kind;
+    } catch (e) { return "ERR:" + kind + " " + a + ": " + short(e); }
+  }
+  return "OK";
+}'
+
+# _fx_js_str <text> -- a JS double-quoted string literal. Fixture values are
+# plain names, dates and e-mail addresses; anything that would need escaping is
+# refused rather than escaped, because a mangled value would be typed into a form.
+_fx_js_str() {
+  case "$1" in *[\"\\\'\`\$]*) tt_fail "fixtures: value [$1] contains a quote, backslash or \$ - not supported by the form driver" ;; esac
+  printf '"%s"' "$1"
+}
+
+# fx_run_form <step> [<step> ...] -- each step is "kind|a|b|c". Echoes OK or
+# ERR:<step>: <reason>.
+fx_run_form() {
+  local spec="" st kind a b c
+  for st in "$@"; do
+    IFS='|' read -r kind a b c <<< "$st"
+    spec="$spec[$(_fx_js_str "$kind"),$(_fx_js_str "$a"),$(_fx_js_str "$b"),$(_fx_js_str "$c")],"
+  done
+  # Split rather than ${var/pat/rep}: bash 5.2 expands & in a replacement.
+  playwright-cli run-code "${_FX_FORM_JS%%__SPEC__*}[$spec]${_FX_FORM_JS#*__SPEC__}" 2>&1 | _tt_eval_str
 }
 
 # ---------------------------------------------------------------- projects
@@ -344,54 +458,158 @@ fx_create_project() {
   # dashboard's form - Project_NewEdit, whose save is btnSave, where
   # Assignment_NewProject's is btnNewProjectSave. Re-clicks while the form is
   # absent, the same swallowed-click lesson as fx_view.
+  #
+  # OPEN IS NOT READY. The popup renders its inputs before the form's object has
+  # arrived, and until then Mendix draws them DISABLED. On dev 2026-09-29 the fill
+  # landed in that window while creating 'E2E Line Items':
+  #   fill('.mx-name-txtProjectName input') failed: ... locator resolved to
+  #   <input mask="" disabled value="" type="text" ...
+  # So the form only counts as open once txtProjectName's input exists AND is
+  # enabled. A present-but-disabled input reads DISABLED: it is polled, never
+  # re-clicked (the form is already up), and named as such if it never clears.
   fx_close_modals || fx_log "note    a popup is still open before Add Project"
   local d r
   d="$(_tt_dialog_js)"
-  for i in 1 2 3 4 5 6 7 8; do
-    r="$(playwright-cli eval "() => { if (document.querySelector('.mx-name-txtProjectName') && !document.querySelector('.mx-name-btnNewProjectSave')) return 'OPEN'; if (document.querySelector('.mx-name-btnNewProjectSave')) return 'WRONGFORM'; if ($d) return 'DIALOG'; const b=[...document.querySelectorAll('.mx-name-btnAddProject')].find(e=>!e.closest('.modal-dialog, .mx-window, .modal-content, [role=dialog]')); if (!b) return 'NOBUTTON'; b.click(); return 'CLICKED'; }" 2>/dev/null | _tt_eval_str)"
+  for i in $(seq 1 12); do
+    r="$(playwright-cli eval "() => { if (document.querySelector('.mx-name-btnNewProjectSave')) return 'WRONGFORM'; const f=document.querySelector('.mx-name-txtProjectName'); if (f) { const inp=f.querySelector('input'); if (!inp) return 'NOINPUT'; return (inp.disabled || inp.readOnly) ? 'DISABLED' : 'OPEN'; } if ($d) return 'DIALOG'; const b=[...document.querySelectorAll('.mx-name-btnAddProject')].find(e=>!e.closest('.modal-dialog, .mx-window, .modal-content, [role=dialog]')); if (!b) return 'NOBUTTON'; b.click(); return 'CLICKED'; }" 2>/dev/null | _tt_eval_str)"
     [ "$r" = "OPEN" ] && { ok=1; break; }
     sleep 1
   done
-  [ -n "$ok" ] || tt_fail "fixtures: Add Project popup did not open (Project_NewEdit's txtProjectName never appeared; last: ${r:-unreadable})"
+  if [ -z "$ok" ]; then
+    case "$r" in
+      DISABLED) tt_fail "fixtures: the Add Project form opened but txtProjectName stayed disabled for ~40s - the form's object never arrived" ;;
+      *)        tt_fail "fixtures: Add Project popup did not open (Project_NewEdit's txtProjectName never appeared; last: ${r:-unreadable})" ;;
+    esac
+  fi
+  [ "$i" -gt 3 ] && fx_log "note    the project form took $i polls to become editable (last: $r)"
 
-  tt_fill ".mx-name-txtProjectName input" "$name"
+  # The whole form, read back field by field, then Save - one process. See
+  # _FX_FORM_JS for what each step waits for and checks.
+  r="$(fx_run_form \
+    "fill|.mx-name-txtProjectName input|$name" \
+    "combo|.mx-name-cbCustomer|$FX_CUSTOMER" \
+    "combo|.mx-name-cbProjectManager|$FX_PROJECT_MANAGER" \
+    "fill|.mx-name-txtApproverName input|$FX_APPROVER_NAME" \
+    "fill|.mx-name-txtApproverEmail input|$email" \
+    "radio|rbApprovalManager|$mgr" \
+    "radio|rbApprovalCustomer|$cust" \
+    "radio|rbNeedsLineItems|$li" \
+    "check-validation" \
+    "click|.mx-name-btnSave")"
+  case "$r" in
+    OK) ;;
+    "ERR:combo .mx-name-cbCustomer:"*)        tt_fail "fixtures: customer '$FX_CUSTOMER' not selectable on the project form — set FX_CUSTOMER to one that exists (${r#ERR:})" ;;
+    "ERR:combo .mx-name-cbProjectManager:"*)  tt_fail "fixtures: project manager '$FX_PROJECT_MANAGER' not selectable — that account may be missing (${r#ERR:})" ;;
+    *)                                        tt_fail "fixtures: could not fill the project form for '$name': ${r:-no answer from the form driver}" ;;
+  esac
 
-  tt_combobox_select_text ".mx-name-cbCustomer" "$FX_CUSTOMER" \
-    || tt_fail "fixtures: customer '$FX_CUSTOMER' not selectable on the project form — set FX_CUSTOMER to one that exists"
-  tt_combobox_select_text ".mx-name-cbProjectManager" "$FX_PROJECT_MANAGER" \
-    || tt_fail "fixtures: project manager '$FX_PROJECT_MANAGER' not selectable — that account may be missing"
-
-  tt_fill ".mx-name-txtApproverName input"  "$FX_APPROVER_NAME"
-  tt_fill ".mx-name-txtApproverEmail input" "$email"
-
-  fx_set_radio "rbApprovalManager"  "$mgr"
-  fx_set_radio "rbApprovalCustomer" "$cust"
-  fx_set_radio "rbNeedsLineItems"   "$li"
-
-  playwright-cli click ".mx-name-btnSave" >/dev/null 2>&1
-  sleep 3
-  tt_clear_dialogs 4 >/dev/null 2>&1 || true
-
-  # Prove it landed rather than trusting the click.
-  fx_view "cardProjects" "galProjects"
-  fx_exists "txtProjectSearch" "galProjects" "$name" \
-    || tt_fail "fixtures: created project '$name' but it is not in the list afterwards — the save was rejected"
-  # This step just picked its customer, so fx_ensure_assignments need not read it
-  # back off the projects gallery (~18s a lookup on dev). A wrong customer would
-  # still surface there: cbProject would not offer the project under it.
-  FX_CUSTOMER_OF[$name]="$FX_CUSTOMER"
+  # Prove it landed rather than trusting the click - by retrieving the saved row.
+  # This used to be a fixed `sleep 3`, then fx_view back to the projects list and
+  # a search-as-you-type for the name: eight playwright-cli calls and ~25s per
+  # project, to learn that a card with that text rendered. The retrieve proves the
+  # object is committed and returns its CustomerName, which is cached below from
+  # what was SAVED rather than from what this function meant to pick. Its flags
+  # are compared with FX_PROJECTS by fx_reconcile_collect once everything is built.
+  fx_await_saved "PROJECT|$name" \
+    || tt_fail "fixtures: saved project '$name' but it cannot be read back — the save was rejected${TT_DIALOG_BLOCKED:+ (the form still reads: $TT_DIALOG_BLOCKED)}"
+  local cust_saved
+  cust_saved="$(printf '%s' "$FX_AWAITED" | cut -d'|' -f8)"
+  [ -n "$cust_saved" ] || tt_fail "fixtures: project '$name' was saved with no customer (read back: $FX_AWAITED)"
+  FX_CUSTOMER_OF[$name]="$cust_saved"
   fx_log "created '$name'"
 }
 
+# ------------------------------------------------------------ data-layer reads
+#
+# fx_config_snapshot (under reconciliation, below) reads every declared project
+# and assignment in ONE playwright-cli eval - a retrieve per row, run in parallel
+# inside the page. Since 2026-09-29 the ensure steps use it for existence too,
+# instead of a UI search per row. The UI way cost, per row: fx_view plus
+# fx_search (seven calls and a fixed 3s) for a project, and the consultant popup
+# (~10 calls, ~35s) for a consultant's assignments - and again as the read-back
+# after every create. Each playwright-cli call is ~2.6s of node startup, and on a
+# freshly cleared environment every one of those pre-checks answers "absent".
+#
+# The data layer is not a weaker witness than the lists. fx_reconcile_collect has
+# always required every declared row to be retrievable through it (ABSENT there
+# fails the step as drift), so "e2e_tm can retrieve it" was already a hard
+# requirement of this step. The gallery answers about what it managed to render,
+# which is how it once reported an existing account as missing (see
+# fx_ensure_consultants). When the snapshot cannot be read, each row falls back to
+# the UI check it used to have: an unreadable data layer costs time, never a
+# wrong answer.
+
+# fx_snap_line <snapshot> <prefix> -- the snapshot line for "PROJECT|<name>" or
+# "ASSIGN|<consultant>|<project>", or nothing. The trailing '|' stops one name
+# matching a longer name it is a prefix of.
+fx_snap_line() {
+  printf '%s\n' "$1" | grep -F -m1 -- "$2|"
+}
+
+# fx_snap_state <line> -> present | absent | unknown
+fx_snap_state() {
+  case "$1" in
+    "")                       echo unknown ;;
+    PROJECT\|*\|ABSENT)       echo absent ;;
+    PROJECT\|*\|ERROR\|*)     echo unknown ;;
+    ASSIGN\|*\|*\|ABSENT)     echo absent ;;
+    ASSIGN\|*\|*\|ERROR\|*)   echo unknown ;;
+    PROJECT\|*|ASSIGN\|*)     echo present ;;
+    *)                        echo unknown ;;
+  esac
+}
+
+# fx_await_saved <prefix> -- after a Save click, wait until the saved row can be
+# retrieved. Leaves the line in FX_AWAITED; returns 1 if it never appears.
+#
+# Walks the confirmation chain on every pass (tt_clear_dialogs), which the old
+# fixed-sleep-then-clear did once, so a Yes/OK the save waits on is still
+# answered. While the form itself is still up, tt_clear_dialogs finds no
+# affirmative button on it and leaves the form's text in TT_DIALOG_BLOCKED - a
+# validation message on a rejected save is exactly what the caller should print.
+FX_AWAITED=""
+fx_await_saved() {
+  local prefix="$1" i snap line
+  FX_AWAITED=""
+  for i in 1 2 3 4 5 6; do
+    tt_clear_dialogs 4 >/dev/null 2>&1
+    snap="$(fx_config_snapshot)"
+    line="$(fx_snap_line "$snap" "$prefix")"
+    if [ "$(fx_snap_state "$line")" = "present" ]; then
+      FX_AWAITED="$line"
+      # A save that succeeded can still leave an information popup behind;
+      # answer it so the next step starts from a clean dashboard.
+      tt_clear_dialogs 4 >/dev/null 2>&1
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 fx_ensure_projects() {
-  local row name mgr cust li email
-  fx_view "cardProjects" "galProjects"
+  local row name mgr cust li email snap line state owner
+  snap="$(fx_config_snapshot)"
   for row in "${FX_PROJECTS[@]}"; do
     # Five fields read from a four-field row leaves email empty, which
     # fx_create_project then defaults to FX_APPROVER_EMAIL.
     IFS='|' read -r name mgr cust li email <<< "$row"
-    if fx_exists "txtProjectSearch" "galProjects" "$name"; then
+    line="$(fx_snap_line "$snap" "PROJECT|$name")"
+    state="$(fx_snap_state "$line")"
+    if [ "$state" = "unknown" ]; then
+      # The data layer could not answer for this row: ask the list, as before.
+      fx_log "note    project '$name' could not be retrieved (${line:-no snapshot}) - checking the list instead"
+      fx_view "cardProjects" "galProjects"
+      if fx_exists "txtProjectSearch" "galProjects" "$name"; then state=present; else state=absent; fi
+      line=""
+    fi
+    if [ "$state" = "present" ]; then
       FX_PRESENT=$((FX_PRESENT+1))
+      # Cache the owner for fx_ensure_assignments - only a live project with a
+      # customer; anything else is left for fx_project_customer to discriminate.
+      # Fields: PROJECT|name|mgr|cust|li|archived|managerName|customerName|email
+      owner="$(printf '%s' "$line" | cut -d'|' -f8)"
+      [ "$(printf '%s' "$line" | cut -d'|' -f6)" = "false" ] && [ -n "$owner" ] && FX_CUSTOMER_OF[$name]="$owner"
       fx_log "ok      project '$name'"
     elif [ "${TT_FIXTURES_READONLY:-0}" = "1" ]; then
       FX_MISSING="$FX_MISSING\n    project: $name ($mgr/$cust/$li)"
@@ -408,11 +626,16 @@ fx_ensure_projects() {
 # VERIFY ONLY — see the scope note at the top. A missing consultant/account is
 # reported with its name so it can be created deliberately.
 fx_ensure_consultants() {
-  local name text
+  local name text found
   fx_view "cardConsultants" "galConsultants"
   for name in "${FX_CONSULTANTS[@]}"; do
-    if fx_exists "txtConsultantSearch" "galConsultants" "$name"; then
-      text="$(fx_search "txtConsultantSearch" "galConsultants" "$name")"
+    # ONE search per consultant. This used to call fx_exists and then fx_search
+    # again for the identical text (four playwright-cli calls and a 3s wait,
+    # twice): the second was only there to read the assignment count, which the
+    # first search had already returned.
+    text="$(fx_search "txtConsultantSearch" "galConsultants" "$name")"
+    case "$text" in *"$name"*) found=1 ;; *) found="" ;; esac
+    if [ -n "$found" ]; then
       FX_PRESENT=$((FX_PRESENT+1))
       # Surface the assignment count: zero is a silent killer for week-based tests.
       case "$text" in
@@ -420,6 +643,7 @@ fx_ensure_consultants() {
         *)                       fx_log "ok      consultant '$name'" ;;
       esac
     else
+      FX_NO_CONSULTANT="$FX_NO_CONSULTANT|$name|"
       # The gallery did not find it. Ask the data layer before saying so out loud:
       # on 2026-09-17 this reported 'E2E ProjectManger' as missing and told the
       # reader to create it, while Administration.Account held it, active, the
@@ -553,68 +777,91 @@ fx_create_assignment() {
 
   # Order is forced by the form: customer gates the project list, project gates
   # consultant/hours/date editability.
-  tt_combobox_select_text ".mx-name-cbCustomer" "$customer" \
-    || tt_fail "fixtures: customer '$customer' not selectable on the assignment form"
-  tt_combobox_select_text ".mx-name-cbProject" "$project" \
-    || tt_fail "fixtures: project '$project' not selectable under customer '$customer' — the project may belong to a different customer"
-  tt_combobox_select_text ".mx-name-cbConsultant" "$consultant" \
-    || tt_fail "fixtures: consultant '$consultant' not selectable on the assignment form"
-
-  tt_fill ".mx-name-txtWeeklyHours input"      "$hours"
-  tt_fill ".mx-name-txtTotalBudgetHours input" "$FX_BUDGET_HOURS"
-  fx_fill_date ".mx-name-dpStartDate input" "$FX_START_DATE"
-  fx_fill_date ".mx-name-dpEndDate input"   "$FX_END_DATE"
-
-  # Refuse to submit a form the widget has already rejected — otherwise the save
-  # silently no-ops and the failure surfaces later as "project not visible".
-  local bad
-  bad="$(playwright-cli eval "() => [...document.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).map(e=>(e.innerText||'').trim()).filter(Boolean).join(' ~ ')" 2>/dev/null | _tt_eval_str)"
-  [ -z "$bad" ] || tt_fail "fixtures: assignment form rejected the input before save: $bad"
-
-  playwright-cli click ".mx-name-btnSave" >/dev/null 2>&1
-  sleep 4
-  tt_clear_dialogs 4 >/dev/null 2>&1 || true
-
-  # Prove it landed rather than trusting the click. The read is kept in
-  # FX_LAST_ASSIGNMENTS so fx_ensure_assignments can reuse it for the consultant's
-  # next rows instead of opening the same popup again straight away.
-  FX_LAST_ASSIGNMENTS="$(fx_consultant_assignments "$consultant")"
-  case "$FX_LAST_ASSIGNMENTS" in
-    *"$project"*) fx_log "created '$consultant' -> '$project'" ;;
-    *) tt_fail "fixtures: saved assignment '$consultant' -> '$project' but it is not on the consultant afterwards — the save was rejected" ;;
+  # Dates are TYPED (the "date" step), never written with fill: the picker only
+  # parses keystrokes - see fx_fill_date. check-validation refuses to submit a
+  # form the widget has already rejected (otherwise the save silently no-ops and
+  # the failure surfaces later as "project not visible"), and reads every field
+  # back before Save. One process for the whole form - see _FX_FORM_JS.
+  local r
+  r="$(fx_run_form \
+    "combo|.mx-name-cbCustomer|$customer" \
+    "combo|.mx-name-cbProject|$project" \
+    "combo|.mx-name-cbConsultant|$consultant" \
+    "fill|.mx-name-txtWeeklyHours input|$hours" \
+    "fill|.mx-name-txtTotalBudgetHours input|$FX_BUDGET_HOURS" \
+    "date|.mx-name-dpStartDate input|$FX_START_DATE|.mx-name-txtWeeklyHours input" \
+    "date|.mx-name-dpEndDate input|$FX_END_DATE|.mx-name-txtWeeklyHours input" \
+    "check-validation" \
+    "click|.mx-name-btnSave")"
+  case "$r" in
+    OK) ;;
+    "ERR:combo .mx-name-cbCustomer:"*)   tt_fail "fixtures: customer '$customer' not selectable on the assignment form (${r#ERR:})" ;;
+    "ERR:combo .mx-name-cbProject:"*)    tt_fail "fixtures: project '$project' not selectable under customer '$customer' — the project may belong to a different customer (${r#ERR:})" ;;
+    "ERR:combo .mx-name-cbConsultant:"*) tt_fail "fixtures: consultant '$consultant' not selectable on the assignment form (${r#ERR:})" ;;
+    "ERR:validation:"*)                  tt_fail "fixtures: assignment form rejected the input before save: ${r#ERR:validation: the form rejected the input before save: }" ;;
+    *)                                   tt_fail "fixtures: could not fill the assignment form for '$consultant' -> '$project': ${r:-no answer from the form driver}" ;;
   esac
+
+  # Prove it landed rather than trusting the click. This used to be a fixed
+  # `sleep 4` and then the consultant detail popup, opened and read and closed
+  # again: ~12 playwright-cli calls and ~35s for every assignment, and the popup
+  # is auto-named (listView1) so it could only be read as text. The retrieve
+  # proves the Assignment row is committed for this consultant AND this project;
+  # its window and archived flag are checked by fx_reconcile_collect afterwards.
+  fx_await_saved "ASSIGN|$consultant|$project" \
+    || tt_fail "fixtures: saved assignment '$consultant' -> '$project' but it cannot be read back — the save was rejected${TT_DIALOG_BLOCKED:+ (the form still reads: $TT_DIALOG_BLOCKED)}"
+  fx_log "created '$consultant' -> '$project'"
 }
 
 fx_ensure_assignments() {
-  local row consultant project hours have customer why last=""
+  local row consultant project hours have customer why last="" snap line state
+  snap="$(fx_config_snapshot)"
   for row in "${FX_ASSIGNMENTS[@]}"; do
     IFS='|' read -r consultant project hours <<< "$row"
 
-    # One popup read per consultant, reused across that consultant's rows.
-    if [ "$consultant" != "$last" ]; then
-      have="$(fx_consultant_assignments "$consultant")"
-      last="$consultant"
-    fi
-
-    case "$have" in
-      NOCARD)
-        # The gallery rendered and the consultant genuinely was not in it.
+    # A consultant fx_ensure_consultants could not find in the gallery is already
+    # on the MISSING list with the reason; its rows cannot be built, so say so
+    # rather than fail on the picker.
+    case "$FX_NO_CONSULTANT" in
+      *"|$consultant|"*)
         FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (consultant not in the dashboard gallery)"
         fx_log "MISSING consultant '$consultant' — not in the gallery, cannot check assignments"
         continue ;;
-      NOGAL|NONAV|"")
-        # The dashboard never got far enough to answer. This is NOT evidence that
-        # the consultant is absent, and must not be worded as if it were: an empty
-        # string here is a swallowed fatal from fx_view/fx_search, which is exactly
-        # what made this line claim five consultants were missing on 2026-09-17.
-        FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (COULD NOT CHECK — the consultants gallery did not open; this says nothing about whether the consultant or the assignment exists)"
-        fx_log "could not check assignments for '$consultant' — the gallery did not open (answer: ${have:-empty})"
-        continue ;;
-      *"$project"*)
-        FX_PRESENT=$((FX_PRESENT+1))
-        fx_log "ok      assignment '$consultant' -> '$project'"
-        continue ;;
     esac
+
+    line="$(fx_snap_line "$snap" "ASSIGN|$consultant|$project")"
+    state="$(fx_snap_state "$line")"
+    if [ "$state" = "unknown" ]; then
+      # The data layer could not answer for this row: read the consultant popup,
+      # as before - one read per consultant, reused across that consultant's rows.
+      fx_log "note    assignment '$consultant' -> '$project' could not be retrieved (${line:-no snapshot}) - reading the consultant popup instead"
+      if [ "$consultant" != "$last" ]; then
+        have="$(fx_consultant_assignments "$consultant")"
+        last="$consultant"
+      fi
+      case "$have" in
+        NOCARD)
+          FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (consultant not in the dashboard gallery)"
+          fx_log "MISSING consultant '$consultant' — not in the gallery, cannot check assignments"
+          continue ;;
+        NOGAL|NONAV|"")
+          # The dashboard never got far enough to answer. This is NOT evidence that
+          # the consultant is absent, and must not be worded as if it were: an empty
+          # string here is a swallowed fatal from fx_view/fx_search, which is exactly
+          # what made this line claim five consultants were missing on 2026-09-17.
+          FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (COULD NOT CHECK — neither the data layer nor the consultants gallery answered; this says nothing about whether the consultant or the assignment exists)"
+          fx_log "could not check assignments for '$consultant' — the gallery did not open (answer: ${have:-empty})"
+          continue ;;
+        *"$project"*) state=present ;;
+        *)            state=absent ;;
+      esac
+    fi
+
+    if [ "$state" = "present" ]; then
+      FX_PRESENT=$((FX_PRESENT+1))
+      fx_log "ok      assignment '$consultant' -> '$project'"
+      continue
+    fi
 
     if [ "${TT_FIXTURES_READONLY:-0}" = "1" ]; then
       FX_MISSING="$FX_MISSING\n    assignment: $consultant -> $project (${hours}h/wk)"
@@ -625,9 +872,10 @@ fx_ensure_assignments() {
     # A customer we cannot read is a REPORTED gap, not a reason to abort the run:
     # the remaining rows still have something useful to say, and the STILL MISSING
     # list is the artefact this step exists to produce.
-    # Cached per project for the run: FX_ASSIGNMENTS names the same project more
-    # than once, and nothing in this step changes which customer owns it. Only a
-    # plain customer name is cached; every discriminated failure is re-asked.
+    # Cached per project for the run (fx_ensure_projects fills it from the
+    # retrieve): FX_ASSIGNMENTS names the same project more than once, and nothing
+    # in this step changes which customer owns it. Only a plain customer name is
+    # cached; every discriminated failure is re-asked.
     customer="${FX_CUSTOMER_OF[$project]:-}"
     if [ -z "$customer" ]; then
       customer="$(fx_project_customer "$project")"
@@ -652,13 +900,9 @@ fx_ensure_assignments() {
 
     fx_create_assignment "$consultant" "$project" "$hours" "$customer"
     FX_CREATED=$((FX_CREATED+1))
-    # Refresh for later rows from the read-back fx_create_assignment just made
-    # (it fails the step unless that read showed the new project, so it is a
-    # complete, current list). This used to open the consultant popup a SECOND
-    # time for the identical answer: ~30s per created assignment, measured on dev
-    # 2026-09-28, when six assignments alone took 1090s of this step's 1200s
-    # budget and the five projects the next run must also rebuild did not fit.
-    have="$FX_LAST_ASSIGNMENTS"
+    # A popup read cached for this consultant (fallback path only) predates the
+    # row just created; drop it so a later fallback re-reads.
+    last=""
   done
 }
 
@@ -952,15 +1196,21 @@ fx_ensure_entries() {
 fx_ensure_all() {
   [ -n "${TT_BASE_URL:-}" ] || tt_fail "fixtures: TT_BASE_URL must be set explicitly — this writes data and must never fall back to a default environment"
 
+  FX_T0=$SECONDS
   tt_login "e2e_tm" "Add Customer"
+  fx_log "phase   signed in as e2e_tm"
 
   # Order matters: a project must exist before it can be assigned.
   fx_ensure_projects
+  fx_log "phase   projects done"
   fx_ensure_consultants
+  fx_log "phase   consultants done"
   fx_ensure_assignments
+  fx_log "phase   assignments done"
 
   # Existence is not enough -- reconcile the CONFIGURATION of what now exists.
   FX_DRIFT="$(fx_reconcile_collect)"
+  fx_log "phase   reconciled"
 
   echo "  [fixtures] $FX_PRESENT present, $FX_CREATED created"
   if [ -n "$FX_MISSING" ]; then
