@@ -95,12 +95,19 @@ tt_hr_remind_e2e_entry() {
     # below collapses into a single token and the poll runs exactly once.
     unset IFS
     playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
+    # ONE CARD = ONE Remind button. The climb from each Remind stops the moment an
+    # ancestor holds more than one, so it can only match text on its OWN card. It used
+    # to climb nine parents unchecked, which from the FIRST card reaches the gallery
+    # holding every card - so when another consultant's entry (dev's Manual Consultant
+    # Three on Manual TT744, 2026-09-28) sat first in the week, this clicked THAT
+    # card's Remind while reporting the E2E entry reminded, and the mail - and the
+    # token link a caller then read - went to a different approver.
     # POLL, rather than looking once four seconds after the click. Selecting a week
     # reloads the entries gallery, and an entry submitted moments ago reaches the
     # queue ASYNCHRONOUSLY — tt647_wait_for_card polls up to 60s for that same
     # reason. Looking once is what made a slow reload read as an absent entry.
     for i in $(seq 1 8); do
-      if playwright-cli eval "() => { const rs=[...document.querySelectorAll('$TT_HR_BTN_REMIND')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
+      if playwright-cli eval "() => { const rs=[...document.querySelectorAll('$TT_HR_BTN_REMIND')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('$TT_HR_BTN_REMIND').length!==1) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
         echo "$lbl"
         return 0
       fi

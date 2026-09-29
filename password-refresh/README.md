@@ -142,8 +142,9 @@ Sunday morning and is recoverable, so it is accepted rather than designed around
 ## Where the browser knowledge lives
 
 `lib/_accounts.sh`. It holds the measured facts about
-`Administration.Account_Overview` — the auto-named hub card, the `textFilter2` login
-filter, the per-row `Edit Account` link, the `Change password` dialog and its two boxes
+the Accounts Overview page (`Core.Account_Overview` since the 2026-09-28 list rebuild) —
+the auto-named hub card, the `fltSearch` box (which needs a header click to take effect),
+the `lstAccountOverview` rows matched exactly on `txtRowLogin`, the per-row `Edit Account` link, the `Change password` dialog and its two boxes
 resolved **by label** because `textBox1` is the confirm box here and the *Username* box on
 the form behind it.
 

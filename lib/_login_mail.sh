@@ -38,8 +38,31 @@
 # the rows that already exist; later reads consider only rows that were not there
 # before. Nothing is deleted, so this is safe on a shared environment. Two limits
 # follow, stated rather than hidden: two byte-identical mails collapse into one,
-# and only rows the grid renders are visible - hence the newest-first sort below,
+# and only rows the list renders are visible - hence the newest-first sort below,
 # which keeps fresh mail on the first page.
+#
+# THE PAGE IS A HAND-BUILT LIST SINCE 2026-09-28 (model commit b2202878, the ST-17
+# table rebuild), not a Data grid 2. What the readers below rely on, measured on
+# cloud dev the same day:
+#
+#   .mx-name-lstEmailsSent            the list: 20 rows, then "Load more"; the data
+#     .mx-name-cntEmailsSentRow       source returns at most the first 200 in order
+#       txtRowSent txtRowTo txtRowSubject txtRowStatus txtRowError
+#       txtRowPlainBody txtRowContent  one named text per column, in that order
+#   .mx-name-fltSearch input          "Recipient or subject" - a CONTAINS match on To
+#                                     OR Subject, so it narrows and never identifies
+#   .mx-name-hdrSent                  the Sent header; tt-sort-desc/-asc is its state.
+#                                     The page opens on Sent, descending
+#
+# THE SEARCH BOX DOES NOT REFRESH THE LIST BY ITSELF. Typing an address and tabbing
+# away leaves the unfiltered rows on screen for as long as anyone waits (16s
+# measured); the list's microflow source re-runs only when something refreshes the
+# holder object, and clicking a sort header does. So _tt_mail_apply clicks the Sent
+# header until it is back on descending - at least once, which is the refresh - and
+# every filtered read then waits for rows that could only have come from that search.
+# The same header click is how _tt_mail_refresh re-reads the list: a browser reload
+# is useless here, because the page has no URL of its own and a reload lands on the
+# home page.
 #
 # Env:
 #   TT_ADMIN_USER / TT_ADMIN_PASS  administrator account (already required)
@@ -54,13 +77,17 @@ _tt_mail_tag() {
 }
 
 _tt_mail_grid_up() {
-  playwright-cli eval "() => String(!!document.querySelector('.mx-name-gridEmailsSent'))" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => String(!!document.querySelector('.mx-name-lstEmailsSent'))" 2>/dev/null | _tt_eval_str
 }
 
-# _tt_mail_open - as the administrator, land on the Emails Sent grid.
+# _tt_mail_open - as the administrator, land on the Emails Sent list with no search
+# in force.
 _tt_mail_open() {
   local i
-  [ "$(_tt_mail_grid_up)" = "true" ] && return 0
+  if [ "$(_tt_mail_grid_up)" = "true" ]; then
+    _tt_mail_unsearch
+    return $?
+  fi
   tt_login "${TT_ADMIN_USER:-MxAdmin}" "Welcome to your homepage" "${TT_ADMIN_PASS:-${TT_PASS:-}}" || return 1
   playwright-cli click ".mx-name-cardEmailsSent" >/dev/null 2>&1
   for i in $(seq 1 20); do
@@ -70,75 +97,115 @@ _tt_mail_open() {
   return 1
 }
 
-# _tt_mail_sort_newest - A DELIBERATE NO-OP. Do not "fix" it.
-#
-# It was written to sort by Sent Date descending so new mail lands on page one.
-# It has never done that: it looks for a column header matching /sent\s*date/i,
-# but the caption on Core.EmailsSent_Overview is the single word `Sent`, so it
-# returns 'nocol' and clicks nothing - and every caller discards the result to
-# /dev/null, so nobody noticed.
-#
-# MAKING IT WORK WOULD BREAK THE CALLERS. The grid's data source already sorts by
-# SentDate DESCENDING by default, which is exactly what this was reaching for, so
-# the no-op is accidentally correct. A working version would click the `Sent`
-# header and TOGGLE that sort away from the default, on every call, inside
-# _tt_mail_refresh and tt_mail_prepare - which tt_mail_token and tt_mail_message
-# depend on. Left as-is on purpose. (Data Grid 2 also does not reliably emit
-# aria-sort, so its success test is unsound even on its own terms.)
-#
-# It is also the wrong instrument. SentDate is stamped only on successful
-# DELIVERY - Email_Connector.SUB_SendQueuedEmail sets it on its success branch
-# only, and neither the error nor the max-attempts branch ever does - so a QUEUED
-# or FAILED message has no SentDate at all, and no amount of sorting brings it to
-# page one. To find a specific message, filter by recipient: see tt_mail_find.
-_tt_mail_sort_newest() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return 'nogrid'; const hs=[...g.querySelectorAll('[role=columnheader], th')]; const h=hs.find(e=>/sent\\s*date/i.test((e.innerText||'').trim())); if(!h) return 'nocol'; for(let i=0;i<3;i++){ const s=(h.getAttribute('aria-sort')||'').toLowerCase(); if(s.indexOf('desc')===0) return 'desc'; (h.querySelector('[role=button],button')||h).click(); } return (h.getAttribute('aria-sort')||'unsorted'); }" 2>/dev/null | _tt_eval_str
+# _tt_mail_sort_state - desc | asc | none (sorted on another column) | NOHDR.
+_tt_mail_sort_state() {
+  playwright-cli eval "() => { const h=document.querySelector('.mx-name-hdrSent'); if(!h) return 'NOHDR'; const c=h.className+''; return /tt-sort-desc/.test(c)?'desc':(/tt-sort-asc/.test(c)?'asc':'none'); }" 2>/dev/null | _tt_eval_str
 }
 
-# _tt_mail_rows - one line per rendered row, cells joined by " ~ ".
-_tt_mail_rows() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return ''; return [...g.querySelectorAll('[role=row], tr')].map(r=>[...r.querySelectorAll('[role=gridcell], td')].map(c=>(c.innerText||'').replace(/\\s+/g,' ').trim()).join(' ~ ')).filter(s=>s.replace(/[ ~]/g,'').length>0).join('\\n'); }" 2>/dev/null | _tt_eval_str
-}
-
-# _tt_mail_refresh - re-read the grid without paying for a fresh login.
-_tt_mail_refresh() {
-  local i
-  playwright-cli reload >/dev/null 2>&1
-  for i in $(seq 1 15); do
-    if [ "$(_tt_mail_grid_up)" = "true" ]; then
-      _tt_mail_sort_newest >/dev/null 2>&1 || true
-      return 0
-    fi
-    sleep 1
+# _tt_mail_apply - make the list re-run its data source, and leave it sorted on
+# Sent, newest first.
+#
+# Clicks the Sent header until its state reads desc: once from asc, twice from desc
+# or from any other column - so there is ALWAYS at least one click, and every click
+# is a round trip that re-reads the rows from the database with whatever the search
+# box holds. Each click is confirmed by the header's state changing, not by a sleep.
+_tt_mail_apply() {
+  local before after i n
+  for n in 1 2 3; do
+    before="$(_tt_mail_sort_state)"
+    [ "$before" = "NOHDR" ] && return 1
+    playwright-cli click ".mx-name-hdrSent" >/dev/null 2>&1
+    after="$before"
+    for i in $(seq 1 20); do
+      after="$(_tt_mail_sort_state)"
+      [ "$after" != "$before" ] && break
+      sleep 0.5
+    done
+    [ "$after" = "$before" ] && return 1
+    [ "$after" = "desc" ] && return 0
   done
+  return 1
+}
+
+# _tt_mail_search <term> - put <term> in the search box and apply it.
+_tt_mail_search() {
+  playwright-cli fill ".mx-name-fltSearch input" "$1" >/dev/null 2>&1
+  tt_commit_focused
+  _tt_mail_apply
+}
+
+# _tt_mail_unsearch - clear a search a previous lookup left in force. The high-water
+# mark and the link readers look at the UNFILTERED list, so a filter left over from
+# tt_mail_find would silently narrow what they see.
+_tt_mail_unsearch() {
+  local v
+  v="$(playwright-cli eval "() => { const i=document.querySelector('.mx-name-fltSearch input'); return i ? i.value : ''; }" 2>/dev/null | _tt_eval_str)"
+  [ -z "$v" ] && return 0
+  _tt_mail_search ""
+}
+
+# _tt_mail_sort_newest - leave the list on Sent, newest first; prints the state.
+#
+# This used to be a deliberate no-op, because on the old Data grid 2 it looked for a
+# header it could never find and a working version would have TOGGLED the sort away
+# from the default. The list's header now says which way it is sorted, so this
+# clicks only when the state is not already desc, and cannot toggle it away.
+#
+# It is still the wrong instrument for finding one specific message: SentDate is
+# stamped only on successful DELIVERY (Email_Connector.SUB_SendQueuedEmail sets it on
+# its success branch only), so a QUEUED or FAILED message has no SentDate and sorts
+# to the far end. To find a specific message, search by recipient: see tt_mail_find.
+_tt_mail_sort_newest() {
+  local st
+  st="$(_tt_mail_sort_state)"
+  if [ "$st" != "desc" ] && [ "$st" != "NOHDR" ]; then
+    _tt_mail_apply >/dev/null 2>&1
+    st="$(_tt_mail_sort_state)"
+  fi
+  echo "$st"
+}
+
+# _tt_mail_rows - one line per rendered row, cells joined by " ~ ", in the column
+# order the old grid had: Sent ~ To ~ Subject ~ Status ~ Error ~ Plain body ~ Content.
+# Callers split on that order (field 2 is the recipient, field 3 the subject).
+_tt_mail_rows() {
+  playwright-cli eval "() => { const l=document.querySelector('.mx-name-lstEmailsSent'); if(!l) return ''; const cols=['txtRowSent','txtRowTo','txtRowSubject','txtRowStatus','txtRowError','txtRowPlainBody','txtRowContent']; return [...l.querySelectorAll('.mx-name-cntEmailsSentRow')].map(r=>cols.map(n=>(((r.querySelector('.mx-name-'+n)||{}).innerText)||'').replace(/\\s+/g,' ').trim()).join(' ~ ')).filter(s=>s.replace(/[ ~]/g,'').length>0).join('\\n'); }" 2>/dev/null | _tt_eval_str
+}
+
+# _tt_mail_refresh - re-read the list without paying for a fresh login.
+_tt_mail_refresh() {
+  if [ "$(_tt_mail_grid_up)" = "true" ]; then
+    _tt_mail_unsearch >/dev/null 2>&1
+    # _tt_mail_unsearch applied already when it had something to clear; when it did
+    # not, this is the re-read.
+    _tt_mail_apply && return 0
+  fi
   _tt_mail_open
 }
 
-# _tt_mail_new_rows - rows that were not present at tt_mail_prepare time.
 # _tt_mail_new_rows - rows that have appeared since tt_mail_prepare.
 #
 # MULTISET difference, not a set difference. This used to be `grep -Fxv -f
 # <seen>`, which drops EVERY row whose text appears in the high-water mark - so a
 # second mail identical to one already there was invisible.
 #
-# Identical is not a corner case here. A row renders as
+# Identical was not a corner case on the old grid, whose Sent column showed a DATE
+# and no time:
 #
 #   9/7/2026 ~ consultant@e2e.local ~ Please submit your overdue timesheet ~ Sent ~ ...
 #
-# leading with a DATE, not a timestamp. Two reminders to the same recipient with
-# the same subject on the same day are therefore byte-identical, and the second
-# one could never be seen.
-#
-# That is what failed verify-consultant-reminder-mail on CI run 34146189329. The
-# diagnostic dump added for exactly this ambiguity printed the mail sitting on the
-# page, Sent, correctly addressed, while the test reported it as never received:
+# Two reminders to the same recipient with the same subject on the same day were
+# therefore byte-identical, and the second one could never be seen. That is what
+# failed verify-consultant-reminder-mail on CI run 34146189329:
 #
 #   [mail] no message for recipient 'consultant' after 278s and 8 poll(s)
 #   [mail]   9/7/2026 ~ consultant@e2e.local ~ Please submit your overdue timesheet ~ Sent ~ ...
 #   [mail] high-water mark held 20 row(s); anything above that was treated as already seen
 #
-# Counting copies fixes it: a row seen once before and present twice now yields
-# one new row. Order is preserved, so the newest-first sort still holds.
+# The list shows date AND minute now ("9/25/2026, 9:02 AM"), which makes a collision
+# rarer but not impossible, so the copies are still counted: a row seen once before
+# and present twice yields one new row. Order is preserved, so the newest-first sort
+# still holds.
 _tt_mail_new_rows() {
   local cur
   cur="$(_tt_mail_rows)"
@@ -151,88 +218,109 @@ _tt_mail_new_rows() {
   fi
 }
 
-# _tt_mail_filter_rows - the rendered rows, as  <to>|||<status>|||<error>.
+# _tt_mail_search_rows <term> <address> - the rows the search <term> produced whose
+# recipient IS <address>, as  <to>|||<status>|||<error>|||<subject>, newest first.
 #
-# Only the three cells a caller needs, so a body cell containing the separator
-# cannot corrupt the split. Column order on the grid is Sent, To, Subject, Status,
-# Error, Body (text), Body (HTML) - hence cells 1, 3 and 4.
-# Prints NOGRID when the grid is not on screen, which is NOT the same as no rows.
-_tt_mail_filter_rows() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-gridEmailsSent'); if(!g) return 'NOGRID'; const rows=[...g.querySelectorAll('[role=row], tr')].filter(r=>r.querySelector('[role=gridcell], td')); return rows.map(r=>{ const c=[...r.querySelectorAll('[role=gridcell], td')].map(x=>(x.innerText||'').replace(/\s+/g,' ').trim()); return (c[1]||'')+'|||'+(c[3]||'')+'|||'+(c[4]||''); }).join('\n'); }" 2>/dev/null | _tt_eval_str
+# Prints  NOGRID    the list is not on screen - NOT the same as no rows
+#         STALE     some row on screen could not have come from this search (its To
+#                   and Subject both lack <term>): the list has not re-run yet
+#         EMPTY     the list shows no rows at all
+#         MATCHES:0 settled, but no row is addressed to <address> - only subject hits
+#         MATCHES:<n> then n lines
+#
+# The recipient test is EQUALITY per address, not containment: the search is a
+# contains-match on To OR Subject, so 'consultant@e2e.local' also finds
+# 'e2e_consultant@e2e.local', and a subject line that quotes an address finds that
+# row too. To is split on ';' and ',' first, so a message with several recipients
+# still counts for each of them.
+_tt_mail_search_rows() {
+  local term="${1//\'/\\\'}" addr="${2//\'/\\\'}"
+  playwright-cli eval "() => { const l=document.querySelector('.mx-name-lstEmailsSent'); if(!l) return 'NOGRID'; const t='$term'.toLowerCase(); const want='$addr'.trim().toLowerCase(); const rows=[...l.querySelectorAll('.mx-name-cntEmailsSentRow')]; if(!rows.length) return 'EMPTY'; const g=(r,n)=>(((r.querySelector('.mx-name-'+n)||{}).innerText)||'').replace(/\\s+/g,' ').trim(); if(!rows.every(r=>(g(r,'txtRowTo')+' '+g(r,'txtRowSubject')).toLowerCase().indexOf(t)>=0)) return 'STALE'; const hit=rows.filter(r=>g(r,'txtRowTo').split(/[;,]/).some(a=>a.trim().toLowerCase()===want)); return ['MATCHES:'+hit.length].concat(hit.map(r=>g(r,'txtRowTo')+'|||'+g(r,'txtRowStatus')+'|||'+g(r,'txtRowError')+'|||'+g(r,'txtRowSubject'))).join('\\n'); }" 2>/dev/null | _tt_eval_str
+}
+
+# _tt_mail_lookup <address> - search for <address> and wait for a settled answer.
+# Prints what _tt_mail_search_rows printed last (MATCHES:<n> plus rows, or EMPTY),
+# NOGRID / NOFILTER when the page cannot answer, or UNSETTLED if it never settled.
+_tt_mail_lookup() {
+  local addr="$1" i rows empties=0
+  _tt_mail_open >/dev/null 2>&1 || { echo "NOGRID"; return 1; }
+  if [ "$(playwright-cli eval "() => String(!!document.querySelector('.mx-name-fltSearch input'))" 2>/dev/null | _tt_eval_str)" != "true" ]; then
+    echo "NOFILTER"
+    return 1
+  fi
+  _tt_mail_search "$addr" || { echo "NOGRID"; return 1; }
+  for i in $(seq 1 12); do
+    rows="$(_tt_mail_search_rows "$addr" "$addr")"
+    case "$rows" in
+      MATCHES:*) printf '%s\n' "$rows"; return 0 ;;
+      EMPTY)
+        # Empty is only trustworthy twice running - once could be a frame caught
+        # mid-update, between the old rows going and the new ones arriving.
+        empties=$((empties+1))
+        [ "$empties" -ge 2 ] && { echo "EMPTY"; return 0; } ;;
+      *) empties=0 ;;
+    esac
+    sleep 1
+  done
+  echo "UNSETTLED"
+  return 1
 }
 
 # tt_mail_find <address> - is there a message for this recipient, and what is it?
 #
 # WHY THIS EXISTS. The old way of answering that was to read page one of the
-# Emails Sent grid and diff it against a baseline. That cannot work. The grid
-# pages at 20 sorted by SentDate DESCENDING, and SentDate is empty for exactly the
-# messages a test has just caused - it is stamped only when the queue DELIVERS
-# one. A queued message therefore sorts to the far end of the list and never
-# reaches page one, so the old read was measuring delivery, not existence, and
-# reported perfectly good templates as missing.
-#
-# Core.EmailsSent_Overview gained a recipient filter (filterEmailsSentTo) for this
-# on 2026-08-28. Filtering asks the question directly and does not care about sort
-# order, page size, or whether anything has been delivered yet.
+# Emails Sent grid and diff it against a baseline. That cannot work: the page is
+# sorted by SentDate DESCENDING, and SentDate is empty for exactly the messages a
+# test has just caused - it is stamped only when the queue DELIVERS one. A queued
+# message therefore sorts to the far end of the list and never reaches page one -
+# and since 2026-09-28 the list stops at 200 rows, so it may not be on ANY page.
+# Searching asks the question directly and does not care about sort order, page
+# size, the cap, or whether anything has been delivered yet.
 #
 # Prints  NOGRID                  the Emails Sent page is not on screen
-#         NOFILTER                the filter widget is not on the page - the model
+#         NOFILTER                the search box is not on the page - the model
 #                                 change has not reached this environment yet
-#         NONE                    the filter matched nothing
-#         FOUND|<status>|<error>  e.g. FOUND|QUEUED| or FOUND|ERROR|Unknown host
+#         NONE                    no message is addressed to exactly <address>
+#         FOUND|<status>|<error>  e.g. FOUND|QUEUED| or FOUND|ERROR|Unknown host,
+#                                 for the newest message to <address>
 #
 # A QUEUED row is a real answer: the message exists, so the template behind it
 # exists. Whether it was ever delivered is a separate question this does not ask.
 tt_mail_find() {
-  local addr="$1" i rows total match
-  _tt_mail_open >/dev/null 2>&1 || { echo "NOGRID"; return 1; }
-  if ! playwright-cli eval "() => String(!!document.querySelector('.mx-name-filterEmailsSentTo input'))" 2>/dev/null | sed -n '2p' | grep -qiw true; then
-    echo "NOFILTER"
-    return 1
-  fi
-
-  # Clear first, and wait for the unfiltered grid to come back. Without this, a
-  # previous lookup that matched nothing leaves an EMPTY grid on screen, and the
-  # next address reads that emptiness as its own answer before its filter has even
-  # been applied - a false "no message" for a message that is really there.
-  tt_fill_commit ".mx-name-filterEmailsSentTo input" ""
-  for i in $(seq 1 8); do
-    sleep 1
-    rows="$(_tt_mail_filter_rows)"
-    [ "$rows" = "NOGRID" ] && continue
-    [ -n "$rows" ] && break
-  done
-
-  tt_fill_commit ".mx-name-filterEmailsSentTo input" "$addr"
-  # The filter debounces by delay:500 in the model and then round-trips to the
-  # server, so nothing is settled for at least a second.
-  for i in $(seq 1 10); do
-    sleep 1
-    rows="$(_tt_mail_filter_rows)"
-    [ "$rows" = "NOGRID" ] && continue
-    if [ -z "$rows" ]; then
-      # Empty is only trustworthy twice running - once could be a frame caught
-      # mid-update, between the old rows going and the new ones arriving.
-      sleep 1
-      [ -z "$(_tt_mail_filter_rows)" ] && { echo "NONE"; return 0; }
-      continue
-    fi
-    # Settled means every visible row belongs to THIS address. While the previous
-    # lookup's rows are still on screen they do not, which is the signal to keep
-    # waiting - no fixed sleep can tell those two states apart.
-    total="$(printf '%s\n' "$rows" | grep -c . || true)"
-    match="$(printf '%s\n' "$rows" | cut -d'|' -f1 | grep -cFi -- "$addr" || true)"
-    if [ "${total:-0}" -gt 0 ] && [ "${total:-0}" -eq "${match:-0}" ]; then
-      # Fields are separated by three pipes, so cut -d'|' sees 1=to, 4=status,
-      # 7=error, with empties between.
-      printf 'FOUND|%s|%s\n' \
-        "$(printf '%s' "$rows" | head -1 | cut -d'|' -f4)" \
-        "$(printf '%s' "$rows" | head -1 | cut -d'|' -f7- | cut -c1-80)"
-      return 0
-    fi
-  done
-  echo "NONE"
+  local addr="$1" out first
+  out="$(_tt_mail_lookup "$addr")"
+  case "$out" in
+    NOGRID|NOFILTER) echo "$out"; return 1 ;;
+    UNSETTLED)       echo "NOGRID"; return 1 ;;
+    EMPTY|MATCHES:0) echo "NONE"; return 0 ;;
+  esac
+  # Fields are separated by three pipes, so cut -d'|' sees 1=to, 4=status,
+  # 7=error, 10=subject, with empties between.
+  first="$(printf '%s\n' "$out" | sed -n '2p')"
+  printf 'FOUND|%s|%s\n' \
+    "$(printf '%s' "$first" | cut -d'|' -f4)" \
+    "$(printf '%s' "$first" | cut -d'|' -f7 | cut -c1-80)"
   return 0
+}
+
+# tt_mail_find_message <address> - the newest message addressed to exactly
+# <address>, printed as "Subject: <s>", a blank line, the plain body, a blank line,
+# then the HTML content as text. Prints nothing and returns 1 when there is none,
+# or when the page could not answer (the reason goes to stderr).
+#
+# tt_mail_find says only THAT a message exists; this is for a test that has to read
+# what it says.
+tt_mail_find_message() {
+  local addr="$1" out esc
+  out="$(_tt_mail_lookup "$addr")"
+  case "$out" in
+    MATCHES:0|EMPTY) return 1 ;;
+    MATCHES:*) ;;
+    *) echo "  [mail] could not look up mail for '$addr': $out" >&2; return 1 ;;
+  esac
+  esc="${addr//\'/\\\'}"
+  playwright-cli --raw eval "() => { const l=document.querySelector('.mx-name-lstEmailsSent'); if(!l) return ''; const want='$esc'.trim().toLowerCase(); const g=(r,n)=>(((r.querySelector('.mx-name-'+n)||{}).innerText)||'').trim(); const r=[...l.querySelectorAll('.mx-name-cntEmailsSentRow')].find(r=>g(r,'txtRowTo').split(/[;,]/).some(a=>a.trim().toLowerCase()===want)); if(!r) return ''; return 'Subject: '+g(r,'txtRowSubject')+'\\n\\n'+g(r,'txtRowPlainBody')+'\\n\\n'+g(r,'txtRowContent'); }" 2>/dev/null \
+    | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{d=d.trim(); try{ d=JSON.parse(d); }catch(e){} if(!String(d).trim()) process.exit(1); process.stdout.write(d+"\n"); })'
 }
 
 # --- the API the tests use -------------------------------------------------
@@ -307,7 +395,7 @@ tt_mail_token() {
   started="$(date +%s)"
   while :; do
     rows="$(_tt_mail_new_rows)"
-    scoped="$(printf '%s\n' "$rows" | grep -i -- "$tag" 2>/dev/null || true)"
+    scoped="$(_tt_mail_rows_to "$tag" <<<"$rows")"
     if [ -n "$scoped" ]; then
       rows="$scoped"
     elif [ -n "$want" ]; then
@@ -351,11 +439,11 @@ tt_mail_token() {
 _tt_mail_dump() {
   local what="$1" secs="$2" polls="$3" all seen
   echo "  [mail] $what after ${secs}s and ${polls} poll(s) of the Emails Sent page" >&2
-  all="$(_tt_mail_rows 2>/dev/null | head -12)"
+  all="$(_tt_mail_rows 2>/dev/null | head -12 | cut -c1-220)"
   if [ -z "$all" ]; then
-    echo "  [mail] the Emails Sent grid could not be read at all - the browser may not have been on that page" >&2
+    echo "  [mail] the Emails Sent list could not be read at all - the browser may not have been on that page" >&2
   else
-    echo "  [mail] most recent rows actually on the page (recipient ~ status ~ subject ...):" >&2
+    echo "  [mail] most recent rows actually on the page (sent ~ recipient ~ subject ~ status ~ error ~ body ...):" >&2
     printf '%s\n' "$all" | sed 's/^/  [mail]   /' >&2
   fi
   seen="$(wc -l < "${TT_MAIL_SEEN_FILE:-/dev/null}" 2>/dev/null || echo 0)"
@@ -375,7 +463,7 @@ tt_mail_message() {
   started="$(date +%s)"
   while :; do
     rows="$(_tt_mail_new_rows)"
-    row="$(printf '%s\n' "$rows" | grep -i -- "$tag" 2>/dev/null | head -1 || true)"
+    row="$(_tt_mail_rows_to "$tag" <<<"$rows" | head -1)"
     if [ -z "$row" ] && [ -z "$want" ]; then
       row="$(printf '%s\n' "$rows" | head -1)"
     fi
@@ -398,6 +486,17 @@ tt_mail_message() {
 # that mail went to the RIGHT address.
 tt_mail_to() {
   _tt_mail_new_rows | grep -i -- "$1" | head -1 | awk -F' ~ ' '{print $2}'
+}
+
+# _tt_mail_rows_to <tag> - of the rows on stdin, those whose RECIPIENT (field 2)
+# contains <tag>, case-insensitively.
+#
+# The recipient only. Matching the whole row, as this used to, let a tag hit the
+# subject or the body: 'consultant' - the reminder spec's tag - appears in the body
+# of nearly every mail this app sends ("E2E Consultant", "your consultant's
+# timesheet"), so the reader could hand back any fresh mail as the reminder.
+_tt_mail_rows_to() {
+  awk -F' ~ ' -v t="$1" 'index(tolower($2), tolower(t)) > 0' 2>/dev/null || true
 }
 
 

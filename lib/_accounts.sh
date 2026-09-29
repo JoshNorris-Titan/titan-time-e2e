@@ -8,8 +8,9 @@
 #
 # Provides:
 #   acct_admin_login <user> <pass>          sign in and assert the session is really theirs
-#   acct_overview_open                      land on Account Overview with its grid rendered
-#   acct_row <login>                        the grid row for that EXACT login, or ''
+#   acct_overview_open                      land on Account Overview with its list rendered
+#   acct_filter <term>                      search, and wait until the list shows that search
+#   acct_row <login>                        the list row for that EXACT login, or ''
 #   acct_state <login>                      "Blocked=<b> Active=<a>" | ABSENT | ERR:<why>
 #   acct_unblock <login>                    clear a failed-login lockout
 #   acct_set_password <login> <newpass>     0 = set, 1 = mechanical failure, 2 = REFUSED
@@ -31,15 +32,29 @@
 # sourced into one shell if that helps the convergence. When the rework settles, point
 # provision-accounts.sh at these and delete its copies -- there should be one implementation.
 #
-# SELECTORS -- MEASURED LIVE ON DEV 2026-09-09, NOT READ FROM THE MODEL
-# ---------------------------------------------------------------------
+# SELECTORS -- MEASURED LIVE ON DEV 2026-09-09, RE-MEASURED 2026-09-28
+# ------------------------------------------------------------------------
 # Admin Hub -> the "Accounts Overview" card is an AUTO-NAMED container (mx-name-container20
-# today), so it is opened by its TEXT. Account Overview then gives:
+# today), so it is opened by its TEXT. Core.Account_Overview stopped being a Data grid 2
+# on 2026-09-28 (the ST-17 table rebuild) and is now a hand-built list:
 #
-#   .mx-name-textFilter2 input            the Login column filter
-#   a[aria-label="Edit Account"]          per row
+#   .mx-name-dvAccountOverviewSelection   the page's filter/sort holder
+#   .mx-name-fltSearch input              "Search by name or login" -- matches FullName OR
+#                                         Name, as a SUBSTRING, so it narrows and never
+#                                         identifies: rows are then matched on txtRowLogin
+#   .mx-name-hdrFullName                  sortable header; tt-sort-asc/-desc says its state
+#   .mx-name-lstAccountOverview           the list (20 per page, "Load more" below)
+#     .mx-name-cntAccountOverviewRow      one row
+#       .mx-name-txtRowLogin              the login, exactly
+#   a[aria-label="Edit Account"]          per row (auto-named actionButton3 underneath)
 #   a[aria-label="Force Reset Password"]  per row  } NEVER CLICKED HERE. Forcing a reset is
 #   a[aria-label="Delete Account"]        per row  } the problem, not the remedy.
+#
+# THE SEARCH BOX DOES NOT REFRESH THE LIST ON ITS OWN (measured on dev 2026-09-28): typing
+# a login and tabbing away leaves the unfiltered rows on screen indefinitely. The list's
+# data source re-runs only when something refreshes the holder -- a header click does. So
+# acct_filter commits the search and then clicks the Full name header, and every read
+# waits until each visible row actually matches the search before believing it.
 #
 # On the Edit Account form: .mx-name-microflowTrigger1 is "Change password", and the
 # dialog it opens has exactly two visible password boxes, labelled "New password" and
@@ -111,10 +126,10 @@ acct_hub_card() {
   return 1
 }
 
-# acct_overview_open -- land on Account Overview with its Login filter rendered, from a
+# acct_overview_open -- land on Account Overview with its search box rendered, from a
 # FRESH page.
 #
-# It always re-navigates rather than short-circuiting when the filter happens to be on
+# It always re-navigates rather than short-circuiting when the list happens to be on
 # screen, and that is the single most load-bearing line in this file. Opening these forms
 # repeatedly leaves EARLIER COPIES in the DOM -- two complete sets of the account fields
 # have been observed at once, with only the second live -- and a fill or a click that lands
@@ -122,7 +137,8 @@ acct_hub_card() {
 #
 # A Mendix reload is NOT a substitute: reloading the client returns to the app's HOME
 # page rather than the page that was open, so reload-then-check hunts for the accounts
-# filter on the Admin Hub and never finds it.
+# list on the Admin Hub and never finds it.
+ACCT_SEARCH=".mx-name-dvAccountOverviewSelection .mx-name-fltSearch input"
 acct_overview_open() {
   local i j
   for i in 1 2 3; do
@@ -132,28 +148,74 @@ acct_overview_open() {
     # rather than reporting a missing page.
     tt_clear_dialogs 4 >/dev/null 2>&1 || true
     for j in $(seq 1 12); do
-      [ "$(acct_ev "() => String(!!document.querySelector('.mx-name-textFilter2'))")" = "true" ] && return 0
+      [ "$(acct_ev "() => String(!!document.querySelector('$ACCT_SEARCH') && !!document.querySelector('.mx-name-lstAccountOverview'))")" = "true" ] && return 0
       sleep 2
     done
-    acct_log "(attempt $i: Account Overview did not render its Login filter; retrying)"
+    acct_log "(attempt $i: Account Overview did not render its search box and list; retrying)"
   done
-  ACCT_LAST_ERROR="Account Overview never rendered its Login filter after 3 attempts -- the page may be erroring (look for 'An error occurred' on screen)"
+  ACCT_LAST_ERROR="Account Overview never rendered its search box (.mx-name-fltSearch) and list (.mx-name-lstAccountOverview) after 3 attempts -- the page may be erroring (look for 'An error occurred' on screen), or the table was renamed"
   return 1
 }
 
-acct_filter() {
-  playwright-cli fill ".mx-name-textFilter2 input" "$1" >/dev/null 2>&1
-  sleep 4
+# acct_sort_state -- asc | desc | none, from the Full name header's dynamic class.
+acct_sort_state() {
+  acct_ev "() => { const h=document.querySelector('.mx-name-hdrFullName'); if(!h) return 'NOHDR'; const c=h.className+''; return /tt-sort-desc/.test(c)?'desc':(/tt-sort-asc/.test(c)?'asc':'none'); }"
 }
 
-# acct_row <login> -- the grid row for that EXACT login, or ''.
+# acct_list_settled <term> -- ROWS:<n> once every visible row's name or login contains
+# <term> (which is what the app's search does), EMPTY when the list shows no rows, and
+# STALE while any row on screen could not have come from that search.
+acct_list_settled() {
+  acct_ev "() => { const l=document.querySelector('.mx-name-lstAccountOverview'); if(!l) return 'NOLIST'; const t='$1'.toLowerCase(); const rows=[...l.querySelectorAll('.mx-name-cntAccountOverviewRow')]; if(!rows.length) return 'EMPTY'; const txt=(r,n)=>(((r.querySelector('.mx-name-'+n)||{}).innerText)||'').toLowerCase(); return rows.every(r=>txt(r,'txtRowLogin').indexOf(t)>=0 || txt(r,'txtRowFullName').indexOf(t)>=0) ? 'ROWS:'+rows.length : 'STALE'; }"
+}
+
+# acct_filter <term> -- search for <term> and wait until the list shows that search.
+#
+# Returns 0 once settled (including a settled EMPTY list), 1 if it never settles, with
+# ACCT_LAST_ERROR saying why. The header click is what makes the search take effect --
+# see SELECTORS above -- and it is clicked until the sort is back to ascending, which is
+# where the page opens, so the row ORDER a caller sees is the page's default.
+acct_filter() {
+  local term="$1" before after i n r="" empties=0
+  playwright-cli fill "$ACCT_SEARCH" "$term" >/dev/null 2>&1
+  tt_commit_focused
+  for n in 1 2 3; do
+    before="$(acct_sort_state)"
+    playwright-cli click ".mx-name-hdrFullName" >/dev/null 2>&1
+    for i in $(seq 1 10); do
+      after="$(acct_sort_state)"
+      [ "$after" != "$before" ] && break
+      sleep 1
+    done
+    if [ "$after" = "$before" ]; then
+      ACCT_LAST_ERROR="clicking the Full name header did not change its sort state ($before) -- the search could not be applied"
+      return 1
+    fi
+    [ "$after" = "asc" ] && break
+  done
+  for i in $(seq 1 15); do
+    r="$(acct_list_settled "$term")"
+    case "$r" in
+      ROWS:*) return 0 ;;
+      EMPTY)  empties=$((empties+1)); [ "$empties" -ge 2 ] && return 0 ;;
+      *)      empties=0 ;;
+    esac
+    sleep 1
+  done
+  ACCT_LAST_ERROR="the account list never settled on the search '$term' (last: $r)"
+  return 1
+}
+
+# acct_row <login> -- the row for that EXACT login, as
+# "<full name> | <login> | <roles> | <last login> | <active> | <employment>", or ''.
 #
 # Exact equality on the Login cell, not a substring of the row: 'e2e_consultant' is a
 # prefix of 'e2e_consultant2', and 'manual_consultant' of 'manual_consultant2', so a
-# contains-match would happily act on the wrong account.
+# contains-match would happily act on the wrong account -- and the search box itself is
+# a contains-match on name OR login.
 acct_row() {
-  acct_filter "$1"
-  acct_ev "() => { const g=[...document.querySelectorAll('[role=grid],[role=treegrid]')].filter(e=>e.offsetParent!==null)[0]; if(!g) return ''; for (const r of [...g.querySelectorAll('[role=row]')]) { const c=[...r.querySelectorAll('[role=gridcell],td')]; if (c.length<2) continue; if ((c[1].innerText||'').trim()==='$1') return c.map(function(x){ return (x.innerText||'').replace(/\\s+/g,' ').trim(); }).join(' | '); } return ''; }"
+  acct_filter "$1" || return 0
+  acct_ev "() => { const l=document.querySelector('.mx-name-lstAccountOverview'); if(!l) return ''; for (const r of [...l.querySelectorAll('.mx-name-cntAccountOverviewRow')]) { const g=(n)=>(((r.querySelector('.mx-name-'+n)||{}).innerText)||'').replace(/\\s+/g,' ').trim(); if (g('txtRowLogin')!=='$1') continue; return [g('txtRowFullName'), g('txtRowLogin'), g('cellRoles'), g('txtRowLastLogin'), g('cellActive'), g('txtRowEmploymentStatus')].join(' | '); } return ''; }"
 }
 
 # acct_state <login> -- "Blocked=<b> Active=<a>" read through the data API.
@@ -215,12 +277,12 @@ acct_fill_field() {
 acct_open_edit() {
   local user="$1" i r
   acct_overview_open || return 1
-  acct_filter "$user"
-  r="$(acct_ev "() => { const g=[...document.querySelectorAll('[role=grid],[role=treegrid]')].filter(e=>e.offsetParent!==null)[0]; if(!g) return 'NOGRID'; for (const r of [...g.querySelectorAll('[role=row]')]) { const c=[...r.querySelectorAll('[role=gridcell],td')]; if (c.length<2) continue; if ((c[1].innerText||'').trim()!=='$user') continue; const a=r.querySelector('a[aria-label=\"Edit Account\"]'); if(!a) return 'NOEDIT'; a.click(); return 'ok'; } return 'NOROW'; }")"
+  acct_filter "$user" || return 1
+  r="$(acct_ev "() => { const l=document.querySelector('.mx-name-lstAccountOverview'); if(!l) return 'NOLIST'; for (const r of [...l.querySelectorAll('.mx-name-cntAccountOverviewRow')]) { if ((((r.querySelector('.mx-name-txtRowLogin')||{}).innerText)||'').trim()!=='$user') continue; const a=r.querySelector('a[aria-label=\"Edit Account\"]'); if(!a) return 'NOEDIT'; a.click(); return 'ok'; } return 'NOROW'; }")"
   case "$r" in
     ok) : ;;
-    NOROW)  ACCT_LAST_ERROR="no account with the login '$user' is in the grid"; return 1 ;;
-    NOGRID) ACCT_LAST_ERROR="Account Overview rendered no grid at all"; return 1 ;;
+    NOROW)  ACCT_LAST_ERROR="no account with the login '$user' is in the list"; return 1 ;;
+    NOLIST) ACCT_LAST_ERROR="Account Overview rendered no list at all"; return 1 ;;
     *)      ACCT_LAST_ERROR="could not open Edit Account for '$user' ($r)"; return 1 ;;
   esac
   for i in $(seq 1 12); do
