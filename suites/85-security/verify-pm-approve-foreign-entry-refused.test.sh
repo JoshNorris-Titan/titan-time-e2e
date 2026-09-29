@@ -25,7 +25,7 @@
 #   C. ACT_Page_Approve does not visibly succeed for the foreign PM;
 #   D. ACT_ApprovalHelper_Approve likewise - the sibling that the dashboard button
 #      actually routes through;
-#   E. the entry's Status is UNCHANGED, read back as HR. C and D only say the
+#   E. the entry's Status is UNCHANGED, read back as administrator. C and D only say the
 #      calls did not report success; this is the one that proves the hours did not
 #      move to ToProcess and on towards an invoice.
 #
@@ -74,7 +74,20 @@ first_guid() {
 }
 
 # ------------------------------------------------------------------- B. the control
-tt_login "e2e_hr" "$TT_HR_READY"
+# control_login - the session every CONTROL read (B and E) is taken in.
+#
+# ADMINISTRATOR, NOT HR (2026-09-29). TARGET walks Project -> ProjectManager_Account
+# -> Account/Name, and taken as e2e_hr that retrieve came back EMPTY on dev while an
+# entry on the manager-approval project was sitting in AwaitingManagerApproval (the
+# diagnostics below printed both). A constraint through a member the session cannot
+# read returns zero rows with no error, so as HR this control could never find
+# anything and B failed on every run, full or targeted. verify-pm-approve-wrong-actor
+# asks the SAME XPath as administrator for exactly this reason and passes. Only the
+# control reads moved; A, C and D still run as the other PM, so what is asserted is
+# unchanged.
+control_login() { tt_login "${TT_ADMIN_USER:-MxAdmin}" "Welcome to your homepage" "${TT_ADMIN_PASS:-${TT_PASS:-}}"; }
+
+control_login
 GUID="$(first_guid "$TARGET")"
 if [ -z "$GUID" ]; then
   # Nothing waiting on the owner PM - 76-bulk's Approve All emptied the queue. Make
@@ -87,7 +100,7 @@ if [ -z "$GUID" ]; then
   # About three minutes, the same budget the 30-approval seeders get from six
   # re-logins with a 6 s pause each - this loop re-reads the data layer without
   # re-logging in, so it needs more tries for the same wait.
-  tt_login "e2e_hr" "$TT_HR_READY"
+  control_login
   for _ in $(seq 1 20); do
     GUID="$(first_guid "$TARGET")"
     [ -n "$GUID" ] && break
@@ -140,7 +153,7 @@ case "$A2" in
 esac
 
 # ------------------------------------------------------------------ E. did it move?
-tt_login "e2e_hr" "$TT_HR_READY"
+control_login
 AFTER="$(tt_authz_readback "$TARGET" 'Status')"
 case "$AFTER" in
   ERR:notfound) bad "E: the entry is no longer awaiting '$OWNER_PM' - it left that status while only '$OTHER_PM' acted on it" ;;
