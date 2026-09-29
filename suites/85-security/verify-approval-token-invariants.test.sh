@@ -57,10 +57,25 @@
 # correctly empty table; that is the price of not letting "could not look" read
 # as a pass.
 #
-# WHY IT RUNS AS ADMIN. Main.ApprovalToken is one of only two entities with a
-# genuine data-layer denial for staff roles - that is what verify-role-token-denial
-# asserts, and this test must not weaken it by discovering some role that can read
-# them. The administrator is the session that legitimately can.
+# RED UNTIL A MODEL-SIDE READER EXISTS (2026-09-29). This step cannot currently
+# see a single token, on any environment, and so fails before A-D. Main.ApprovalToken
+# has NO access rule for ANY role - Administrator included (the domain model's
+# accessRules list is empty, and verify-role-token-denial asserts exactly that for
+# consultant, PM, HR, Titan Manager and the administrator). That denial is the
+# point: a token is a bearer credential. So no client session can ever read these
+# rows, and no role should be given a rule just so this step can look. Measured on
+# dev 2026-09-17 and again 2026-09-29: a session holding ["Administrator"] read 0
+# rows minutes after suites/30-approval had sent customer-approval mail.
+#
+# The fix is model-side, and enters the gates at Gate 1: a Test Data action that
+# runs in a microflow (which ignores entity access) and reports, per token, only
+# ApproverEmail-present, ExpiresAt and createdDate - never the token value. Point
+# tokens() at that and A-D below apply unchanged. Until then this step stays red on
+# purpose; it is not in ci-skip.txt, because a skipped invariant reads as a kept one.
+#
+# It still signs in as the administrator because that is the account the eventual
+# Test Data action will be granted to, and because this test must not weaken
+# verify-role-token-denial by discovering some role that can read tokens.
 #
 # Reads only. Changes nothing.
 #
