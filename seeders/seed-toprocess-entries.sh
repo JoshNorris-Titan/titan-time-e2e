@@ -330,8 +330,10 @@ kpi() {
   case "$v" in ''|*[!0-9]*) echo "?" ;; *) echo "$v" ;; esac
 }
 
+# tab_weeks — the weeks the open tab offers (its picker on Manager/Client, its week
+# groups on a grouped tab), pipe joined. lib/_hr_groups.sh reads either.
 tab_weeks() {
-  pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }"
+  tt_hr_week_labels
 }
 
 # wait_entries — block until the entries gallery has actually re-rendered.
@@ -366,8 +368,7 @@ wait_sel() {
 }
 
 select_week() {
-  [ "$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'Y';} return 'N'; }")" = "Y" ] || return 1
-  sleep 2
+  tt_hr_select_week "$1" || return 1
   wait_entries || true
 }
 
@@ -498,31 +499,26 @@ hr_approve_round() {
   echo "$total"
 }
 
-# count_toprocess — owned cards sitting on WEEKLY TO PROCESS, across all weeks.
-# This is the acceptance measure, so it counts CARDS on the tab rather than
+# count_toprocess — owned rows sitting on Weekly to process, across all weeks.
+# This is the acceptance measure, so it counts ROWS on the tab rather than
 # trusting the submit/approve tallies.
+#
+# TO PROCESS HAS NO WEEK PICKER SINCE 2026-09-28 (model b2202878 / 771be886): it
+# lists week GROUPS whose rows exist only while expanded. The count below opens
+# every week at once (tt_hr_expand_all) and counts owned rows by their consultant
+# cell, instead of selecting one week at a time from a picker that is gone.
 count_toprocess() {
-  local weeks w total=0 n OLD
+  local n
   tt_login "e2e_hr" "$TT_HR_READY" >&2
   wait_sel ".mx-name-cardKpiProcess" 10 || true
   log "    KPIs: pending=$(kpi cardKpiPending) manager=$(kpi cardKpiManager) client=$(kpi cardKpiCustomer) toprocess=$(kpi cardKpiProcess) invoice=$(kpi cardKpiInvoice) sent=$(kpi cardKpiSent)"
-  click_text_soft "WEEKLY TO PROCESS" || true
+  click_text_soft "Weekly to process" || true
   sleep 2
-  wait_sel "$TT_HR_GAL_WEEKS" 12 || { log "    (no To Process weeks list rendered)"; echo 0; return 0; }
-  weeks="$(tab_weeks)"
-  OLD="$IFS"; IFS='|'
-  for w in $weeks; do
-    IFS="$OLD"
-    [ -n "$w" ] || continue
-    select_week "$w" || { IFS='|'; continue; }
-    n="$(pw "() => { const card=$(_card_js); const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return '0'; let c=0; for(const b of [...g.querySelectorAll('$TT_HR_BTN_PROCESS')]){ if(card(b)) c++; } return String(c); }")"
-    case "$n" in ''|*[!0-9]*) n=0 ;; esac
-    [ "$n" != "0" ] && log "    $w -> $n"
-    total=$((total + n))
-    IFS='|'
-  done
-  IFS="$OLD"
-  echo "$total"
+  wait_sel ".mx-name-lstProcessWeeks" 12 || { log "    (no To Process week groups rendered)"; echo 0; return 0; }
+  tt_hr_expand_all >/dev/null 2>&1
+  n="$(pw "() => { $(_tt_hr_grp_js) let c=0; for (const x of HG.groups()) for (const r of HG.rows(x.g)) { const f=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if (r.querySelector('$TT_HR_BTN_PROCESS') && $(owned_js)) c++; } return String(c); }")"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  echo "$n"
 }
 
 # ------------------------------------------------------------------------ main

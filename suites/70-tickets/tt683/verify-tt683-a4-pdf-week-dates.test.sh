@@ -134,7 +134,7 @@ while IFS= read -r line; do
   rmonth="${heading%% *}"
   ryear="${heading##* }"
 
-  # Week rows look like: "Week 1  Oct 04  Oct 05  ...  Total"
+  # Week rows: a "Week N" line opening a block that holds its seven dates.
   rows="$(grep -nE '^[[:space:]]*Week[[:space:]]+[0-9]+' "$txt")"
   if [ -z "$rows" ]; then
     bad "$entry: no 'Week N' row found. The grid did not render, so there are no dates to be right or wrong."
@@ -147,10 +147,22 @@ while IFS= read -r line; do
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     rowtext="${row#*:}"
+    rowno="${row%%:*}"
     label="$(printf '%s' "$rowtext" | grep -oE 'Week[[:space:]]+[0-9]+' | head -1)"
 
-    # Every 'MMM dd' on the row, in order.
-    toks="$(printf '%s' "$rowtext" | grep -oE '[A-Z][a-z][a-z][[:space:]]+[0-9][0-9]')"
+    # Every 'MMM dd' in this week's BLOCK, in order: from its "Week N" line up to
+    # the next one. The redesigned layout (WeeklyExportPDF / MonthlyExportPDF after
+    # 2026-09-17: "TITAN CONSULTING / REPORT OF PROJECT TIME", a "Week N  Week"
+    # header, short day names and a Date band) no longer prints the dates on the
+    # "Week N" line itself - pdftotext -layout puts the day names and then the seven
+    # dates on lines of their own below it, measured on a real dev export
+    # (2026-10-31 archive, 2026-09-28):
+    #     Week 1  Week
+    #               Sun ... Sat  Total      (one per line)
+    #             Oct 25 ... Oct 31  Total  (one per line)
+    # Reading the block keeps the old single-line layout working too.
+    toks="$(awk -v s="$rowno" 'NR==s { print; next } NR>s && /^[[:space:]]*Week[[:space:]]+[0-9]+/ { exit } NR>s { print }' "$txt" \
+      | grep -oE '[A-Z][a-z][a-z][[:space:]]+[0-9][0-9]')"
     n="$(printf '%s\n' "$toks" | grep -c . )"
 
     # B — exactly seven.

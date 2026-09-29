@@ -2,18 +2,26 @@
 # tt-timeout: 12m
 # verify-tt706-sent-print.test.sh
 #
-# TT-706 - "Option to be able to print previously Sent timesheets". HR selects a
-# week on the SENT tab, presses Print, and gets a real PDF for it.
+# TT-706 - "Option to be able to print previously Sent timesheets". HR finds a
+# week on the Sent tab, presses that week's Print, and gets a real PDF for it.
 #
 # WHY THIS EXISTS. TT-706 closed on 2026-08-17 with no coverage of any kind. It
 # is the only route to a document for work that has ALREADY been exported: the
 # monthly export (TT-683) reads AwaitingExport entries and will never see these
-# again, so if btnSentPrint broke, the answer to "send me that timesheet again"
+# again, so if the Sent tab's Print broke, the answer to "send me that timesheet again"
 # would quietly become "we cannot". Nothing else in the suite touches the Sent
 # tab except verify-hr-sent-consultant-sorted, which only checks a dropdown's
 # order.
 #
-# WHAT PRINT ACTUALLY DOES, read from the model rather than guessed:
+# PRINT IS PER WEEK SINCE 2026-09-28 (model b2202878 / 771be886). The Sent tab
+# lost its week picker and its one Print (btnSentPrint): it lists week GROUPS,
+# only the last 8 until "Load more weeks" is pressed, and each week's band carries
+# its own Print (btnSentPrintWeek, running Main.ACT_HRDashboard_PrintWeek for THAT
+# week). So this finds the week holding our consultant's row - Load more included -
+# and presses that band's Print, never "the first Print on the page", which would
+# print whichever week sorts first.
+#
+# WHAT PRINT DID WHEN IT WAS ONE BUTTON, read from the model rather than guessed:
 #   Main.ACT_PrintWeekSent_HRDash guards twice ("Week selected?", "Entries
 #   found?"), builds one Main.PDFMonthHelper per entry through the same
 #   SUB_BuildMonthHelpers / SUB_BuildTimesheetFileName pair the monthly export
@@ -23,7 +31,7 @@
 #   download path.
 #
 # WHAT IT ASSERTS
-#   A. A Sent week can be selected and Print is offered on it.
+#   A. A Sent week holding our consultant can be found, and its band offers Print.
 #   B. Pressing Print reaches the download page rather than one of the two
 #      "nothing to print" messages.
 #   C. The download is a REAL PDF - opened and read, not just named .pdf - and
@@ -49,7 +57,7 @@ TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do c
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_tt683.sh"
 
-TAB="SENT"
+TAB="Sent"
 CNAME="${TT_TT706_CONSULTANT:-E2E Consultant}"
 WORK="${TMPDIR:-/tmp}/tt706-$$"
 
@@ -63,24 +71,25 @@ mkdir -p "$WORK"
 # ---------------------------------------------------------------- 1. the tab
 tt_login "e2e_hr" "$TT_HR_READY"
 tt_hr_click_tab "$TAB" "HR '$TAB' tab"
-tt_wait_for "$TT_HR_GAL_WEEKS" "'$TAB' available-weeks list"
+tt_hr_wait_pane "'$TAB' week groups"
 
-WEEKS="$(tt683_toprocess_weeks)"   # reads TT_HR_GAL_WEEKS, whichever tab is open
+# Every Sent week, not only the 8 on screen: an entry exported from an older week is
+# on this tab behind "Load more weeks".
+WEEKS="$(tt_hr_week_labels all)"
 [ -n "$WEEKS" ] && [ "$WEEKS" != "null" ] \
   || tt_fail "the $TAB tab offers no weeks at all. It lists Exported entries, which suites/70-tickets/tt683/ produces by exporting - if that folder failed, this has nothing to print and the failure to fix is there, not here."
 
-# Find a week that actually holds a card for our consultant. Printing a week that
-# belongs to somebody else would still produce a PDF, and assertion D would then
-# fail while blaming the wrong thing.
+# Find a week that actually holds a row for our consultant - matched on the row's
+# consultant CELL, exactly ('E2E Consultant' is a prefix of 'E2E Consultant Two').
+# Printing a week that belongs to somebody else would still produce a PDF, and
+# assertion D would then fail while blaming the wrong thing.
 FOUND=""
 IFS_SAVE="$IFS"
 IFS='|'
 for wk in $WEEKS; do
   [ -n "$wk" ] || continue
   IFS="$IFS_SAVE"
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$wk')===0); if(el){ el.click(); return 'ok'; } return 'nf'; }" >/dev/null 2>&1
-  sleep 3
-  if playwright-cli eval "() => String((((document.querySelector('.mx-name-galSentEntries')||{}).innerText)||'').indexOf('$CNAME') >= 0)" 2>/dev/null | grep -qiw true; then
+  if tt_hr_select_week "$wk" && [ "$(tt_hr_count_rows_for "$CNAME")" != "0" ]; then
     FOUND="$wk"; break
   fi
   IFS='|'
@@ -88,24 +97,28 @@ done
 IFS="$IFS_SAVE"
 
 [ -n "$FOUND" ] \
-  || tt_fail "no $TAB week holds a card for '$CNAME'. Weeks offered: $WEEKS. The Sent tab only ever shows Exported entries, so this means nothing of this consultant's has been exported yet in this run."
-echo "  printing $TAB week '$FOUND' (holds a '$CNAME' card)"
+  || tt_fail "no $TAB week holds a row for '$CNAME'. Weeks offered: $WEEKS. The Sent tab only ever shows Exported entries, so this means nothing of this consultant's has been exported yet in this run."
+echo "  printing $TAB week '$FOUND' (holds a '$CNAME' row)"
 
 # ------------------------------------------------- 2. Print reaches the page
-playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnSentPrint'); if(!b) return 'missing'; if(b.disabled) return 'disabled'; b.click(); return 'clicked'; }" 2>/dev/null | _tt_eval_str | grep -qiw clicked \
-  || tt_fail "btnSentPrint was not clickable on the $TAB tab. It is the only control TT-706 added, so if it is absent the feature is gone rather than broken."
+r="$(tt_hr_print_week "$FOUND")"
+[ "$r" = "ok" ] \
+  || tt_fail "week '$FOUND''s Print (.mx-name-btnSentPrintWeek on that week's band) could not be pressed: $r. It is the control TT-706 is about, so if it is absent the feature is gone rather than broken."
 sleep 4
 
-# Main.ACT_PrintWeekSent_HRDash ends at Main.ExportAll_Waiting when it has
+# The print ends at Main.ExportAll_Waiting when it has
 # something to print, and at a Show message when it does not. Distinguish the two
 # rather than timing out on the download button: "no week selected" and "no
 # entries found" are different diagnoses from "the export page never painted".
+# The page is recognised by its ZIP/download button, NOT by any button reading
+# "Print": every Sent week's band has one of those, so /print/ matched the button
+# just pressed and called the page reached before it had opened.
 reached=""
 for _ in $(seq 1 25); do
-  state="$(playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip|download|print/i.test(e.innerText||'')); if(b) return 'page'; const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog]'); if(d) return 'dialog:' + ((d.innerText||'').replace(/\s+/g,' ').trim().slice(0,120)); return 'waiting'; }" 2>/dev/null | _tt_eval_str)"
+  state="$(playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/zip|download/i.test(e.innerText||'') && !e.closest('.mx-name-lstSentWeeks')); if(b) return 'page'; const d=document.querySelector('.mx-dialog,.mx-window,[role=dialog]'); if(d) return 'dialog:' + ((d.innerText||'').replace(/\s+/g,' ').trim().slice(0,120)); return 'waiting'; }" 2>/dev/null | _tt_eval_str)"
   case "$state" in
     page) reached=1; break ;;
-    dialog:*) tt_fail "Print stopped at a message instead of the download page: ${state#dialog:}. Main.ACT_PrintWeekSent_HRDash shows one when no week is selected or no entries are found - but a week WAS selected above and it holds a '$CNAME' card, so this is the guard firing when it should not." ;;
+    dialog:*) tt_fail "Print stopped at a message instead of the download page: ${state#dialog:}. The print shows one when it finds no week or no entries - but the button pressed was week '$FOUND''s own, and that week holds a '$CNAME' row, so this is the guard firing when it should not." ;;
   esac
   sleep 2
 done
@@ -151,10 +164,16 @@ while IFS= read -r pdf; do
   txt="$pdf.txt"
   pdftotext -layout "$pdf" "$txt" 2>/dev/null || true
   [ -s "$txt" ] || { echo "  (no text in $(basename "$pdf") - a blank render)"; continue; }
-  if grep -qiF "$CNAME" "$txt"; then hit="$pdf"; break; fi
+  # Case-insensitive match done in bash, NOT with `grep -i`: Git Bash's grep 3.0
+  # ABORTS (rc 134) on -i -F under the runner's environment, with or without -q,
+  # and an abort reads as "no match" - measured twice on 2026-09-28 against PDFs
+  # whose text plainly named the consultant.
+  body="$(tr '[:upper:]' '[:lower:]' < "$txt")"
+  lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+  case "$body" in *"$(lc "$CNAME")"*) hit="$pdf"; break ;; esac
   # The filename form is "Last First"; the body may carry either order.
   last="${CNAME##* }"; first="${CNAME%% *}"
-  if grep -qiF "$last" "$txt" && grep -qiF "$first" "$txt"; then hit="$pdf"; break; fi
+  case "$body" in *"$(lc "$last")"*) case "$body" in *"$(lc "$first")"*) hit="$pdf"; break ;; esac ;; esac
 done <<< "$PDFS"
 
 if [ -z "$hit" ]; then

@@ -61,8 +61,23 @@ _tt647.sh:TT647_TAB_CLIENT
 _login.sh:TT_BASE
 _login.sh:TT_DIALOG_SEL
 _login.sh:TT_HR_READY
-_login.sh:TT_HR_GAL_MONTHS
-_login.sh:TT_HR_GAL_INVOICE
+_login.sh:TT_HR_GAL_WEEKS
+_login.sh:TT_HR_GAL_ENTRIES
+_login.sh:TT_HR_CARD
+_login.sh:TT_HR_LST_WEEKS
+_login.sh:TT_HR_LST_ENTRIES
+_login.sh:TT_HR_ROW
+_login.sh:TT_HR_LST_MONTHS
+_login.sh:TT_HR_LST_INVOICE
+_login.sh:TT_HR_INVOICE_ROW
+_login.sh:TT_HR_BTN_EXPORT_MONTH
+_login.sh:TT_HR_BTN_PRINT_WEEK
+_login.sh:TT_HR_BTN_SENT_LOADMORE
+_login.sh:TT_HR_WEEKS_ANY
+_login.sh:TT_HR_ENTRIES_ANY
+_login.sh:TT_HR_CARD_ANY
+_login.sh:TT_HR_TXT_CONSULTANT_ANY
+_tt683.sh:TT683_TAB_INVOICE
 _login.sh:TT_HR_BTN_INVOICE_VIEW
 _login.sh:TT_HR_BTN_INVOICE_REJECT
 "
@@ -80,7 +95,34 @@ $CONTRACT
 EOF
 echo "  $checked declared variable(s) present"
 
-# ------------------------------------------------ 4. the reporter is executable
+# ------------------------------------- 4. HR selectors the 2026-09-28 rebuild removed
+# Model b2202878 / 771be886 rebuilt HR's To Process, Sent and Monthly tabs as week and
+# month GROUPS. These names no longer exist
+# on Main.HRDashboard, so any live use of one is a selector that can only ever time
+# out - or, inside a union or an `a || b` fallback, silently match nothing. Comments
+# may still name them (the history is worth keeping); code may not.
+#
+# The Manager/Client unions are checked separately, because a removed name inside
+# TT_HR_GAL_WEEKS would not be caught by the grep below (it is built from quoted
+# strings the grep does see, but asserting it directly says why it matters): those
+# unions must name ONLY the two tabs that still have a picker and a gallery.
+REMOVED='galProcessEntries|galSentEntries|galInvoiceEntries|galProcessAvailableWeeks|galSentAvailableWeeks|galAvailableMonths|containerProcessCard|containerSentCard|btnExportAll|btnSentPrint([^W]|$)'
+HITS="$(grep -rnE "$REMOVED" "$TT_ROOT/lib" "$TT_ROOT/suites" "$TT_ROOT/seeders" --include='*.sh' 2>/dev/null \
+  | grep -v '/verify-lib-contract.test.sh:' \
+  | awk -F: '{ line=$0; sub(/^[^:]*:[^:]*:/, "", line); if (line !~ /^[[:space:]]*#/) print $1 ":" $2 }')"
+if [ -n "$HITS" ]; then
+  bad "live code still uses an HR selector removed from the model on 2026-09-28: $(printf '%s' "$HITS" | sed "s#$TT_ROOT/##" | tr '\n' ' ')"
+else
+  echo "  no live use of a removed HR selector"
+fi
+UNIONS="$(bash -c "set -u; source '$TT_ROOT/lib/_login.sh' >/dev/null 2>&1; printf '%s %s %s' \"\$TT_HR_GAL_WEEKS\" \"\$TT_HR_GAL_ENTRIES\" \"\$TT_HR_CARD\"" 2>/dev/null)"
+case "$UNIONS" in
+  *Process*|*Sent*|*Invoice*) bad "TT_HR_GAL_WEEKS / TT_HR_GAL_ENTRIES / TT_HR_CARD name a To Process, Sent or Monthly widget ($UNIONS); since 2026-09-28 they are the Manager/Client picker tabs only - the grouped tabs have TT_HR_LST_* / TT_HR_ROW" ;;
+  *Manager*Client*) echo "  the picker-tab unions name Manager and Client only" ;;
+  *) bad "could not read the picker-tab unions back (got '$UNIONS')" ;;
+esac
+
+# ------------------------------------------------ 5. the reporter is executable
 [ -f "$TT_ROOT/tools/zipreport.py" ] \
   || bad "tools/zipreport.py is missing — lib/_tt683.sh calls it to read the export archive"
 

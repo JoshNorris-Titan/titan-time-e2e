@@ -3,7 +3,7 @@
 #
 # Independent of the seeder's own tallies: it counts CARDS on the tab rather than
 # trusting how many submits/approvals were reported. Prints the dashboard KPI
-# (every consultant) plus a per-week count of cards owned by the e2e consultants.
+# (every consultant) plus a per-week count of rows owned by the e2e consultants.
 #
 # Not named *.test.sh -- it asserts nothing, it just reports.
 # Env: TT_BASE_URL, TT_ROLE_PASS
@@ -19,7 +19,6 @@ owned_js() {
   for n in $NAMES; do [ -n "$n" ] || continue; out="$out || f==='$n'"; done
   IFS="$OLD"; echo "(false${out})"
 }
-CARD="(b => { let p=b; for(let i=0;i<12;i++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||'').trim(); if(!t) continue; const f=t.split('\n')[0].trim(); if($(owned_js)) return p; } return null; })"
 
 tt_login "e2e_hr" "$TT_HR_READY"
 sleep 3
@@ -32,23 +31,22 @@ done
 tt_hr_try_click_tab "Weekly to process" >/dev/null
 sleep 3
 
-WEEKS="$(pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }")"
+# Weekly to process is a list of week GROUPS since 2026-09-28 (model b2202878 /
+# 771be886), each group's rows rendered only while it is expanded. Open them all,
+# then count owned rows per group by their consultant cell.
+tt_hr_expand_all >/dev/null 2>&1
 
 echo
-echo "WEEKLY TO PROCESS, per week (cards owned by e2e consultants):"
+echo "Weekly to process, per week (rows owned by e2e consultants):"
+PER="$(playwright-cli eval "() => { $(_tt_hr_grp_js) return HG.groups().map(x => { let c=0; for (const r of HG.rows(x.g)) { const f=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if ($(owned_js)) c++; } return x.label + '~~' + c; }).join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .)"
 TOTAL=0
-OLD="$IFS"; IFS='|'
-for w in $WEEKS; do
-  IFS="$OLD"
-  [ -n "$w" ] || continue
-  pw "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'N'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$w')===0); if(el){el.click(); return 'Y';} return 'N'; }" >/dev/null
-  sleep 3
-  N="$(pw "() => { const card=$CARD; const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return '0'; let n=0; for(const b of [...g.querySelectorAll('$TT_HR_BTN_PROCESS')]){ if(card(b)) n++; } return String(n); }")"
-  case "$N" in ''|*[!0-9]*) N=0 ;; esac
-  printf '  %-26s %s\n' "$w" "$N"
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  N="${line##*~~}"; case "$N" in ''|*[!0-9]*) N=0 ;; esac
+  printf '  %-44s %s\n' "${line%~~*}" "$N"
   TOTAL=$((TOTAL + N))
-  IFS='|'
-done
-IFS="$OLD"
+done <<EOF2
+$PER
+EOF2
 echo
-echo "TOTAL owned cards in WEEKLY TO PROCESS: $TOTAL"
+echo "TOTAL owned rows in Weekly to process: $TOTAL"

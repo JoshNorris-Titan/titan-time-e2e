@@ -55,95 +55,80 @@ tt683_tab_labels() {
   echo "Pending|Manager approval|Client approval|Weekly to process|Monthly to be invoiced|Sent"
 }
 
-# MATCH THE WIDGET NAME, NOT THE CAPTION. The control on MONTHLY TO BE INVOICED
-# is .mx-name-btnExportAll but it READS "Export" - so the old /export\s*all/i test
-# against the button caption never matched, tt683_open_export_tab walked every tab
-# and gave up, and a1/a2 reported "no HR dashboard tab exposes an 'Export All'
-# button" against a dashboard that has one. Widget names are what this suite is
-# supposed to select on precisely because captions drift; the caption match stays
-# only as a loose fallback.
+# THERE IS NO EXPORT ALL ANY MORE (model b2202878 / 771be886, 2026-09-28).
+# Monthly to be invoiced lists MONTH GROUPS, and each month's band carries its own
+# Export (.mx-name-btnInvoiceExportMonth, running Main.ACT_HRDashboard_ExportMonth,
+# which hands that month - and the tab's consultant/project filters - to the
+# unchanged Main.ACT_ExportAll_HRDash). So "which month gets exported" is no longer
+# a picker state left over from whatever ran before: it is which band's button is
+# pressed, and every band's button has the same name. Everything below presses one
+# by the month's label, through tt_hr_export_month, and never by "the first Export
+# on the page" - the old /^export/i caption fallback would now press whichever month
+# happens to sort first.
 tt683_has_export_button() {
-  playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnExportAll') || [...document.querySelectorAll('button,a')].some(e=>/^export/i.test((e.innerText||'').trim())))" 2>/dev/null | grep -qiw true
+  [ "$(playwright-cli eval "() => String(!!document.querySelector('$TT_HR_BTN_EXPORT_MONTH'))" 2>/dev/null | _tt_eval_str)" = "true" ]
 }
 
-# tt683_open_export_tab — log in as HR and land on whichever tab owns the
-# "Export All" button. Prints the tab label.
-tt683_open_export_tab() {
-  local lbl labels
-  tt_login "e2e_hr" "$TT_HR_READY"
-  if tt683_has_export_button; then echo "(landing tab)"; return 0; fi
-  labels="$(tt683_tab_labels)"
-  local IFS='|'
-  for lbl in $labels; do
-    [ -n "$lbl" ] || continue
-    unset IFS
-    # tt_try_click_text, not tt_click_text: the fatal version EXITS THE WHOLE TEST
-    # when a caption is missing, and 2>/dev/null on it hid the reason — one tab
-    # caption this dashboard happened not to render would kill the run here rather
-    # than let the walk try the next tab, and kill it printing nothing at all.
-    tt_hr_try_click_tab "$lbl" || { IFS='|'; continue; }
-    sleep 2
-    if tt683_has_export_button; then echo "$lbl"; return 0; fi
-    IFS='|'
-  done
-  unset IFS
-  tt_fail "no HR dashboard tab exposes an 'Export All' button (looked at: $labels)"
-}
-
-# _tt683_month_labels — the months in the Monthly tab's picker, pipe joined; ""
-# when the tab renders no month picker.
-_tt683_month_labels() {
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_MONTHS'); if(!g) return ''; return [...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>t.length>2 && t.length<40))].join('|'); }" 2>/dev/null | _tt_eval_str
-}
-
-# _tt683_month_select <label> — "ok" or "nf".
-_tt683_month_select() {
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_MONTHS'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim()==='$1'); if(el){ el.click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str
-}
-
-# _tt683_month_census — "<all cards>|<e2e-owned cards>" for the month on screen,
-# after paging the invoice gallery to the end. A card's first line is its
-# consultant (verified on dev 2026-09-14: "Manual Consultant / Submitted Sep 09 /
-# View / Reject"); there is no project on these cards.
-_tt683_month_census() {
-  local owned; owned="$(_tt683_owned_js)"
-  tt_gallery_load_all "$TT_HR_GAL_INVOICE" >/dev/null 2>&1
-  playwright-cli eval "() => { const cs=[...document.querySelectorAll('$TT_HR_GAL_INVOICE .widget-gallery-item')].filter(c=>c.offsetParent!==null); let o=0; for(const c of cs){ const t=(c.innerText||'').trim(); if($owned) o++; } return cs.length + '|' + o; }" 2>/dev/null | _tt_eval_str
-}
-
-# tt683_choose_export_month — on the Monthly tab, select the month to export, or
-# REFUSE. Prints the chosen month on stdout and a per-month census on stderr.
+# tt683_open_export_tab — log in as HR and open Monthly to be invoiced, the tab
+# that owns the per-month Export. Prints the tab label. Fatal when the tab's month
+# list never renders.
 #
-# EXPORT ALL EXPORTS THE WHOLE SELECTED MONTH, NOT JUST OUR ENTRIES.
-# Main.ACT_ExportAll_HRDash takes every AwaitingExport entry in
-# HRDashboardHelper_MonthlyHelper's month and Main.SUB_ExportAll flips them all to
-# Exported. It used to press Export All on whatever month the tab happened to
-# have selected. Two things were wrong with that, both seen on 2026-09-14:
+# Opened by widget rather than found by walking the tabs for an Export button: the
+# walk existed because the tab strip was unnamed, and the tiles are named now. A
+# month list with no months is still the right tab - the census below says so
+# rather than this helper wandering off to look elsewhere.
+tt683_open_export_tab() {
+  tt_login "e2e_hr" "$TT_HR_READY"
+  tt_hr_click_tab "$TT683_TAB_INVOICE" "HR Monthly to be invoiced tab"
+  tt_wait_for "$TT_HR_LST_MONTHS" "the Monthly to be invoiced month list (lstInvoiceMonths)"
+  echo "$TT683_TAB_INVOICE"
+}
+
+# _tt683_month_labels — the month groups on the Monthly tab, pipe joined ("Sep 2026").
+_tt683_month_labels() {
+  tt_hr_week_labels
+}
+
+# _tt683_month_select <label> — expand that month (and only it): "ok" or "nf".
+_tt683_month_select() {
+  case "$(tt_hr_group_expand "$1")" in OK:*) echo ok ;; *) echo nf ;; esac
+}
+
+# _tt683_month_census — "<all rows>|<e2e-owned rows>" for the EXPANDED month, with
+# its row list paged in. A row's consultant is its txtInvoiceConsultant cell.
+_tt683_month_census() {
+  tt_hr_group_census "$(_tt683_owned_js)"
+}
+
+# tt683_choose_export_month — on the Monthly tab, pick the month to export, or
+# REFUSE. Prints the chosen month on stdout and a per-month census on stderr, and
+# leaves that month the only one expanded.
+#
+# A MONTH'S EXPORT EXPORTS THE WHOLE MONTH, NOT JUST OUR ENTRIES.
+# Main.ACT_ExportAll_HRDash takes every AwaitingExport entry in the month it is
+# handed and Main.SUB_ExportAll flips them all to Exported. Two things went wrong
+# when the old Export All pressed whatever month the picker had selected, both seen
+# on 2026-09-14:
 #   * Rishika's Manual review environment keeps six AwaitingExport weeks on this
 #     tab (Jun 2026, all 'Manual Consultant'). Had that month been the selected
 #     one, a1 would have exported them, and nothing would have said so.
 #   * the selected month held ONE pairing, so a1's split check failed "only one
 #     consultant/project pairing was in the archive" (run 34885953025) although
 #     a0 had put >= 2 into AwaitingExport - just not in that month.
-# So: take the month with the MOST e2e cards among months holding ONLY e2e cards.
-# A month holding anyone else's card is never exported, and if there is no
-# e2e-only month this fails rather than consume someone else's data.
+# So: take the month with the MOST e2e rows among months holding ONLY e2e rows. A
+# month holding anyone else's row is never exported, and if there is no e2e-only
+# month this fails rather than consume someone else's data.
 tt683_choose_export_month() {
   local months m c total own best="" bestn=0 census="" IFS
   months="$(_tt683_month_labels)"
   if [ -z "$months" ] || [ "$months" = "null" ]; then
-    c="$(_tt683_month_census)"; total="${c%%|*}"; own="${c##*|}"
-    echo "  export census: (no month picker) ${own:-0} e2e of ${total:-0} card(s)" >&2
-    [ "${total:-0}" -gt 0 ] && [ "$own" = "$total" ] \
-      || tt_fail "refusing to press Export All: the Monthly tab shows $total card(s), $own of them e2e, and Export All would export every one of them"
-    echo "(all)"; return 0
+    tt_fail "refusing to export: the Monthly to be invoiced tab lists no month at all, so nothing is awaiting export. verify-tt683-a0 is what should put e2e entries there."
   fi
   IFS='|'
   for m in $months; do
     unset IFS
     [ -n "$m" ] || { IFS='|'; continue; }
-    [ "$(_tt683_month_select "$m")" = "ok" ] || { census="$census $m=unselectable;"; IFS='|'; continue; }
-    sleep 3
+    [ "$(_tt683_month_select "$m")" = "ok" ] || { census="$census $m=unexpandable;"; IFS='|'; continue; }
     c="$(_tt683_month_census)"; total="${c%%|*}"; own="${c##*|}"
     total="${total:-0}"; own="${own:-0}"
     census="$census $m=${own}e2e/${total};"
@@ -153,35 +138,39 @@ tt683_choose_export_month() {
     IFS='|'
   done
   unset IFS
-  echo "  export census (e2e/all cards):$census" >&2
+  echo "  export census (e2e/all rows):$census" >&2
   [ -n "$best" ] \
-    || tt_fail "refusing to press Export All: no month on the Monthly tab holds only e2e cards (${census# }). Export All exports EVERY AwaitingExport entry in the selected month, so any of these would consume somebody else's data. verify-tt683-a0 is what should put e2e entries into a month of their own."
-  [ "$(_tt683_month_select "$best")" = "ok" ] || tt_fail "could not re-select month '$best' to export it"
-  sleep 3
+    || tt_fail "refusing to export: no month on the Monthly tab holds only e2e rows (${census# }). A month's Export exports EVERY AwaitingExport entry in it, so any of these would consume somebody else's data. verify-tt683-a0 is what should put e2e entries into a month of their own."
+  [ "$(_tt683_month_select "$best")" = "ok" ] || tt_fail "could not re-expand month '$best' to export it"
   # Re-check the month actually on screen: the census is only as good as the
-  # selection it was taken under, and this is the last look before a destructive click.
+  # expansion it was taken under, and this is the last look before a destructive click.
   c="$(_tt683_month_census)"; total="${c%%|*}"; own="${c##*|}"
   [ "${total:-0}" -gt 0 ] && [ "$own" = "$total" ] \
-    || tt_fail "refusing to press Export All: month '$best' now shows $own e2e of $total card(s), not the all-e2e month the census found"
+    || tt_fail "refusing to export: month '$best' now shows $own e2e of $total row(s), not the all-e2e month the census found"
   echo "$best"
 }
 
-# tt683_click_export_all — choose a safe month, click Export All, wait for
-# Main.ExportAll_Waiting. EVERY Export All in the suite goes through here, which is
-# why the month choice lives here rather than in the specs: verify-hr-reject-after-export
-# presses it best-effort with its errors discarded, and must not be able to skip it.
+# tt683_click_export_all — choose a safe month, press THAT month's Export, wait for
+# Main.ExportAll_Waiting. The name is kept from the Export All days because every
+# month export in the suite goes through here, which is why the month choice lives
+# here rather than in the specs: verify-hr-reject-after-export presses it best-effort
+# with its errors discarded, and must not be able to skip it.
+#
+# Exports TT683_EXPORTED_MONTH (the month label) for callers that assert on it.
 tt683_click_export_all() {
-  local month
+  local month r
   month="$(tt683_choose_export_month)" || exit 1
+  export TT683_EXPORTED_MONTH="$month"
   echo "  exporting month: $month" >&2
-  playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnExportAll') || [...document.querySelectorAll('button,a')].find(e=>/^export/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok \
-    || tt_fail "could not click the 'Export All' button"
+  r="$(tt_hr_export_month "$month")"
+  [ "$r" = "ok" ] \
+    || tt_fail "could not press month '$month''s Export (.mx-name-btnInvoiceExportMonth on that month's band): $r"
   local i
   for i in $(seq 1 30); do
     tt683_popup_open && return 0
     sleep 1
   done
-  tt_fail "the 'Exporting Timesheets' popup (Main.ExportAll_Waiting) never appeared after Export All"
+  tt_fail "the export popup (Main.ExportAll_Waiting) never appeared after pressing month '$month''s Export"
 }
 
 # THE POPUP IS TITLED "Exporting PDF", NOT "Exporting Timesheets".
@@ -223,6 +212,7 @@ tt683_zip_button_caption() {
 # can top up their own preconditions if they are ever run standalone.
 
 TT683_TAB_TOPROCESS="Weekly to process"
+TT683_TAB_INVOICE="Monthly to be invoiced"
 
 
 # ---------------------------------------------------------------------------
@@ -404,25 +394,24 @@ tt683_zip_pdf_report() {
   python "$TT683_ZIPREPORT" "$p" pdf 2>/dev/null
 }
 
-# tt683_toprocess_weeks — the week labels offered on the currently-open tab.
+# tt683_toprocess_weeks — the weeks offered on the currently-open tab: its week
+# groups on To Process / Sent, its picker on Manager / Client. Pipe joined.
 tt683_toprocess_weeks() {
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//'
+  tt_hr_week_labels
 }
 
 # tt683_open_toprocess_tab — select the To Process tab WITHOUT dying if it is
-# not clickable. tt_click_text calls tt_fail (which exits) when it finds nothing,
-# so it cannot be used inside the processing loop: after Main.ACT_AssignmentEntry_Process
-# closes its page the dashboard may already have that tab active, and an
-# "already there" state must not abort the walk. Returns 1 instead.
+# not reachable. After Main.ACT_AssignmentEntry_Process closes its page the
+# dashboard may already have that tab active, and an "already there" state must
+# not abort the walk (tt_hr_try_click_tab returns at once when the pane is open).
 tt683_open_toprocess_tab() {
-  playwright-cli eval "() => { const el=[...document.querySelectorAll('h4,h5,div,span,a,button,li')].find(e => (e.innerText||'').trim()==='$TT683_TAB_TOPROCESS' && getComputedStyle(e).cursor==='pointer'); if(el){ el.click(); return 'ok'; } return 'none'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
-  sleep 2
+  tt_hr_try_click_tab "$TT683_TAB_TOPROCESS" || return 1
+  sleep 1
 }
 
-# tt683_select_week <label> — click a week in the picker of the open tab.
+# tt683_select_week <label> — make that week the one expanded To Process group.
 tt683_select_week() {
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nf'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$1')===0); if(el){el.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok
-  sleep 4
+  tt_hr_select_week "$1"
 }
 
 # E2E-ONLY SCOPE. Processing is one-way and verify-tt683-a1 then flips whatever
@@ -473,20 +462,19 @@ tt683_close_process_popup() {
 #      usual culprit: it needs BOTH approvals, so a half-approved entry reaches
 #      To Process with no Process action on it.
 #
-# CARD SELECTION. Walking up from the Process button, the ancestor that IS the
-# card is the one that (a) carries the PROJECT section - the header block alone
-# stops short of it and yields "<consultant>|?" - and (b) contains exactly ONE
-# Process button, which is what stops the walk climbing into a container holding
-# several cards and reading the label off one while clicking another. The project
-# is the line after the PROJECT label; line 2 is "Submitted <date>".
+# ROW SELECTION. Since 2026-09-28 To Process is a table: each entry is one
+# .mx-name-cntProcessRow holding its own consultant and project cells and its own
+# Process button, so a row is read by its named cells and never by walking up from
+# a button and guessing where the card ends. Only rows in the EXPANDED group exist,
+# and tt683_select_week leaves exactly one expanded.
 tt683_process_one() {
   local skip="${1:-0}" label i owned
   owned="$(_tt683_owned_js)"
 
-  label=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return ''; const bs=[...g.querySelectorAll('$TT_HR_BTN_PROCESS')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('$TT_HR_BTN_PROCESS').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); return ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?'); } } } return ''; }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
-  [ -n "$label" ] || return 1
+  label="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; return t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim()); } return ''; }" 2>/dev/null | _tt_eval_str)"
+  [ -n "$label" ] && [ "$label" != "null" ] || return 1
 
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return 'nf'; const bs=[...g.querySelectorAll('$TT_HR_BTN_PROCESS')]; let seen=0; for(const b of bs){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('$TT_HR_BTN_PROCESS').length === 1 && $owned && t.indexOf('PROJECT')>=0){ if(seen++ < $skip) break; b.click(); return 'ok'; } } } return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok || return 1
+  [ "$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; r.querySelector('$TT_HR_BTN_PROCESS').click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ] || return 1
   sleep 4
 
   # Main.AssignmentEntry_Process opens with a footer 'Process' button whose widget
@@ -494,7 +482,7 @@ tt683_process_one() {
   # because the page can be slow to paint on cloud dev.
   local clicked=""
   for i in $(seq 1 20); do
-    if playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/^process/i.test((e.innerText||'').trim())); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | sed -n '2p' | grep -qiw ok; then
+    if [ "$(playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/^process/i.test((e.innerText||'').trim()) && !e.closest('$TT_HR_LST_ENTRIES')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ]; then
       clicked=1; break
     fi
     sleep 2
@@ -528,7 +516,7 @@ TT683_PROCESS_TARGET="${TT683_PROCESS_TARGET:-2}"
 # same way tt683_process_one does, so a label here is a label it would print.
 _tt683_week_pairings() {
   local owned; owned="$(_tt683_owned_js)"
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); if(!g) return ''; const out=new Set(); for(const b of g.querySelectorAll('$TT_HR_BTN_PROCESS')){ let p=b; for(let k=0;k<10;k++){ if(!p.parentElement) break; p=p.parentElement; const t=(p.innerText||''); if(t.length>10 && t.length<400 && p.querySelectorAll('$TT_HR_BTN_PROCESS').length === 1 && $owned && t.indexOf('PROJECT')>=0){ const ls=t.split('\n').map(s=>s.trim()).filter(Boolean); const pi=ls.findIndex(x=>x.toUpperCase()==='PROJECT'); out.add(ls[0]+'|'+((pi>=0 && ls[pi+1]) ? ls[pi+1] : '?')); break; } } } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
+  playwright-cli eval "() => { const out=new Set(); for(const r of [...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')])){ if(!r.querySelector('$TT_HR_BTN_PROCESS')) continue; const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; out.add(t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim())); } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
 }
 
 # tt683_process_all_toprocess [max] [week]
@@ -560,9 +548,9 @@ _tt683_week_pairings() {
 # they keep the tab-wide count.
 tt683_process_all_toprocess() {
   local max="${1:-6}" scope="${2:-tab}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have
-  tt_login "e2e_hr" "$TT683_TAB_TOPROCESS"
+  tt_login "e2e_hr" "$TT_HR_READY"
   tt_hr_click_tab "$TT683_TAB_TOPROCESS" "HR To Process tab"
-  tt_wait_for "$TT_HR_GAL_WEEKS" "To Process available-weeks list"
+  tt_hr_wait_pane "To Process week groups"
 
   labels="$(tt683_toprocess_weeks)"
   [ -n "$labels" ] || return 0

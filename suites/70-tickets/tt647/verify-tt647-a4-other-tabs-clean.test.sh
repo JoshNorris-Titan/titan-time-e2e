@@ -42,7 +42,7 @@ CONSULTANTS="E2E Consultant"
 # texts on one tab and every gallery on the other three, which is silently wrong.
 approver_widget_count() {
   tt647_load_cards >/dev/null 2>&1 || true
-  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_ENTRIES'); return String(g ? g.querySelectorAll('$TT_HR_TXT_APPROVER1, $TT_HR_TXT_APPROVER2').length : 0); }" 2>/dev/null | sed -n '2p' | tr -d '\"'
+  playwright-cli eval "() => { const g=document.querySelector('$TT_HR_ENTRIES_ANY'); return String(g ? g.querySelectorAll('$TT_HR_TXT_APPROVER1, $TT_HR_TXT_APPROVER2').length : 0); }" 2>/dev/null | _tt_eval_str
 }
 
 # 1) Establish the widgets exist at all, on the tab that should have them.
@@ -56,7 +56,7 @@ else
 fi
 
 # 2) Every other tab must render none of them, on any week that has entries.
-for TAB in "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT" "SENT"; do
+for TAB in "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT" "$TT647_TAB_SENT"; do
   tt647_hr_open_tab "$TAB"
   if ! tt647_select_week_with "$CONSULTANTS" >/dev/null; then
     echo "  [$TAB] no '$CONSULTANTS' entries in any week — nothing to check on this tab"

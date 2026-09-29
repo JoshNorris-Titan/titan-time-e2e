@@ -178,14 +178,16 @@ tt_hr_reject_first() {
   if tt_hr_click_view_for "$who"; then
     opened=1
   else
-    labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
-    labels="${labels%\"}"; labels="${labels#\"}"
+    # The tab's weeks: its picker on Manager/Client, its week groups on To Process
+    # and Sent (lib/_hr_groups.sh). Selecting a group leaves only it expanded.
+    labels="$(tt_hr_week_labels all)"
     local IFS='|'
     for lbl in $labels; do
       [ -n "$lbl" ] || continue
-      playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
-      sleep 3
+      unset IFS
+      tt_hr_select_week "$lbl" || { IFS='|'; continue; }
       if tt_hr_click_view_for "$who"; then opened=1; echo "  (rejecting in week $lbl)"; break; fi
+      IFS='|'
     done
     unset IFS
   fi
@@ -365,13 +367,15 @@ tt_hr_reject_card_for_project() {
   tt_login "e2e_hr" "$TT_HR_READY" >/dev/null 2>&1
   tt_hr_try_click_tab "$tab" || { echo "  (no '$tab' tab on the HR dashboard)"; return 1; }
   sleep 3
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \\d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p' | sed -e 's/^"//' -e 's/"$//')
+  # Weeks from the picker (Manager/Client) or the week groups (To Process, Sent -
+  # including Sent's weeks behind Load more). tt_hr_select_week expands a group and
+  # collapses the rest, so the card scan below only ever sees one week's rows.
+  labels="$(tt_hr_week_labels all)"
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
-    sleep 3
+    tt_hr_select_week "$lbl" || { IFS='|'; continue; }
     # SCOPE THE CARD TO ONE CARD. This walks up from a button looking for an ancestor whose
     # text holds the project name, and it used to accept the first such ancestor. Walk far
     # enough and that ancestor spans SEVERAL cards, so a button on the wrong card matches
@@ -526,7 +530,7 @@ tt_popup_day_inputs() {
 
 # TT692693_GAL -- the HR tab's entries gallery. Named once because EVERY read of it
 # must be preceded by tt_gallery_load_all; see below.
-TT692693_GAL="$TT_HR_GAL_ENTRIES"
+TT692693_GAL="$TT_HR_ENTRIES_ANY"
 
 # tt692693_hr_tab_state <label> -- print what the HR tab is actually showing.
 #
@@ -539,7 +543,7 @@ TT692693_GAL="$TT_HR_GAL_ENTRIES"
 # entry never routed" and "a filter is hiding it" are indistinguishable in the log.
 tt692693_hr_tab_state() {
   local label="${1:-tab state}" s
-  s="$(playwright-cli eval "() => { const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\s+/g,' ').trim(); return v || txt || '(empty)'; }; const wk=document.querySelector('$TT_HR_GAL_WEEKS'); const weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; return 'consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)'); }" 2>/dev/null | sed -n '2p')"
+  s="$(playwright-cli eval "() => { $(_tt_hr_grp_js) const val=sel=>{ const w=document.querySelector(sel); if(!w) return '(absent)'; const i=w.querySelector('input,select'); const v=(i&&i.value)||''; const txt=(w.innerText||'').replace(/\s+/g,' ').trim(); return v || txt || '(empty)'; }; let weeks; if (HG.kind) { weeks = HG.groups().map(x => x.label + (x.open ? ' [open]' : '')); } else { const wk=document.querySelector('$TT_HR_GAL_WEEKS'); weeks=wk?[...new Set([...wk.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} /.test(t)))]:[]; } return 'kind=' + (HG.kind || 'picker') + ' | consultantFilter=' + val('$TT_HR_CB_CONSULTANT') + ' | projectFilter=' + val('$TT_HR_CB_PROJECT') + ' | weeks(' + weeks.length + ')=' + (weeks.join(', ') || '(none)'); }" 2>/dev/null | sed -n '2p')"
   s="${s%\"}"; s="${s#\"}"
   echo "  [tab] $label: $s" >&2
 }
@@ -568,7 +572,20 @@ tt692693_hr_tab_state() {
 # a slow page fetch on a cloud environment gets an extra chance rather than fewer.
 tt692693_count_cards_here() {
   local who="$1"
-  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; const advance=()=>{ if(!gal) return false; const b=gal.querySelector('.widget-gallery-load-more-btn'); if(b){ b.click(); return true; } const c=gal.querySelector('.widget-gallery-content.infinite-loading'); if(c){ c.scrollTop=c.scrollHeight; c.dispatchEvent(new Event('scroll',{bubbles:true})); return true; } return false; }; { let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); if(!advance()) break; await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } const vs=[...document.querySelectorAll('$TT_HR_BTN_VIEW, .mx-name-btnInvoiceView, .mx-name-btnSentView, button')].filter(b=>/^view/i.test((b.innerText||'').trim())); let m=0; for(const v of vs){ let el=v; for(let k=0;k<14;k++){ el=el.parentElement; if(!el) break; const t=(el.innerText||''); if(/TOTAL HOURS/i.test(t)){ if(t.split('\n')[0].trim()==='$who') m++; break; } } } return String(m); }" 2>/dev/null | sed -n '2p' | tr -d '"'
+  case "$(tt_hr_pane_kind)" in
+    Process|Sent|Invoice)
+      # A grouped tab: the selected week is the one EXPANDED group, and its rows are
+      # a ListView with its own Load more. Counted by the row's consultant CELL -
+      # the rows carry no "TOTAL HOURS" label to anchor on, the header row does.
+      # (Picker-tab cards below are counted the same way since 2026-09-28 - by the
+      # card's named consultant text, txtManagerConsultant / txtClientConsultant -
+      # rather than by climbing from a View button to a "TOTAL HOURS" label.)
+      tt_hr_entries_load >/dev/null 2>&1 || true
+      tt_hr_count_rows_for "$who"
+      return 0
+      ;;
+  esac
+  playwright-cli eval "async () => { const gal=document.querySelector('$TT692693_GAL'); const items=()=>gal?gal.querySelectorAll('.widget-gallery-item').length:0; const advance=()=>{ if(!gal) return false; const b=gal.querySelector('.widget-gallery-load-more-btn'); if(b){ b.click(); return true; } const c=gal.querySelector('.widget-gallery-content.infinite-loading'); if(c){ c.scrollTop=c.scrollHeight; c.dispatchEvent(new Event('scroll',{bubbles:true})); return true; } return false; }; { let stuck=0; for(let r=0;r<40&&stuck<3;r++){ const before=items(); if(!advance()) break; await new Promise(res=>setTimeout(res,1000)); stuck = items()===before ? stuck+1 : 0; } } if(!gal) return '0'; return String([...gal.querySelectorAll('$TT_HR_CARD')].filter(c => ((c.querySelector('$TT_HR_TXT_CONSULTANT_ANY')||{}).innerText||'').trim()==='$who').length); }" 2>/dev/null | sed -n '2p' | tr -d '"'
 }
 
 # tt_hr_count_cards_for <consultant-display-name> [tab-caption]
@@ -597,8 +614,17 @@ tt_hr_count_cards_for() {
   local who="$1" tab="${2:-Manager approval}" labels lbl total=0 n
   tt_hr_click_tab "$tab" >/dev/null 2>&1; sleep 3
   tt692693_hr_tab_state "counting '$who' on '$tab'"
-  labels=$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return ''; const s=[...new Set([...g.querySelectorAll('*')].filter(e=>e.childElementCount===0).map(e=>(e.innerText||'').trim()).filter(t=>/^[A-Z][a-z]{2} \d{2} - /.test(t)))]; return s.join('|'); }" 2>/dev/null | sed -n '2p')
-  labels="${labels%\"}"; labels="${labels#\"}"
+  case "$(tt_hr_pane_kind)" in
+    Process|Sent|Invoice)
+      # A grouped tab lists every week at once: open them all (Sent's older weeks
+      # too) and count in one pass, instead of a round trip per week.
+      tt_hr_sent_load_all >/dev/null 2>&1
+      tt_hr_expand_all >/dev/null 2>&1
+      tt_hr_count_rows_for "$who"
+      return 0
+      ;;
+  esac
+  labels="$(tt_hr_week_labels)"
   if [ -z "$labels" ]; then
     # No week picker at all. Count whatever this tab is showing -- but say so, because
     # an empty picker is also what a stuck consultant/project filter looks like.
@@ -610,8 +636,7 @@ tt_hr_count_cards_for() {
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
-    playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$lbl')===0); if(el){el.click(); return 'ok';} return 'nf'; }" >/dev/null 2>&1
-    sleep 3
+    tt_hr_select_week "$lbl" || { IFS='|'; continue; }
     n="$(tt692693_count_cards_here "$who")"
     total=$(( total + ${n:-0} ))
     IFS='|'
@@ -646,14 +671,22 @@ tt_hr_count_cards_for_week() {
   key="$(tt_week_key "$week")"; [ -n "$key" ] || key="$week"
   tt_hr_click_tab "$tab" >/dev/null 2>&1; sleep 3
   tt692693_hr_tab_state "counting '$who' on '$tab' for week '$key'"
-  sel="$(playwright-cli eval "() => { const g=document.querySelector('$TT_HR_GAL_WEEKS'); if(!g) return 'nopicker'; const el=[...g.querySelectorAll('*')].find(e=>e.childElementCount===0 && (e.innerText||'').trim().indexOf('$key')===0); if(!el) return 'absent'; el.click(); return 'ok'; }" 2>/dev/null | sed -n '2p' | tr -d '"')"
+  # Sent lists only its last 8 weeks until Load more is pressed; a week outside that
+  # window is on the tab all the same.
+  tt_hr_sent_load_all >/dev/null 2>&1
+  if tt_hr_select_week "$key"; then
+    sel=ok
+  elif [ -n "$(tt_hr_week_labels)" ] || [ "$(tt_hr_pane_kind)" != "none" ]; then
+    sel=absent
+  else
+    sel=nopicker
+  fi
   case "$sel" in
     ok)
-      sleep 3
       tt692693_count_cards_here "$who"
       ;;
     absent)
-      echo "  (week '$key' is not in the '$tab' week picker at all, so no entry of that status exists for it)" >&2
+      echo "  (week '$key' is not offered on '$tab' at all - not in its picker or its week groups - so no entry of that status exists for it)" >&2
       echo 0
       ;;
     *)
