@@ -35,8 +35,19 @@
 # IF C/D/E FAIL this is a project manager approving another project manager's
 # work, which is the invoice boundary. It is a finding, not a flaky script.
 #
-# Consumes: one AwaitingManagerApproval entry, left as found unless the app is
-# broken.
+# SELF-SEEDING (2026-09-29). B used to fail with "no E2E entry is awaiting
+# 'e2e_pm' approval" on every full run: 76-bulk/verify-pm-approve-all runs just
+# before this suite and, by design, empties e2e_pm's whole queue. This step relied
+# on 30-approval's leftovers surviving everything in between, so it only ever passed
+# in a targeted run. When the queue is empty it now submits one entry on the
+# manager-approval project as e2e_consultant - the same seeding block
+# verify-pm-reject-action and verify-tt647-a1 use - and waits for it to arrive.
+# B is still fatal if that seeding does not produce one.
+#
+# Consumes: one AwaitingManagerApproval entry (seeding one when there is none),
+# left as found unless the app is broken.
+# Env: TT_PM_SEED_PROJECT (default 'E2E Manager Approval', whose manager is e2e_pm),
+#      TT_PM_SEED_USER (default e2e_consultant).
 # Env: TT_BASE_URL, TT_ROLE_PASS
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
@@ -51,6 +62,8 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
 OWNER_PM="${TT_PM_OWNER:-e2e_pm}"      # the PM the entry is waiting on
 OTHER_PM="${TT_PM_OTHER:-e2e_pm2}"     # the PM who must not be able to approve it
+SEED_PROJECT="${TT_PM_SEED_PROJECT:-E2E Manager Approval}"  # managed by e2e_pm
+SEED_USER="${TT_PM_SEED_USER:-e2e_consultant}"
 
 PMPATH="Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Project/Main.Project/Main.ProjectManager_Account/Administration.Account/Name"
 OWNED="starts-with(Main.AssignmentEntry_Assignment/Main.Assignment/ConsultantName,'E2E ')"
@@ -63,9 +76,23 @@ first_guid() {
 # ------------------------------------------------------------------- B. the control
 tt_login "e2e_hr" "$TT_HR_READY"
 GUID="$(first_guid "$TARGET")"
+if [ -z "$GUID" ]; then
+  # Nothing waiting on the owner PM - 76-bulk's Approve All emptied the queue. Make
+  # one rather than depending on what earlier suites happened to leave behind.
+  note "no entry awaiting '$OWNER_PM' - submitting one on '$SEED_PROJECT' as $SEED_USER"
+  tt_login "$SEED_USER" "My Timesheets"
+  tt_consultant_submit_project_row "$SEED_PROJECT"
+  # Routing into the approval status is asynchronous; poll rather than look once.
+  tt_login "e2e_hr" "$TT_HR_READY"
+  for _ in 1 2 3 4 5 6; do
+    GUID="$(first_guid "$TARGET")"
+    [ -n "$GUID" ] && break
+    sleep 6
+  done
+fi
 case "$GUID" in
   ERR:*) tt_fail "the control could not look for an entry awaiting '$OWNER_PM' ($GUID)" ;;
-  "")    tt_fail "no E2E entry is awaiting '$OWNER_PM' approval, so there is nothing for '$OTHER_PM' to wrongly approve and this step has no verdict. suites/30-approval creates one; run the suite in order." ;;
+  "")    tt_fail "no E2E entry is awaiting '$OWNER_PM' approval, even after submitting one on '$SEED_PROJECT' as $SEED_USER, so there is nothing for '$OTHER_PM' to wrongly approve and this step has no verdict. Check that '$SEED_PROJECT' still has ApprovalFromManager=Yes and '$OWNER_PM' as its manager (lib/_fixtures.sh)." ;;
 esac
 BEFORE="$(tt_authz_readback "$TARGET" 'Status')"
 note "target $GUID awaiting $OWNER_PM, Status before = $BEFORE"
