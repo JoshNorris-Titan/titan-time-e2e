@@ -42,9 +42,21 @@ source "$TT_ROOT/lib/_login.sh"
 
 CREATED_GUID=""
 
-# tt737_history_count — rows currently rendered in the history gallery.
+# tt737_history_count — rows in the history gallery once it is paged ALL the way in.
+#
+# galTimesheetHistory pages (Load more). Counting only what is rendered made B a
+# comparison of two page sizes, which is why this spec used to refuse to run at 25
+# rows - and in the full suite e2e_consultant reaches 25 long before 70-tickets, so
+# it failed every full run without testing anything (CI run 36553422511). Paging in
+# first removes the cap; tt737_history_complete says whether paging actually finished.
 tt737_history_count() {
-  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTimesheetHistory'); return g ? String(g.querySelectorAll('.widget-gallery-item').length) : 'NOGAL'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTimesheetHistory'); return g ? 'x' : 'NOGAL'; }" 2>/dev/null | _tt_eval_str | grep -q NOGAL && { echo NOGAL; return 0; }
+  tt_gallery_load_all ".mx-name-galTimesheetHistory" "timesheet history" 40
+}
+
+# tt737_history_complete — 'true' once the gallery offers no further page.
+tt737_history_complete() {
+  playwright-cli eval "() => { const g=document.querySelector('.mx-name-galTimesheetHistory'); return String(!!g && !g.querySelector('.widget-gallery-load-more-btn') && !g.querySelector('.widget-gallery-content.infinite-loading')); }" 2>/dev/null | _tt_eval_str
 }
 
 # tt737_refetch — force the dashboard's data sources to run again. Stepping a week away
@@ -77,11 +89,11 @@ before="$(tt737_history_count)"
 [ "$before" != "NOGAL" ] || tt_fail "TT-737: galTimesheetHistory not found on the consultant dashboard"
 echo "  history rows before: $before"
 
-# Assertion B is a count comparison, and the gallery pages at 25 (TT-723). At the cap a
-# new row could be hidden by paging rather than by the filter, which would make a passing
-# count meaningless. Refuse to pretend.
-if [ "$before" -ge 25 ]; then
-  tt_fail "TT-737: this consultant already shows $before history rows, at or past the gallery's 25-row page size, so the filter assertion cannot distinguish 'excluded' from 'on page 2'. Point TT737 at a consultant with a shorter history."
+# Assertion B is a count comparison, and the gallery pages at 25 (TT-723). A row left on
+# an unloaded page would make a passing count meaningless, so the count is only trusted
+# once the gallery has nothing further to load. Refuse to pretend otherwise.
+if [ "$(tt737_history_complete)" != "true" ]; then
+  tt_fail "TT-737: galTimesheetHistory still offers another page after paging in $before rows, so the filter assertion cannot distinguish 'excluded' from 'not loaded yet'."
 fi
 
 # The same objection at the other end. An empty gallery renders nothing at all, so at zero
@@ -139,6 +151,7 @@ echo "  ok: grid still renders and the console is clean with a dateless row pres
 # ------------------------------------------------------------- B. it stays out of history
 after="$(tt737_history_count)"
 [ "$after" != "NOGAL" ] || tt_fail "TT-737: galTimesheetHistory disappeared after the dateless row was created"
+[ "$(tt737_history_complete)" = "true" ] || tt_fail "TT-737: galTimesheetHistory still offers another page after paging in $after rows, so the after-count is not the whole list"
 
 if [ "$after" -ne "$before" ]; then
   tt_fail "TT-737: the history gallery went from $before to $after rows after a dateless Timesheet was created — galTimesheetHistory's 'StartDate != empty' constraint is not filtering it out, so a consultant can click a row with no week."

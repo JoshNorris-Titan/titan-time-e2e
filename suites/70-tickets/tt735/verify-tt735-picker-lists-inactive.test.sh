@@ -17,8 +17,19 @@
 # act for anyone who has been deactivated.
 #
 # WHAT IT ASSERTS, and why it is a count rather than a name:
-#   the picker offers exactly as many options as there are Consultant-role
-#   accounts in the data layer, ACTIVE OR NOT.
+#   the picker offers exactly as many options as the data layer returns for the
+#   picker's own source - every Administration.Account HR can read, ACTIVE OR NOT.
+#
+# WHY NOT "CONSULTANT-ROLE ACCOUNTS" ANY MORE. It used to compare against
+# //Administration.Account[Administration.UserRoles/System.UserRole/Name =
+# 'Consultant']. HR cannot read UserRoles, so that count came back 0 on dev with
+# no error, and C failed for a reason that had nothing to do with TT-735 (it also
+# never got that far until 2026-09-29: the spec read the picker without first
+# opening Create Timesheet). The model's cbCreateForAccount is an XPath source on
+# Administration.Account sorted by FullName with NO constraint at all, which is
+# TT-735's fix, so the widget's source is the right thing to compare with. That
+# the picker therefore offers HR, Titan Manager and admin accounts as well is the
+# model as built - a product question, not something this spec can settle.
 #
 # Naming a specific deactivated consultant would be the obvious test and is the
 # wrong one: no fixture guarantees a deactivated account exists, so the test would
@@ -28,10 +39,10 @@
 # back SHORT by however many are deactivated.
 #
 #   A. the picker renders at all and offers options;
-#   B. the data layer's count of Consultant-role accounts is readable;
+#   B. the data layer's count of the picker's source is readable, and non-zero;
 #   C. the two agree. If they do not, the step says which way and by how many,
 #      because "fewer than the data layer holds" points at a filter and "more"
-#      points at the picker reaching past Consultant.
+#      points at the picker reaching past its own source.
 #
 # If the environment happens to have no deactivated consultants, C still holds and
 # still passes - it just cannot fail for the specific reason it was written for.
@@ -59,10 +70,16 @@ picker_options() {
 }
 
 tt_login "e2e_hr" "$TT_HR_READY"
-sleep 2
 
-# The picker lives behind the create-on-behalf control; open it the way the
-# existing tt735 spec does, then read the options.
+# The picker is on Main.CreateTimesheet, not on the HR dashboard the login lands
+# on. This spec used to read it straight after login and so always hit the -1
+# ("not on the page") branch below; reach it the way verify-tt735-consultant-picker
+# does, through the "Create Timesheet" navigation item.
+tt_click_text "Create Timesheet" "HR Create Timesheet nav item"
+tt_wait_for "$CB" "TT-735 Create Timesheet consultant picker"
+sleep 1
+
+# Open the picker, then read the options.
 playwright-cli eval "() => { const w=document.querySelector('$CB'); if(w){ const i=w.querySelector('input,select,button'); if(i){ i.click(); return 'ok'; } } return 'nf'; }" >/dev/null 2>&1
 sleep 2
 
@@ -76,12 +93,16 @@ case "$OPTS" in
 esac
 
 # --------------------------------------------------------- B. what the data layer holds
-ALL="$(tt_authz_count "//Administration.Account[Administration.UserRoles/System.UserRole/Name = 'Consultant']")"
-INACTIVE="$(tt_authz_count "//Administration.Account[Administration.UserRoles/System.UserRole/Name = 'Consultant'][Active = false()]")"
+ALL="$(tt_authz_count "//Administration.Account")"
+INACTIVE="$(tt_authz_count "//Administration.Account[Active = false()]")"
 case "$ALL" in
-  ERR:*|''|*[!0-9]*) tt_fail "could not count Consultant-role accounts (read: [$ALL]), so the picker has nothing to be compared against" ;;
+  ERR:*|''|*[!0-9]*) tt_fail "could not count the accounts HR can read (read: [$ALL]), so the picker has nothing to be compared against" ;;
+  0) tt_fail "the data layer returned 0 accounts to HR while the picker offers $OPTS - the count is not reading what the picker reads, so C would compare against nothing" ;;
 esac
-note "B ok: the data layer holds $ALL Consultant-role account(s), $INACTIVE of them deactivated"
+case "$INACTIVE" in
+  ERR:*|''|*[!0-9]*) tt_fail "could not count the deactivated accounts HR can read (read: [$INACTIVE])" ;;
+esac
+note "B ok: the data layer gives HR $ALL account(s), $INACTIVE of them deactivated"
 
 # ---------------------------------------------------------------------- C. they agree
 if [ "$OPTS" -eq "$ALL" ]; then
@@ -91,13 +112,13 @@ if [ "$OPTS" -eq "$ALL" ]; then
     *) note "note: $INACTIVE deactivated consultant(s) are listed, which is the TT-735 decision holding" ;;
   esac
 elif [ "$OPTS" -lt "$ALL" ]; then
-  bad "C: the picker lists $OPTS of $ALL Consultant-role account(s) - short by $((ALL-OPTS)), and $INACTIVE are deactivated. That is what a reintroduced [Active] constraint looks like, and it is the TT-735 regression."
+  bad "C: the picker lists $OPTS of the $ALL account(s) HR can read - short by $((ALL-OPTS)), and $INACTIVE are deactivated. That is what a reintroduced [Active] constraint looks like, and it is the TT-735 regression."
 else
-  bad "C: the picker lists $OPTS options where only $ALL accounts hold the Consultant role - it is reaching past Consultant, so HR can create a timesheet for somebody who is not one"
+  bad "C: the picker lists $OPTS options where the data layer gives HR only $ALL accounts - it is reaching past its own source"
 fi
 
 if [ "$fails" -ne 0 ]; then
   echo "FAIL: verify-tt735-picker-lists-inactive — $fails problem(s) with the consultant picker's scope."
   exit 1
 fi
-echo "PASS: verify-tt735-picker-lists-inactive — the picker lists all $ALL Consultant-role account(s), $INACTIVE of them deactivated."
+echo "PASS: verify-tt735-picker-lists-inactive — the picker lists all $ALL account(s) HR can read, $INACTIVE of them deactivated."
