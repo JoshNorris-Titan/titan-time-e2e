@@ -35,6 +35,12 @@
 # IF C/D/E FAIL this is a project manager approving another project manager's
 # work, which is the invoice boundary. It is a finding, not a flaky script.
 #
+# RED UNTIL MODEL FIX (2026-09-29). Once B could find its entry, C, D and E failed
+# on dev in two separate runs: e2e_pm2, who cannot even retrieve the entry (count
+# 0), called both actions with success and the entry went AwaitingManagerApproval
+# -> ToProcess. Neither ACT_Page_Approve nor ACT_ApprovalHelper_Approve checks that
+# the caller is the entry's project manager. The fix belongs in the model.
+#
 # SELF-SEEDING (2026-09-29). B used to fail with "no E2E entry is awaiting
 # 'e2e_pm' approval" on every full run: 76-bulk/verify-pm-approve-all runs just
 # before this suite and, by design, empties e2e_pm's whole queue. This step relied
@@ -156,7 +162,7 @@ esac
 control_login
 AFTER="$(tt_authz_readback "$TARGET" 'Status')"
 case "$AFTER" in
-  ERR:notfound) bad "E: the entry is no longer awaiting '$OWNER_PM' - it left that status while only '$OTHER_PM' acted on it" ;;
+  ERR:notfound) bad "E: the entry is no longer awaiting '$OWNER_PM' - it left that status while only '$OTHER_PM' acted on it (entry $GUID now has Status=[$(tt_authz_readback "//Main.AssignmentEntry[id='$GUID']" 'Status')])" ;;
   ERR:*)        bad "E: could not read the entry back ($AFTER), so this step cannot say whether it moved" ;;
   "$BEFORE")    note "E ok: Status is still $AFTER" ;;
   *)            bad "E: Status moved from $BEFORE to $AFTER, approved by a PM it was not awaiting" ;;
