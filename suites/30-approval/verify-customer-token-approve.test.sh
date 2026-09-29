@@ -42,11 +42,13 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
+source "$TT_ROOT/lib/_fixtures.sh"   # FX_APPROVER_EMAIL: the approver on E2E Customer Approval
 source "$TT_ROOT/lib/_tt647.sh"
 
 CONSULTANT_NAME="E2E Consultant"
 CUSTOMER="Costco"
 PROJECT="E2E Customer Approval"
+APPROVER="$FX_APPROVER_EMAIL"   # the fixture sets this as $PROJECT's approver
 
 # Fail fast on a misconfigured mail backend, before the login/click sequence.
 tt_mail_prepare
@@ -85,7 +87,10 @@ fi
 [ -n "$WEEK" ] || tt_fail "could not determine the week under test"
 
 # ------------------------------------------------------------- 2. the token link
-LINK=$(tt_mail_token "$TS") || tt_fail "token email not received within timeout"
+# The recipient is named, not guessed: tt_mail_token with no recipient takes the
+# first approval link in ANY fresh mail, and on 2026-09-28 that was another
+# approver's (Manual TT744's) - see the Remind note in lib/_login_tokens.sh.
+LINK=$(tt_mail_token "$TS" customer-approval "$APPROVER") || tt_fail "token email not received within timeout"
 case "$LINK" in
   *"/p/customer-approval/"*) ;;
   *) tt_fail "email link is not a customer-approval link: $LINK" ;;
