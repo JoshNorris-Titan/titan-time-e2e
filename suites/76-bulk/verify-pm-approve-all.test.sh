@@ -45,8 +45,17 @@ pa_rows() { tt_pm_pending_rows "${1:-12}"; }
 
 # pa_stage_totals — the six HR stage counters as "manager|total". Read from the HR
 # dashboard, which sees the whole pipeline rather than one manager's slice.
+#
+# IT WAITS FOR ALL SIX TO SETTLE (2026-09-29). The HR login returns as soon as
+# TT_HR_READY (cardKpiProcess) is on the page, and the other tiles fill their
+# numbers in on their own round trips. A read taken in that window sees a tile
+# holding only its caption, and the full run 36553422511 reported exactly that as
+# "stage counters became unreadable after the approval (NAN:cardKpiPending)". So
+# the read polls IN THE PAGE until every tile ends in a number, and only reports
+# MISSING / NAN when a tile is still absent or number-less after the deadline -
+# which is then a real "the counter did not render", not a read that looked early.
 pa_stage_totals() {
-  playwright-cli eval "() => { const cards=['cardKpiPending','cardKpiManager','cardKpiCustomer','cardKpiProcess','cardKpiInvoice','cardKpiSent']; let total=0, mgr=-1; for (const c of cards) { const e=document.querySelector('.mx-name-'+c); if(!e) return 'MISSING:'+c; const m=(e.innerText||'').match(/(\\d+)\\s*\$/); if(!m) return 'NAN:'+c; const v=parseInt(m[1],10); total+=v; if(c==='cardKpiManager') mgr=v; } return mgr + '|' + total; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => new Promise(res => { const cards=['cardKpiPending','cardKpiManager','cardKpiCustomer','cardKpiProcess','cardKpiInvoice','cardKpiSent']; const deadline=Date.now()+20000; const read=()=>{ let total=0, mgr=-1; for (const c of cards) { const e=document.querySelector('.mx-name-'+c); if(!e) return 'MISSING:'+c; const m=(e.innerText||'').match(/(\\d+)\\s*\$/); if(!m) return 'NAN:'+c+' [text: '+(e.innerText||'').replace(/\\s+/g,' ')+']'; const v=parseInt(m[1],10); total+=v; if(c==='cardKpiManager') mgr=v; } return mgr + '|' + total; }; const tick=()=>{ const r=read(); if(!/^(MISSING|NAN):/.test(r) || Date.now()>=deadline) return res(r); setTimeout(tick, 500); }; tick(); })" 2>/dev/null | _tt_eval_str
 }
 
 # ------------------------------------------------------ A. there is work to do
