@@ -82,13 +82,23 @@ if [ -z "$GUID" ]; then
   note "no entry awaiting '$OWNER_PM' - submitting one on '$SEED_PROJECT' as $SEED_USER"
   tt_login "$SEED_USER" "My Timesheets"
   tt_consultant_submit_project_row "$SEED_PROJECT"
+  note "submitted week: ${TT_SUBMITTED_WEEK:-?}"
   # Routing into the approval status is asynchronous; poll rather than look once.
+  # About three minutes, the same budget the 30-approval seeders get from six
+  # re-logins with a 6 s pause each - this loop re-reads the data layer without
+  # re-logging in, so it needs more tries for the same wait.
   tt_login "e2e_hr" "$TT_HR_READY"
-  for _ in 1 2 3 4 5 6; do
+  for _ in $(seq 1 20); do
     GUID="$(first_guid "$TARGET")"
     [ -n "$GUID" ] && break
     sleep 6
   done
+  if [ -z "$GUID" ]; then
+    # Say where it went instead: any E2E entry awaiting ANY manager, and the PM
+    # name on the seeded project, so the failure names a cause.
+    note "diagnostic: an E2E entry awaiting any manager: [$(first_guid "//Main.AssignmentEntry[$OWNED][Status = 'AwaitingManagerApproval']")]"
+    note "diagnostic: an E2E entry on '$SEED_PROJECT' in any status: [$(first_guid "//Main.AssignmentEntry[$OWNED][Main.AssignmentEntry_Assignment/Main.Assignment/Main.Assignment_Project/Main.Project/Name = '$SEED_PROJECT']")]"
+  fi
 fi
 case "$GUID" in
   ERR:*) tt_fail "the control could not look for an entry awaiting '$OWNER_PM' ($GUID)" ;;
