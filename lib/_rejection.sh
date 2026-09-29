@@ -262,12 +262,20 @@ tt_make_rejected_entry() {
     # moment the ancestor holds more than one day cell: that means we have left
     # the row, so a sibling row's project name can no longer match. Same test
     # tt654_row_ordinal uses.
-    ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const isTarget=(mon)=>{ let el=mon; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return false; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) return false; if((el.innerText||'').indexOf('$proj')>=0) return true; } return false; }; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); if(isTarget(mons[n]) && inp && !inp.readOnly && !inp.disabled) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p' | tr -d '"')
+    #
+    # AND THE ROW MUST BE BLANK (2026-09-29). "Editable" is not "unused": a Draft
+    # week another test typed into and never submitted is still editable, and
+    # verify-hours-validation deliberately leaves one behind on exactly this pair
+    # (e2e_consultant2 / E2E Sandbox, 9 h a day, blocked by the 40-hour limit). The
+    # full run 36553422511 took that week: its submit was refused by the
+    # over-limit dialog, and everything after it went wrong (see step 1b). So a
+    # row counts only when every one of its day cells is empty or zero.
+    ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const rowOf=(mon)=>{ let el=mon; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) return null; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) return null; if((el.innerText||'').indexOf('$proj')>=0) return el; } return null; }; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); const row=rowOf(mons[n]); if(!row || !inp || inp.readOnly || inp.disabled) continue; const vals=[...row.querySelectorAll('[class*=mx-name-txtDay] input')].map(i=>(i.value||'').trim()); if(vals.every(v=>v===''||v==='0'||v==='0.00')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p' | tr -d '"')
     [ "$ord" != "0" ] && break
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1; sleep 2
   done
   [ "$ord" != "0" ] || {
-    echo "  no editable '$proj' row for $cuser in the next 16 weeks."
+    echo "  no editable, blank '$proj' row for $cuser in the next 16 weeks."
     echo "  If '$proj' is a NeedsLineItems project its aggregate day cells are"
     echo "  READ-ONLY by design (hours live on the task rows), so this fixture can"
     echo "  never seed it — use tt_make_rejected_lineitem_entry instead."
@@ -282,14 +290,26 @@ tt_make_rejected_entry() {
   sleep 1
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2
-  tt_dismiss_dialogs
+  # 1b) THE SUBMIT MUST HAVE TAKEN. This used to call tt_dismiss_dialogs and carry
+  #     on whatever it returned. When the submit was refused - run 36553422511,
+  #     "(dialog blocks the action: ... more than the 40 hour weekly limit for E2E
+  #     Sandbox Close)" - nothing was submitted, yet step 2 went on to hunt the
+  #     consultant's '$proj' card in EVERY week, found an older one (Nov 08 - Nov 14)
+  #     and rejected that, and the caller then tested a week that was still Draft.
+  #     A fixture that cannot seed must say so.
+  if ! tt_dismiss_dialogs; then
+    echo "  the submit of $proj week $wk was refused by a dialog with no way forward: ${TT_DIALOG_BLOCKED:-unknown}"
+    return 1
+  fi
   sleep 2
   echo "submitted $proj week $wk as $cuser"
 
-  # 2) HR rejects THIS project's card, retrying: the approval workflow routes a
-  #    submitted entry into its queue ASYNCHRONOUSLY, so it may not be there yet.
-  tt_hr_reject_project "$cname" "$proj" "$tabs" || {
-    echo "  HR could not find a '$proj' card for '$cname' to reject on any of: $tabs"
+  # 2) HR rejects THIS project's card IN THIS WEEK, retrying: the approval workflow
+  #    routes a submitted entry into its queue ASYNCHRONOUSLY, so it may not be
+  #    there yet. Pinned to the week (TT_REJECT_WEEK) so a leftover card for the
+  #    same consultant and project in another week can never stand in for it.
+  TT_REJECT_WEEK="$wk" tt_hr_reject_project "$cname" "$proj" "$tabs" || {
+    echo "  HR could not find a '$proj' card for '$cname' in week '$wk' to reject on any of: $tabs"
     return 1
   }
 
@@ -375,6 +395,11 @@ tt_hr_reject_card_for_project() {
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
+    # TT_REJECT_WEEK, when set, pins the hunt to that one week (any wording
+    # tt_week_key understands) - see tt_make_rejected_entry step 2.
+    if [ -n "${TT_REJECT_WEEK:-}" ] && [ "$(tt_week_key "$lbl")" != "$(tt_week_key "$TT_REJECT_WEEK")" ]; then
+      IFS='|'; continue
+    fi
     tt_hr_select_week "$lbl" || { IFS='|'; continue; }
     # SCOPE THE CARD TO ONE CARD. This walks up from a button looking for an ancestor whose
     # text holds the project name, and it used to accept the first such ancestor. Walk far
