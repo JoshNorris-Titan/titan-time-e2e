@@ -4,7 +4,8 @@
 #
 # Rejecting an EXPORTED entry from HR's Sent tab saves an Exported > Rejected row
 # (with the comment) in the entry's history, and turns the consultant's week
-# Rejected. Bug-reproduction spec (bug #4): RED UNTIL THE MODEL FIX LANDS.
+# Rejected. Bug-reproduction spec (bug #4): RED UNTIL THE MODEL FIX LANDS (the
+# history half; the week-status half is green on dev - see B below).
 #
 # THE BUG (scratchpad bug-verify.md #4 and gate1.md item 5, read live from the model
 # on 2026-09-28). Sent row -> btnRejectAfterExport -> Main.AssignmentEntry_RejectPage
@@ -25,10 +26,13 @@
 # Two halves, asserted separately so one cannot hide the other:
 #   A. HISTORY (confirmed statically): the entry's history has an Exported >
 #      Rejected row carrying the comment HR typed.
-#   B. WEEK STATUS (was only "likely" - this is the runtime check): the week that
-#      holds the entry reads Rejected. A week with any rejected entry is Rejected
+#   B. WEEK STATUS (was only "likely" statically): the week that holds the entry
+#      reads Rejected. A week with any rejected entry is Rejected
 #      (SUB_AssignmentEntry_UpdateTimesheetStatus), whatever its other entries are.
-#      Buggy: it keeps its old status (Approved) because step 2 ran before step 5.
+#      The feared failure was the week keeping Approved because step 2 runs before
+#      step 5. NOT REPRODUCED on dev 2026-09-29 (run exportbugs-1): the week went
+#      Approved -> Rejected, so the recompute does see the uncommitted change. B
+#      stays as a green guard on that ordering; only A is red.
 #
 # Both are read from the data layer as HR (lib/_changelog.sh): the history popup and
 # the consultant's badge are views of exactly these objects, and the badge is known
