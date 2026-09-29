@@ -5,8 +5,16 @@
 #
 # WHY THIS EXISTS. Main.SUB_AssignmentValidation refuses a save that is missing
 # any of Company, Project, Consultant, StartDate, EndDate, TotalBudgetHours or
-# WeeklyHours - "Company is required!", "Consultant is required!", and
-# "This is required!" on each of the four date and number members.
+# WeeklyHours - "Company is required!", "Project is required!" and "Consultant is
+# required!", and "This is required!" on each of the four date and number members.
+#
+# TWO CHANNELS, READ BOTH. The three association checks are Show message
+# activities (one "Warning" popup each, stacked over the form), while the four
+# member checks are validation feedback rendered under the fields. This spec used
+# to read .mx-validation-message only, so it could never see the popups and
+# reported "does not include 'Company is required'" while the app was showing it
+# (CI run 36553422511; confirmed on dev 2026-09-29: three Warning popups, four
+# field messages).
 #
 # Nothing exercises it. verify-assignment-dropdowns-sorted opens the very same
 # form and only reads the order of a combobox; it never presses Save. The whole
@@ -49,6 +57,21 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 validations() {
   playwright-cli eval "() => [...document.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).map(e=>(e.innerText||'').trim()).filter(Boolean).join(' ~ ')" 2>/dev/null | _tt_eval_str
 }
+# warnings - the text of every visible Warning popup, ' ~ '-joined. Mendix keeps
+# closed dialogs in the DOM, so visibility is by layout box, not offsetParent
+# (a dialog is position:fixed, whose offsetParent is always null).
+warnings() {
+  playwright-cli eval "() => [...document.querySelectorAll('.modal-dialog, .mx-dialog, [role=dialog]')].filter(d=>getComputedStyle(d).display!=='none' && d.getClientRects().length>0).map(d=>(d.innerText||'').replace(/\s+/g,' ').trim()).filter(t=>/^(×\s*)?Warning\b/.test(t)).join(' ~ ')" 2>/dev/null | _tt_eval_str
+}
+# dismiss_warnings - click OK on each visible Warning popup, leaving the form below.
+dismiss_warnings() {
+  local i r
+  for i in 1 2 3 4 5 6; do
+    r="$(playwright-cli eval "() => { const d=[...document.querySelectorAll('.modal-dialog, .mx-dialog, [role=dialog]')].filter(d=>getComputedStyle(d).display!=='none' && d.getClientRects().length>0).reverse().find(d=>/^(×\s*)?Warning\b/.test((d.innerText||'').trim())); if(!d) return 'NONE'; const b=[...d.querySelectorAll('button')].find(x=>/^ok\$/i.test((x.innerText||'').trim())); if(!b) return 'NOOK'; b.click(); return 'OK'; }" 2>/dev/null | _tt_eval_str)"
+    [ "$r" = "OK" ] || return 0
+    sleep 1
+  done
+}
 form_open() {
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-txtWeeklyHours'))" 2>/dev/null | _tt_eval_str
 }
@@ -69,22 +92,26 @@ sleep 3
 playwright-cli click ".mx-name-btnSave" >/dev/null 2>&1
 sleep 3
 
-MSG="$(validations)"
-if [ -n "$MSG" ]; then
+FIELD_MSG="$(validations)"
+POPUP_MSG="$(warnings)"
+MSG="$FIELD_MSG ~ $POPUP_MSG"
+note "field messages: ${FIELD_MSG:-none}"
+note "warning popups: ${POPUP_MSG:-none}"
+if [ -n "$FIELD_MSG$POPUP_MSG" ]; then
   note "A ok: refused with: $MSG"
 else
   bad "A: an entirely empty assignment form saved with no complaint at all"
 fi
 
 # ------------------------------------------------------------- B. it names the fields
-for want in "Company is required" "Consultant is required"; do
-  case "$MSG" in
+for want in "Company is required" "Project is required" "Consultant is required"; do
+  case "$POPUP_MSG" in
     *"$want"*) note "B ok: names '$want'" ;;
     *)         bad "B: the complaint does not include '$want' - got: ${MSG:-nothing}" ;;
   esac
 done
 
-REQ_COUNT="$(printf '%s' "$MSG" | grep -o "This is required!" | grep -c . )"
+REQ_COUNT="$(printf '%s' "$FIELD_MSG" | grep -o "This is required!" | grep -c . )"
 if [ "${REQ_COUNT:-0}" -ge 4 ]; then
   note "B ok: $REQ_COUNT 'This is required!' message(s) for the date and number members"
 else
@@ -92,6 +119,9 @@ else
 fi
 
 # --------------------------------------------------------------- C. the form stayed up
+# The Warning popups sit over the form; clear them with OK so what is left is the
+# form itself (or nothing, if the refused save closed it).
+dismiss_warnings
 if [ "$(form_open)" = "true" ]; then
   note "C ok: the form is still open"
 else

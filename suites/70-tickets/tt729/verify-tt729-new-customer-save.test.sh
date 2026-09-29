@@ -74,7 +74,13 @@ tt_wait_for ".mx-name-cbCustomer" "TT-729 New Assignment popup"
 # The "+" beside the Customer picker was re-created as btnAddCustomer (icon only) on
 # 2026-09-24; until that deploys everywhere the button is still btnNewCustomer, so match
 # either name.
-NEW_CUSTOMER_BTN=".mx-name-btnAddCustomer, .mx-name-btnNewCustomer"
+#
+# SCOPED TO THE ASSIGNMENT FORM (dvAssignment). The Titan Manager dashboard behind the
+# popup has its OWN btnAddCustomer - the "+" on the Customers card, which opens the
+# plain Customer_NewEdit page, not Assignment_NewCustomer. An unscoped selector matches
+# the dashboard's button first in DOM order, so the click landed behind the popup and
+# txtCompanyName never appeared (CI run 36553422511).
+NEW_CUSTOMER_BTN=".mx-name-dvAssignment .mx-name-btnAddCustomer, .mx-name-dvAssignment .mx-name-btnNewCustomer"
 present="$(playwright-cli eval "() => String(!!document.querySelector('$NEW_CUSTOMER_BTN'))" 2>/dev/null | _tt_eval_str)"
 [ "$present" = "true" ] || tt_fail "TT-729: no New Customer button ($NEW_CUSTOMER_BTN) beside the Customer picker on Assignment_NewEdit"
 

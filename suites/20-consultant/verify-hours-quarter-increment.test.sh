@@ -15,6 +15,12 @@
 #   A. 7.3 is refused - something objects, and the week does NOT leave Draft;
 #   B. 7.25 is accepted - nothing objects on that ground and the value sticks.
 #
+# A NOW REQUIRES THE INCREMENT MESSAGE. The confirmation popup that btnSubmit opens
+# since the 2026-09-04 rework used to be read as "the complaint", so A could only note
+# whether it mentioned 0.25. The spec now confirms that popup and reads what the
+# validation actually says; on dev (2026-09-29) that is "Enter 0 to 24 hours in 0.25
+# increments" under the cell, with the week left Draft, so the naming is asserted.
+#
 # B is what stops this becoming a test that passes because everything is refused.
 # A rule that rejected every decimal would satisfy A alone.
 #
@@ -42,10 +48,26 @@ qi_row()  { tt_week_row_of "$PROJECT" editable; }
 qi_set()  { tt_fill_commit ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDayMon input, $1)" "$2"; }
 qi_val()  { playwright-cli eval "() => { const els=document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon input'); const el=els[$1-1]; return el ? String(el.value||'') : '__MISSING__'; }" 2>/dev/null | _tt_eval_str; }
 qi_eq()   { awk -v a="$1" -v b="$2" 'BEGIN{ gsub(/,/,".",a); exit (a+0==b+0) ? 0 : 1 }'; }
+# qi_complained - every visible validation message and visible dialog's text,
+# EXCLUDING the "Submit timesheet?" confirmation (a question, not a refusal).
+# Visibility is by layout box: dialogs are position:fixed, so offsetParent is null.
 qi_complained() {
-  playwright-cli eval "() => { const v=[...document.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).map(e=>(e.innerText||'').trim()).join(' ~ '); const d=document.querySelector('[role=dialog], .mx-dialog, .modal-dialog, .mx-window'); const t=d?(d.innerText||'').replace(/\\s+/g,' ').slice(0,200):''; return v || t || ''; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const vis=e=>getComputedStyle(e).display!=='none' && e.getClientRects().length>0; const v=[...document.querySelectorAll('.mx-validation-message')].filter(vis).map(e=>(e.innerText||'').trim()); const d=[...document.querySelectorAll('.modal-dialog, .mx-dialog, [role=dialog]')].filter(vis).filter(e=>!e.querySelector('.mx-name-btnConfirmSubmit')).map(e=>(e.innerText||'').replace(/\s+/g,' ').trim()); return v.concat(d).filter(Boolean).join(' ~ '); }" 2>/dev/null | _tt_eval_str
 }
-qi_submit() { playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1; sleep 3; }
+# qi_submit - Submit, then confirm the merged popup: validation runs on the confirm
+# (ACT_Timesheet_SubmitAnyway -> ACT_Timesheet_Submit -> SUB_Timesheet_CanSave),
+# not on btnSubmit, which only opens "Submit timesheet?".
+qi_submit() {
+  playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
+  tt_wait_for ".mx-name-btnConfirmSubmit" "the merged Submit timesheet? popup (btnConfirmSubmit)"
+  playwright-cli click ".mx-name-btnConfirmSubmit" >/dev/null 2>&1
+  local i c
+  for i in $(seq 1 8); do
+    sleep 2
+    c="$(qi_complained)"
+    case "$c" in *increment*|*Increment*|*"highlighted errors"*) return 0 ;; esac
+  done
+}
 
 tt_login "$CUSER" "My Timesheets"
 tt_goto_fresh_week "$PROJECT" || tt_fail "no fresh week with an editable '$PROJECT' row was reachable, so neither case could be attempted"
@@ -63,17 +85,22 @@ COMPLAINT="$(qi_complained)"
 if [ -n "$COMPLAINT" ]; then
   note "A ok: 7.3 drew a complaint: $COMPLAINT"
   case "$COMPLAINT" in
-    *0.25*|*increment*|*Increment*) note "    (and it names the increment rule)" ;;
-    *) note "    note: the complaint does not mention 0.25 - it may be objecting for another reason" ;;
+    *0.25*|*increment*|*Increment*) note "A ok: it names the increment rule" ;;
+    *) bad "A: the complaint does not name the 0.25 increment rule, so something else refused 7.3: $COMPLAINT" ;;
   esac
 else
   bad "A: nothing objected to 7.3 on Monday"
 fi
-tt_dismiss_dialogs >/dev/null 2>&1 || note "note: no dialog was open to dismiss"
+# Only error popups can be open now (the confirmation closes before validating),
+# so clearing them clicks OK, never a submit.
+tt_dismiss_dialogs >/dev/null 2>&1 || note "note: a dialog would not clear: $TT_DIALOG_BLOCKED"
+sleep 2
 
-STATUS_A="$(tt_consultant_week_status 2>/dev/null || echo UNKNOWN)"
+# Read by WEEK; an unreadable status is a failure, not a pass (it used to pass as UNKNOWN).
+STATUS_A="$(tt_consultant_week_status "$WEEK")"
 case "$STATUS_A" in
-  *Draft*|*draft*|UNKNOWN) note "A ok: the week is still $STATUS_A" ;;
+  *Draft*|*draft*) note "A ok: the week is still Draft ($STATUS_A)" ;;
+  "") bad "A: week $WEEK has no row in the timesheet history, so whether it left Draft could not be read" ;;
   *) bad "A: the week left Draft ($STATUS_A) with 7.3 on it" ;;
 esac
 

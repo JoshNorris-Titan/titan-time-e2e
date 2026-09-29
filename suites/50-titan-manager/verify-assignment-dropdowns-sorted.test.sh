@@ -25,6 +25,7 @@ set -euo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
+source "$TT_ROOT/lib/_fixtures.sh"   # FX_CUSTOMER: the customer 00-setup hangs every E2E project on
 
 tt_login "e2e_tm" "Add Customer"
 
@@ -46,7 +47,15 @@ done
 tt_combobox_sorted ".mx-name-cbCustomer" ".mx-name-txtWeeklyHours" "TT-694 Customer dropdown"
 
 # Pick a customer -> populates the Project dropdown, then assert Project is sorted.
-tt_combobox_select_first ".mx-name-cbCustomer"
+#
+# THE FIXTURE CUSTOMER, NOT THE FIRST ONE. This used to take whichever customer
+# sorted first, which made the Project assertion depend on that customer happening
+# to own two projects. On dev the first is now "Apple", which owns none, so the
+# Project dropdown was correctly empty and the test reported a TT-662 regression
+# that was not there (CI run 36553422511). FX_CUSTOMER is the customer 00-setup's
+# verify-001-fixtures puts all five E2E projects on, so at least five options are
+# guaranteed and an empty list is a real finding again.
+tt_combobox_select_text ".mx-name-cbCustomer" "$FX_CUSTOMER"   || tt_fail "could not pick the fixture customer '$FX_CUSTOMER' on the Add Assignment form, so the Project cascade could not be driven. 00-setup should have created its projects."
 tt_combobox_sorted ".mx-name-cbProject" ".mx-name-txtWeeklyHours" "TT-662 Project dropdown"
 
 # Pick a project -> populates the Consultant dropdown, then assert Consultant is sorted.
