@@ -143,8 +143,11 @@ hr_open_week() {
   hr_pick "$MW_CNAME"
 }
 
-# hr_replace — press the popup's Replace Draft. Prints the text of the dialog that
-# follows within ~10s, or NONE.
+# hr_replace — press the popup's Replace Draft, then leave the text of the dialog
+# that follows within ~20s (or NONE) in HR_DIALOG. Called directly, never inside $( ):
+# its tt_fail must end the step, and in a command substitution it would only end the
+# subshell.
+HR_DIALOG=""
 hr_replace() {
   local r
   r="$(playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'nodialog'; const b=[...d.querySelectorAll('$HR_CONFIRM')].find(x=>x.offsetParent!==null); if(!b) return 'nobutton'; (b.querySelector('button')||b).click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)"
@@ -154,7 +157,7 @@ hr_replace() {
     *) tt_fail "could not press Replace Draft ($r)" ;;
   esac
   sleep 4
-  hr_wait_dialog "cannot be overwritten" | head -c 400
+  HR_DIALOG="$(hr_wait_dialog "cannot be overwritten" | head -c 400)"
 }
 
 # ------------------------------------------------ A. nothing can be reset yet
@@ -163,7 +166,8 @@ S0="$(mw_ledger "$MW_CNAME")"
 
 hr_open_week
 tt_evidence "hr-replace-awaiting-confirm"
-T_A="$(hr_replace)"
+hr_replace
+T_A="$HR_DIALOG"
 echo "  replace on the Awaiting_Approval week -> dialog: $T_A"
 tt_evidence "hr-replace-awaiting-result"
 # A1
@@ -191,7 +195,8 @@ KEEP_STATUS="$(tt_ledger_status "$MW_S1" "$MW_KEEP")"
 
 hr_open_week
 tt_evidence "hr-replace-mixed-confirm"
-T_B="$(hr_replace)"
+hr_replace
+T_B="$HR_DIALOG"
 echo "  replace on the Rejected week -> dialog: $T_B"
 tt_evidence "hr-replace-mixed-result"
 # B1

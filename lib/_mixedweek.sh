@@ -112,8 +112,35 @@ mw_pm_count() {
 }
 
 # mw_pm_act <project> approve|reject — open that row's review page
-# (Main.ReviewTimesheetEntry) and press Approve, or Reject with MW_COMMENT.
+# (Main.ReviewTimesheetEntry), press Approve, or Reject with MW_COMMENT, and confirm
+# the row has left the PM's pending list. One press that did not land is pressed
+# again ONCE (seen on dev 2026-09-29: a Reject that left the line
+# AwaitingManagerApproval); a second miss is fatal, with the rows on screen.
 mw_pm_act() {
+  local tries
+  for tries in 1 2; do
+    _mw_pm_act_once "$1" "$2"
+    if _mw_pm_row_gone "$1"; then return 0; fi
+    echo "  (PM $2 on '$1' for $MW_WEEK did not leave the pending list - attempt $tries)"
+  done
+  tt_evidence "mw-pm-$2-stuck"
+  tt_fail "PM $2 on '$MW_CNAME' / '$1' for $MW_WEEK did not land after two presses; the row is still pending. Rows: $(mw_pm_dump)"
+}
+
+# _mw_pm_row_gone <project> — 0 once the pending list (re-read up to ~30s) no longer
+# holds MW_CNAME / <project> / MW_WEEK.
+_mw_pm_row_gone() {
+  local n
+  for _ in 1 2 3; do
+    mw_pm_load
+    n="$(mw_pm_count "$1")"
+    [ "$n" = "0" ] && return 0
+    sleep 8
+  done
+  return 1
+}
+
+_mw_pm_act_once() {
   local proj="$1" act="$2" n="" r k
   for _ in 1 2 3 4 5 6 7 8; do
     mw_pm_load
