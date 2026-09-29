@@ -2,7 +2,7 @@
 # tt-timeout: 16m
 # verify-hr-replace-draft-keeps-approved.test.sh
 #
-# RED UNTIL bug #1 (reset-editable-only) IS DEPLOYED.
+# Regression spec for bug #1 (reset-editable-only), fixed in model a3463c1b.
 #
 # HR's "replace draft" - Create Timesheet, pick a consultant, confirm "This will
 # replace <name>'s current draft for this week. Continue?" - blanks only the lines
@@ -15,14 +15,14 @@
 # back, the others approved - passed that guard, and EVERY line was blanked and set
 # to Draft, the approved ones included, and the week's totals were zeroed.
 #
-# THE FIX (model, saved 2026-09-29, not yet deployed to dev when this was written).
+# THE FIX (model a3463c1b, deployed to dev 2026-09-29).
 # BlankForHR blanks only _IsEditable lines, sets the week to Draft only when it reset
 # one, recomputes the totals from the lines (SUB_Timesheet_RecalcAll), and returns
 # whether it reset anything; Main.ACT_Timesheet_HRPrepare shows the warning
 #   "This consultant has already submitted or had approved their timesheet for this
 #    week, so it cannot be overwritten."
-# when it did not. The spec's logic is the fixed behaviour. On a build without the
-# fix it goes red at B2 below, which IS the bug.
+# when it did not. On a build without the fix, B2 and B4 below go red (every line
+# blanked, the week zeroed).
 #
 # THE WEEK (lib/_mixedweek.sh). e2e_consultant2, a fresh week:
 #   E2E Manager Approval  MW_KEEP_H h/day, approved by e2e_pm  -> ToProcess
@@ -46,8 +46,8 @@
 # today's week. To aim it at the week under test, HR first picks E2E Consultant Three
 # (no assignments, so no lines to touch), closes that popup WITHOUT confirming, steps
 # the page's week with btnWeekNext, and only then picks E2E Consultant Two - which
-# opens the popup for the week under test. The popup is closed by its window's own
-# close control (framework chrome, no widget name). Picking Three creates an empty
+# opens the popup for the week under test. The first popup is dismissed with Escape:
+# it has no close control, and its Cancel button's name is generated. Picking Three creates an empty
 # timesheet for it on the weeks the page passes; Three is in TT_E2E_CONSULTANTS, so
 # the bookend clears remove it.
 #
@@ -93,10 +93,19 @@ hr_wait_dialog() {
   printf '%s' "$t"
 }
 
-# hr_close_popup — close the topmost popup window by its own close control, without
-# pressing any button inside it. Prints ok, or why not.
+# hr_close_popup — close the replace-draft popup WITHOUT confirming it, by pressing
+# Escape. The popup has no close control of its own, and its Cancel button carries a
+# generated name (actionButton2), which the suite never selects. Prints ok once no
+# visible dialog still offers to replace a draft, or what is still showing.
 hr_close_popup() {
-  playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'none'; const w=d.closest('.mx-window, .modal-dialog, [role=dialog]') || d; const c=[...w.querySelectorAll('.mx-window-header .close, .modal-header .close, button.close, [aria-label=Close]')].find(b=>b.offsetParent!==null); if(!c) return 'noclose'; c.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str
+  local t
+  playwright-cli press Escape >/dev/null 2>&1
+  for _ in $(seq 1 10); do
+    sleep 1
+    t="$(hr_dialog_text)"
+    case "$t" in *"replace"*) ;; *) echo ok; return 0 ;; esac
+  done
+  printf 'still open: %s' "$t"
 }
 
 # hr_pick <consultant> — pick <consultant> in the Create Timesheet picker and wait

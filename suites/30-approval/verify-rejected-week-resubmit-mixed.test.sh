@@ -2,7 +2,7 @@
 # tt-timeout: 14m
 # verify-rejected-week-resubmit-mixed.test.sh
 #
-# RED UNTIL bug #1 (reset-editable-only) IS DEPLOYED.
+# Regression spec for bug #1 (reset-editable-only), fixed in model a3463c1b.
 #
 # A consultant corrects the ONE line the project manager sent back, on a week whose
 # other line the project manager already approved, then saves and resubmits. Only
@@ -16,14 +16,15 @@
 # approval a second time: the PM was asked again, and a line already with HR or
 # already exported could be counted twice.
 #
-# THE FIX (model, saved 2026-09-29, not yet deployed to dev when this was written):
+# THE FIX (model a3463c1b, deployed to dev 2026-09-29):
 #   Main.ACT_Timesheet_Draft   resets only _IsEditable lines, and sets the week to
 #                              Draft only if it reset one;
 #   Main.ACT_Timesheet_Submit  re-derives the week's status from its lines
 #                              (SUB_AssignmentEntry_UpdateTimesheetStatus) after
 #                              submitting.
-# The spec's logic is the fixed behaviour. On a build without the fix it goes red at
-# assertions A1, A4 and A6 below, which IS the bug.
+# On a build without the fix, A1, A4 and A6 below go red - the old behaviour was
+# reproduced on dev on 2026-09-28 (Save Draft moved the approved Manager Approval
+# line ToProcess -> Draft; bug-#1 repro spec, PR #132).
 #
 # THE WEEK (lib/_mixedweek.sh). e2e_consultant2, a fresh week:
 #   E2E Manager Approval  MW_KEEP_H h/day, approved by e2e_pm  -> ToProcess
@@ -55,8 +56,7 @@
 # so one red run shows the whole picture rather than the first symptom.
 #
 # Side effect on a build WITHOUT the fix: the resubmit re-routes the approved line
-# and sends e2e_pm a second approval mail. That is the bug, reproduced on the
-# suite's own accounts.
+# and sends e2e_pm a second approval mail - the bug, on the suite's own accounts.
 #
 # Env: TT_BASE_URL, TT_ROLE_PASS. Optional TT_EVIDENCE_DIR for screenshots.
 set -uo pipefail
