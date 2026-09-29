@@ -301,7 +301,12 @@ jobs:
           # run's failure. The internal deadline is checked between steps, where there
           # is room to spend the few minutes teardown needs. 195 leaves ~15m of headroom
           # under timeout-minutes: 210; keep that gap when either number moves.
-          ./run-tests.sh --skip-file ci-skip.txt --expect-count "$EXPECT" --deadline 195 $FF || rc=$?
+          # TEMP-TZ-PROOF (removed before merge): targeted run + browser zone print.
+          playwright-cli open about:blank >/dev/null 2>&1
+          echo "TEMP-TZ-PROOF shell TZ=$TZ date=$(date)"
+          echo "TEMP-TZ-PROOF browser: $(playwright-cli eval '() => Intl.DateTimeFormat().resolvedOptions().timeZone + " | " + new Date(Date.UTC(2026,9,1)).toString()')"
+          playwright-cli close >/dev/null 2>&1
+          ./run-tests.sh --no-fail-fast --deadline 195 suites/00-setup suites/70-tickets/tt683/verify-tt683-a0-seed-awaiting-export.test.sh suites/75-export/verify-hr-monthly-group-month-label.test.sh suites/99-teardown || rc=$?
 
           if [ -s "${TT_PW_TRACE_FILE:-}" ]; then
             echo
