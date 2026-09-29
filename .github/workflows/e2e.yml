@@ -302,7 +302,7 @@ jobs:
           # is room to spend the few minutes teardown needs. 195 leaves ~15m of headroom
           # under timeout-minutes: 210; keep that gap when either number moves.
           # TEMP-TZ-PROOF (removed before merge): targeted run + browser zone print.
-          export PATH="$PWD/node_modules/.bin:$PATH"; playwright-cli open about:blank
+          playwright-cli open about:blank >/dev/null 2>&1
           echo "TEMP-TZ-PROOF shell TZ=$TZ date=$(date)"
           echo "TEMP-TZ-PROOF browser: $(playwright-cli eval '() => Intl.DateTimeFormat().resolvedOptions().timeZone + " | " + new Date(Date.UTC(2026,9,1)).toString()')"
           playwright-cli close >/dev/null 2>&1
