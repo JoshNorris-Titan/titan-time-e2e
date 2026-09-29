@@ -41,8 +41,10 @@
 #      present. Fatal otherwise: everything below would be vacuous.
 #   B. the gated look-alike sits on its card's button line and does not make
 #      the card taller:
-#        B1. its top edge agrees, within half a button height, with the first
-#            of btnClientView / btnClientApprove on the same card;
+#        B1. the look-alike BUTTON's own top edge (not its Tooltip wrapper's --
+#            the wrapper can sit on the line while the button inside it is pushed
+#            down) agrees, within half a button height, with the first of
+#            btnClientView / btnClientApprove on the same card;
 #        B2. if any card on the tab still shows an available Remind, the gated
 #            card's height agrees with that card's within half a button height.
 #            When every card is gated there is nothing to compare, and B2 says
@@ -138,13 +140,12 @@ REPORT="$(playwright-cli eval "() => {
     if (rc && rc !== card) { refH = String(Math.round(rc.getBoundingClientRect().height)); break; }
   }
 
-  const wr = wrap.getBoundingClientRect();
   const sr = sib.getBoundingClientRect();
   const br = blocked.getBoundingClientRect();
   const cs = getComputedStyle(wrap);
   return [
     cs.display,
-    Math.round(wr.top),
+    Math.round(br.top),
     Math.round(sr.top),
     Math.round(br.height),
     Math.round(sr.height),
@@ -160,17 +161,17 @@ case "$REPORT" in
   *ERR*|'')    tt_fail "could not measure the gated card's button row" ;;
 esac
 
-IFS='|' read -r DISPLAY WRAP_TOP SIB_TOP BLOCKED_H SIB_H CARD_H REF_H <<EOF
+IFS='|' read -r DISPLAY BLOCKED_TOP SIB_TOP BLOCKED_H SIB_H CARD_H REF_H <<EOF
 $REPORT
 EOF
 
-note "wrapper display=$DISPLAY  wrapper top=${WRAP_TOP}px  view/approve top=${SIB_TOP}px  heights ${BLOCKED_H}/${SIB_H}px  card ${CARD_H}px  available-remind card ${REF_H:-none}px"
+note "wrapper display=$DISPLAY  gated button top=${BLOCKED_TOP}px  view/approve top=${SIB_TOP}px  heights ${BLOCKED_H}/${SIB_H}px  card ${CARD_H}px  available-remind card ${REF_H:-none}px"
 
 # Half a button height: comfortably inside the same line, comfortably outside a
 # stacked one (a wrapped row differed by a full button height).
 TOL=$(( ${SIB_H:-38} / 2 ))
 [ "$TOL" -lt 8 ] && TOL=8
-DELTA=$(( WRAP_TOP - SIB_TOP )); [ "$DELTA" -lt 0 ] && DELTA=$(( -DELTA ))
+DELTA=$(( BLOCKED_TOP - SIB_TOP )); [ "$DELTA" -lt 0 ] && DELTA=$(( -DELTA ))
 
 if [ "$DELTA" -le "$TOL" ]; then
   note "B1 ok: the gated button is on its card's button line (top edges ${DELTA}px from View/Approve, tolerance ${TOL}px)"
