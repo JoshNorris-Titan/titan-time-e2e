@@ -160,6 +160,22 @@ jobs:
     # this number, move that one with it and keep the gap.
     timeout-minutes: 210
 
+    # The browser runs on Chicago time, like the people who use the app. The runner
+    # is UTC, and a UTC browser hides every bug that comes from rendering an
+    # unlocalized date in the viewer's zone: on 2026-09-28 HR's Monthly tab labelled
+    # its month groups one month EARLY in a Chicago browser (Oct 1 00:00 UTC is
+    # Sep 30 in Chicago), and verify-hr-monthly-group-month-label went green here
+    # (run 36553422511) while it was red on a Chicago machine.
+    #
+    # Why an env var reaches the browser: run-tests.sh's `playwright-cli open` starts
+    # the cli's daemon, the daemon launches Chromium, and each inherits this job's
+    # environment. Chromium on Linux takes its default time zone (ICU, and so every
+    # Intl / Date call in the page) from TZ. Job-level rather than step-level so any
+    # later step that opens a browser gets it too. It also puts the specs' own `date`
+    # calls on Chicago time, which is what a local run on Josh's machine already does.
+    env:
+      TZ: America/Chicago
+
     steps:
       - uses: actions/checkout@v4
 
