@@ -39,9 +39,8 @@
 #
 # SELECTORS. The reset page is fully named (txtNewPassword, txtConfirmPassword,
 # btnSetPassword) and so is btnForgotPassword. The login page's username box is
-# still the auto-named textBox1, so it is reached as input.form-control[type=text],
-# exactly as verify-forgot-password-link does; Josh should name it (e.g.
-# txtLoginUsername) to make it a contract.
+# txtLoginUsername, reached through TT_LOGIN_USER_SEL (lib/_login_waits.sh) like
+# every other login in the suite.
 #
 # PROVISIONING (once per environment, by hand - no fixture creates accounts): Admin
 # Hub -> Accounts Overview -> New local user, login TT_PWRESET_USER, email
@@ -126,7 +125,7 @@ TS=$(date +%s%3N)
 playwright-cli cookie-clear >/dev/null 2>&1
 playwright-cli goto "$TT_BASE/" >/dev/null 2>&1
 [ "$(_tt_login_form_variant)" = "new" ] || tt_fail "the anonymous home page did not render Core.Login, which is the only page with btnForgotPassword"
-tt_fill_commit "input.form-control[type=text]" "$PU"
+tt_fill_commit "$TT_LOGIN_USER_SEL" "$PU"
 playwright-cli click ".mx-name-btnForgotPassword" >/dev/null 2>&1
 wait_body "reset link has been sent" 20 || tt_fail "A: Forgot password? for '$PU' produced no confirmation"
 tt_clear_dialogs 4 >/dev/null 2>&1

@@ -33,16 +33,10 @@
 #      document's /file URL does not return the file; and the attachment download
 #      action, called with the document's guid, saves nothing.
 #
-# WHAT IT CANNOT DO WITH .mx-name-* ALONE. The upload popup
-# (Main.AssignmentAttachment_Upload) is still auto-named: its tabs are tabPage1 /
-# tabPage2 and its Save buttons actionButton7 / actionButton1. This step selects
-# those by CAPTION ("Expense Report", "Timesheet Attachments", "Save"), the way
-# verify-timesheet-attachment already does, and never by their generated names.
-# Josh must rename them (e.g. tabExpenseUpload, tabTimesheetUpload,
-# btnExpenseUploadSave, btnAttachmentUploadSave) for this to become a contract.
-#
-# RED / UNPROVEN UNTIL THE CHANGE IS DEPLOYED: btnExpenseDownload does not exist
-# before it, and C's reads succeed.
+# THE UPLOAD POPUP (Main.AssignmentAttachment_Upload) is selected by name: its tabs
+# tabTimesheetUpload / tabExpenseUpload and its Save buttons btnAttachmentUploadSave /
+# btnExpenseUploadSave (Josh's 2026-09-30 rename; before it they were the auto-named
+# tabPage1 / tabPage2 / actionButton7 / actionButton1 and this step used captions).
 #
 # Consumes: one E2E Consultant week on E2E Customer Approval, left
 # AwaitingCustomerApproval with one attachment and one receipt on it.
@@ -73,15 +67,10 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
 # ------------------------------------------------------------------ helpers
 
-# dlg_click_caption <caption> — press the visible button with exactly that caption
-# in the topmost dialog. Echoes ok | none.
-dlg_click_caption() {
-  playwright-cli eval "() => { const d=$(_tt_dialog_js); const root=d||document; const b=[...root.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>(x.innerText||'').trim().toLowerCase()==='$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')'); if(!b) return 'none'; b.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str
-}
-
-# dlg_click_tab_caption <caption> — select a tab in the topmost dialog by its text.
-dlg_click_tab_caption() {
-  playwright-cli eval "() => { const d=$(_tt_dialog_js)||document; const t=[...d.querySelectorAll('a,li,[role=tab]')].find(e=>e.offsetParent!==null && (e.innerText||'').trim()==='$1'); if(!t) return 'none'; t.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str
+# dlg_click_name <widget name> — press the visible .mx-name-<name> button. Echoes
+# ok | none.
+dlg_click_name() {
+  playwright-cli eval "() => { const b=[...document.querySelectorAll('.mx-name-$1')].find(x=>x.offsetParent!==null); if(!b) return 'none'; b.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str
 }
 
 # row_docs_click <ord> — the Exp/Tim button on the <ord>-th week row. A row is the
@@ -158,10 +147,10 @@ esac
 r="$(row_docs_click "$ord")"
 [ "$r" = "ok" ] || tt_fail "could not open the documents popup on the '$PROJECT' row ($r)"
 sleep 3
-[ "$(dlg_click_tab_caption "Timesheet Attachments")" = "ok" ] || tt_fail "the documents popup has no 'Timesheet Attachments' tab"
+[ "$(cl_click_tab tabTimesheetUpload)" = "ok" ] || tt_fail "the documents popup has no .mx-name-tabTimesheetUpload tab"
 sleep 2
 st="$(upload_into fileUploader2)" || tt_fail "the timesheet attachment did not stage in the uploader ($st)"
-[ "$(dlg_click_caption "Save")" = "ok" ] || tt_fail "no Save on the Timesheet Attachments tab"
+[ "$(dlg_click_name btnAttachmentUploadSave)" = "ok" ] || tt_fail "no visible .mx-name-btnAttachmentUploadSave on the Timesheet Attachments tab"
 sleep 3
 tt_clear_dialogs 4 >/dev/null 2>&1
 note "SETUP: attached $FNAME to the week"
@@ -170,11 +159,11 @@ note "SETUP: attached $FNAME to the week"
 r="$(row_docs_click "$ord")"
 [ "$r" = "ok" ] || tt_fail "could not reopen the documents popup on the '$PROJECT' row ($r)"
 sleep 3
-[ "$(dlg_click_tab_caption "Expense Report")" = "ok" ] || tt_fail "the documents popup has no 'Expense Report' tab"
+[ "$(cl_click_tab tabExpenseUpload)" = "ok" ] || tt_fail "the documents popup has no .mx-name-tabExpenseUpload tab"
 sleep 2
 tt_fill_commit ".mx-name-txtTotalExpenseAmount input" "12.34"
 st="$(upload_into fileUploader1)" || tt_fail "the expense receipt did not stage in the uploader ($st)"
-[ "$(dlg_click_caption "Save")" = "ok" ] || tt_fail "no Save on the Expense Report tab"
+[ "$(dlg_click_name btnExpenseUploadSave)" = "ok" ] || tt_fail "no visible .mx-name-btnExpenseUploadSave on the Expense Report tab"
 sleep 4
 tt_clear_dialogs 4 >/dev/null 2>&1
 note "SETUP: added a 12.34 expense with $FNAME as the receipt"
