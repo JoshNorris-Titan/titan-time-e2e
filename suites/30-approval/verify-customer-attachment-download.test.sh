@@ -194,8 +194,8 @@ DOC_GUID="$(playwright-cli eval "() => new Promise(res => { const t=setTimeout((
 case "$DOC_GUID" in ''|ERR:*) tt_fail "HR could not read the attachment document's guid ($DOC_GUID)" ;; esac
 note "SETUP: entry $GUID carries ${HR_N[$ATT_XP]} attachment document(s) and ${HR_N[$EXP_XP]} receipt(s) (HR)"
 
-cl_remind_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER" \
-  || tt_fail "HR has nothing to remind for '$CONSULTANT_NAME' / '$PROJECT' moments after it was submitted"
+cl_remind_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER" "$WEEKKEY" \
+  || tt_fail "no live approval link lists week $WEEKKEY for '$CONSULTANT_NAME' / '$PROJECT' moments after it was submitted"
 
 # ---------------------------------------------- A. the attachment, through the link
 cl_open_link_cold "$CL_LINK" || tt_fail "the approval link did not open an approval page: $CL_LINK"
@@ -235,6 +235,7 @@ else
       || bad "A: btnAttachmentDownload saved $got bytes, the fixture is $FSIZE ($P)"
   else
     bad "A: btnAttachmentDownload saved no file within 30 s. Dialog: $(cl_dialog_text)"
+    _tt683_download_evidence "$(_tt683_zip_request_index)"
   fi
   rm -f "$MARK"
   cl_dismiss_refusal >/dev/null
@@ -254,9 +255,17 @@ else
     else
       bad "A: btnAttachmentView neither requested /file nor opened a tab (requests $before_req -> $after_req, tabs $before_tabs -> $after_tabs)"
     fi
+    # Close only the tabs View opened, BY INDEX, newest first, then return to the
+    # review page. A bare tab-close closes the CURRENT tab, and a tab the page opens
+    # does not always become current - in run cls-post-3 it closed the review page
+    # itself, and B then found no Expense Report tab. tab-list prints one "- N: ..."
+    # line per tab, 0-based, so the review page is 0 and the new ones sit above it.
     if [ "$after_tabs" -gt "$before_tabs" ]; then
-      playwright-cli tab-close >/dev/null 2>&1
+      for idx in $(playwright-cli tab-list 2>/dev/null | grep -oE '^- [0-9]+:' | grep -oE '[0-9]+' | sort -rn); do
+        [ "$idx" -gt 0 ] && playwright-cli tab-close "$idx" >/dev/null 2>&1
+      done
       playwright-cli tab-select 0 >/dev/null 2>&1
+      tt_wait_for ".mx-name-btnCustomerApprove" "the review popup, back on the first tab after View's tab was closed"
     fi
   fi
 fi
@@ -281,6 +290,7 @@ else
       || bad "B: btnExpenseDownload saved $got bytes, the fixture is $FSIZE ($P)"
   else
     bad "B: btnExpenseDownload saved no file within 30 s. Dialog: $(cl_dialog_text)"
+    _tt683_download_evidence "$(_tt683_zip_request_index)"
   fi
   rm -f "$MARK"
 fi

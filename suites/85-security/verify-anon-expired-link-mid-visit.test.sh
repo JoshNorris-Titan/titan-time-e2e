@@ -99,7 +99,7 @@ trap restore EXIT
 # --------------------------------------------------------- 1. a live link, from mail
 cl_fresh_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER"
 WEEKKEY="$(tt_week_key "$CL_WEEK")"
-[ -n "$WEEKKEY" ] || tt_fail "could not read a week range out of HR's week label '$CL_WEEK'"
+[ -n "$WEEKKEY" ] || tt_fail "could not read a week range out of the link's week '$CL_WEEK'"
 
 # --------------------------------------------- 2. the staff browser, and the control
 cl_staff_open

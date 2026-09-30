@@ -27,12 +27,13 @@
 # unmoved - never by the shape of the call's answer.
 #
 # Provides:
-#   cl_remind_link <consultant> <project> <approver>   HR reminds a pending entry and
-#                                                       the approval link is read from
-#                                                       mail. Sets CL_WEEK, CL_LINK,
-#                                                       CL_WEEKFRAG. 1 = nothing pending.
-#   cl_fresh_link  <consultant> <project> <approver>   the same, creating the pending
-#                                                       entry first when there is none
+#   cl_remind_link <consultant> <project> <approver> [weekKey]
+#                                                       a live approval link (from
+#                                                       mail) listing that week. Sets
+#                                                       CL_WEEK (a week key), CL_LINK,
+#                                                       CL_WEEKFRAG.
+#   cl_fresh_link  <consultant> <project> <approver>   the same for any pending week,
+#                                                       creating one when there is none
 #   cl_open_link_cold <link>                            new anonymous session, open it
 #   cl_entry_guid <consultant> <project> <week-key>     HR: the pending entry's guid
 #   cl_entry_status <guid> / cl_log_count <guid>        HR: readbacks for one entry
@@ -67,46 +68,42 @@ _cl_weekfrag() {
   fi
 }
 
-# cl_remind_link <consultant> <project> <approver>
+# cl_remind_link <consultant> <project> <approver> [weekKey]
+# cl_fresh_link  <consultant> <project> <approver>
 #
-# Reset the mail high-water mark, press Remind on HR's Client approval tab for a
-# pending <consultant> entry on <project>, and read the approval link addressed to
-# <approver> out of the mail that produced. Returns 1 when HR has nothing pending for
-# that pair (the caller decides whether to create one); tt_fail's on a mail failure.
+# Both are thin wrappers around tt_customer_link (lib/_login_tokens.sh, #146), which
+# reuses a live approval link already in Emails Sent when its page lists our row,
+# submits a week as the consultant when nothing is pending, and presses HR's Remind
+# only when no email in the mailbox can serve. They used to press Remind every time;
+# Remind is allowed once per entry per day, so from the day's second spec onward the
+# button was gone and each spec fell back to a fresh submit plus a wait on the mail
+# queue - 300-450 s, and the specs timed out.
 #
-# ORDER IS LOAD-BEARING: tt_mail_prepare signs in as the administrator, so it runs
-# FIRST and the HR dashboard is opened LAST (verify-customer-token-approve has the
-# long version of why).
-cl_remind_link() {
-  local who="$1" proj="$2" approver="$3" ts
-  tt_mail_prepare
-  ts=$(date +%s%3N)
-  tt_login "e2e_hr" "$TT_HR_READY"
-  tt_hr_click_tab "Client approval"
-  sleep 2
-  CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")" || return 1
-  [ -n "$CL_WEEK" ] || tt_fail "HR reminded an entry but the week under test could not be read"
-  CL_LINK="$(tt_mail_token "$ts" customer-approval "$approver")" \
-    || tt_fail "the approval email to '$approver' was not received within the timeout"
-  case "$CL_LINK" in
-    *"/p/customer-approval/"*) ;;
-    *) tt_fail "the email link is not a customer-approval link: $CL_LINK" ;;
-  esac
-  CL_WEEKFRAG="$(_cl_weekfrag "$CL_WEEK")"
-  echo "  reminded '$who' / '$proj' for week '$CL_WEEK'; link read from mail to $approver"
-  return 0
+# They map TT_CL_LINK / TT_CL_WEEK / TT_CL_WEEKFRAG onto CL_LINK / CL_WEEK /
+# CL_WEEKFRAG. CL_WEEK is now a tt_week_key ("Sep 27 - Oct 03"), not HR's label;
+# tt_week_key of a key is the key, so callers that normalise it still work.
+#
+# cl_remind_link takes the week the caller already created and accepts only a link
+# whose page lists THAT week; nothing is submitted for it. tt_customer_link tt_fail's
+# when no path yields a link, so a return here is always 0.
+_cl_from_tt() {
+  CL_LINK="$TT_CL_LINK"
+  CL_WEEK="$TT_CL_WEEK"
+  CL_WEEKFRAG="$TT_CL_WEEKFRAG"
+  [ -n "$CL_WEEKFRAG" ] || CL_WEEKFRAG="$(_cl_weekfrag "$CL_WEEK")"
+  echo "  link for '$1' / '$2' week '$CL_WEEK' ($TT_CL_HOW); read from mail to $3"
 }
 
-# cl_fresh_link <consultant> <project> <approver> — cl_remind_link, creating the
-# pending entry through the consultant first when HR has none to remind.
+cl_remind_link() {
+  local who="$1" proj="$2" approver="$3" wk="${4:-}"
+  tt_customer_link "$who" "$proj" "$approver" "$wk" || return 1
+  _cl_from_tt "$who" "$proj" "$approver"
+}
+
 cl_fresh_link() {
   local who="$1" proj="$2" approver="$3"
-  cl_remind_link "$who" "$proj" "$approver" && return 0
-  echo "  no pending '$who' entry on '$proj' - creating one as the consultant"
-  tt_login "e2e_consultant" "My Timesheets"
-  tt_consultant_submit_project_row "$proj"
-  cl_remind_link "$who" "$proj" "$approver" \
-    || tt_fail "still no pending '$who' entry on '$proj' after submitting one"
+  tt_customer_link "$who" "$proj" "$approver"     || tt_fail "no pending '$who' entry on '$proj' with a live approval link, even after submitting one"
+  _cl_from_tt "$who" "$proj" "$approver"
 }
 
 # cl_open_link_cold <link> — throw the session away and open <link> as a first-time
