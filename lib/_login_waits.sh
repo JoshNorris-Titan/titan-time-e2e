@@ -165,6 +165,24 @@ tt_hr_click_tab() {
   tt_hr_try_click_tab "$1" || tt_fail "HR dashboard tab '$1' could not be opened (${2:-$1})"
 }
 
+# Core.Login selectors — name first, the pre-rename way as a fallback.
+#
+# Josh renamed the Core.Login widgets in the model on 2026-09-30: the username box
+# textBox1 -> txtLoginUsername and the Sign In button actionButton1 -> btnSignIn.
+# The rename reaches dev only with the NEXT deploy, and every login in the suite
+# (tt_login, seed_login, the emailprep probe and tool) goes through these two
+# selectors -- so each is a CSS selector LIST that matches the new name on a
+# deployed-after model and the old selector on a deployed-before one. On any one
+# deploy only one half of the submit list exists; the username halves resolve to
+# the same <input>, so neither list ever matches two elements.
+#
+# TODO: once the rename is deployed to dev, delete the fallback half of each list
+# (", input.form-control[type=text]" and ", .mx-name-actionButton1").
+#
+# Must not contain a single quote: callers splice them into JS strings.
+TT_LOGIN_USER_SEL=".mx-name-txtLoginUsername input, input.form-control[type=text]"
+TT_LOGIN_SUBMIT_SEL=".mx-name-btnSignIn, .mx-name-actionButton1"
+
 # _tt_login_form_variant — which sign-in form is on screen right now:
 #   'old' = the stock Mendix /login.html form (#usernameInput)
 #   'new' = the custom Core.Login page (mx widgets, input.form-control)
@@ -250,9 +268,9 @@ _tt_login_submit() {
     playwright-cli fill "#passwordInput" "$pass" >/dev/null 2>&1
     playwright-cli click "#loginButton" >/dev/null 2>&1
   else
-    playwright-cli fill "input.form-control[type=text]" "$user" >/dev/null 2>&1
+    playwright-cli fill "$TT_LOGIN_USER_SEL" "$user" >/dev/null 2>&1
     playwright-cli fill "input.form-control[type=password]" "$pass" >/dev/null 2>&1
-    playwright-cli click ".mx-name-actionButton1" >/dev/null 2>&1
+    playwright-cli click "$TT_LOGIN_SUBMIT_SEL" >/dev/null 2>&1
   fi
 
   for _ in $(seq 1 60); do
