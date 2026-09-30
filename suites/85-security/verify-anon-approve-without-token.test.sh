@@ -73,7 +73,7 @@
 # unauthenticated caller can approve timesheets company-wide, and it belongs in
 # front of Josh before anything else in this suite is looked at.
 #
-# Consumes: one AwaitingCustomerApproval entry, which it leaves as it found it
+# Consumes: one AwaitingCustomerApproval entry (submitting one when none is pending), which it leaves as it found it
 # unless the app is broken. Clears cookies, so it must not run between a login
 # and an assertion that depends on it - 85-security is where that is safe.
 # Env: TT_BASE_URL, TT_ROLE_PASS
@@ -83,6 +83,9 @@ set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_authz.sh"
+source "$TT_ROOT/lib/_fixtures.sh"   # FX_APPROVER_EMAIL: the approver on E2E Customer Approval
+
+SEED_PROJECT="E2E Customer Approval"
 
 fails=0
 note() { echo "  $*"; }
@@ -111,9 +114,23 @@ tt_login "e2e_hr" "$TT_HR_READY"
 note "control session roles: $(tt_authz_roles)"
 
 GUID="$(first_guid "$PENDING")"
+# No pending E2E entry: make one rather than end with no verdict. What 30-approval
+# leaves behind depends on which of its specs ran and in what order - since the
+# customer specs reuse a live link (tt_customer_link, #146) they consume the entries
+# approval-flow and attachment-download leave, and on 2026-09-30 a run of setup +
+# 30-approval + this step reached here with none. tt_customer_link submits one
+# E2E Consultant week on the fixture's customer-approval project when nothing is
+# pending; the link it also finds is not used here - this step's attacker never
+# opens one.
+if [ -z "$GUID" ]; then
+  note "no pending E2E entry - submitting one on '$SEED_PROJECT' through tt_customer_link"
+  tt_customer_link "E2E Consultant" "$SEED_PROJECT" "$FX_APPROVER_EMAIL"
+  tt_login "e2e_hr" "$TT_HR_READY"
+  GUID="$(first_guid "$PENDING")"
+fi
 case "$GUID" in
   ERR:*) tt_fail "the control could not read AwaitingCustomerApproval entries ($GUID), so nothing below could be attempted" ;;
-  "")    tt_fail "no E2E entry is awaiting customer approval, so there is nothing for an anonymous caller to attack and this step has no verdict. suites/30-approval creates one; run the suite in order." ;;
+  "")    tt_fail "no E2E entry is awaiting customer approval even after submitting one, so there is nothing for an anonymous caller to attack and this step has no verdict." ;;
 esac
 # Every readback from here on is BY GUID. It used to re-run the PENDING query and
 # read the first match, which after a successful attack would silently be a

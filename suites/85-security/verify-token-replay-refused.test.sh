@@ -88,6 +88,12 @@ WEEK="$TT_CL_WEEK"          # a tt_week_key, e.g. "Sep 27 - Oct 03"
 WEEKFRAG="$TT_CL_WEEKFRAG"
 [ -n "$WEEK" ] || tt_fail "could not determine the week under test"
 [ -n "$WEEKFRAG" ] || tt_fail "could not read a leading 'Mon DD' out of the week '$WEEK'"
+# B's absence check matches on WEEKFRAG alone, so the week has to be a real range
+# key: a fragment cut from anything else could match some other row, or none.
+case "$WEEK" in
+  [A-Z][a-z][a-z]" "[0-9][0-9]" - "[A-Z][a-z][a-z]" "[0-9][0-9]) ;;
+  *) tt_fail "the week under test '$WEEK' is not a week key ('Mon DD - Mon DD'), so B's match on '$WEEKFRAG' could not be trusted" ;;
+esac
 case "$LINK" in
   *"/p/customer-approval/"*) ;;
   *) tt_fail "the email link is not a customer-approval link: $LINK" ;;

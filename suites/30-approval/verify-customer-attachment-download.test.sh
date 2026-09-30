@@ -100,19 +100,42 @@ file_requests() {
 }
 
 # saved_download <marker> — the file saved after <marker>, waited for up to 30 s.
+# Two places are looked at: the newest file in .playwright-cli/ (_tt683_saved_since),
+# and the path in playwright-cli's one-shot "Downloaded file X to "<path>"" event,
+# which rides on the output of whichever command was running when the download
+# finished (lib/_tt683.sh has the long version) - the click itself, whose raw output
+# click_in_item keeps in $CLICK_RAW, or one of the polls below.
+CLICK_RAW="$(mktemp)"
+_dl_event_path() {
+  grep -oE 'Downloaded file .* to "[^"]+"' "$1" 2>/dev/null | tail -1 | sed -E 's/.* to "([^"]+)"$/\1/'
+}
 saved_download() {
-  local i p
+  local i p poll
+  poll="$(mktemp)"
   for i in $(seq 1 30); do
-    p="$(_tt683_saved_since "$1")" && { printf '%s' "$p"; return 0; }
+    p="$(_tt683_saved_since "$1")" && { rm -f "$poll"; printf '%s' "$p"; return 0; }
+    p="$(_dl_event_path "$CLICK_RAW")"
+    [ -n "$p" ] || { playwright-cli requests --static >> "$poll" 2>&1; p="$(_dl_event_path "$poll")"; }
+    if [ -n "$p" ]; then
+      case "$p" in /*|[A-Za-z]:*) ;; *) p="$PWD/$p" ;; esac
+      p="${p//\\//}"
+      [ -f "$p" ] && [ "$(wc -c < "$p" | tr -d ' ')" -gt 0 ] && { rm -f "$poll"; printf '%s' "$p"; return 0; }
+    fi
     sleep 1
   done
+  echo "  [download] click output: $(grep -iE 'download|error' "$CLICK_RAW" | head -3 | tr '\n' ' ')" >&2
+  echo "  [download] polls mentioning a download: $(grep -ic 'download' "$poll")" >&2
+  rm -f "$poll"
   return 1
 }
 
 # click_in_item <gallery> <button> — press <button> inside the <gallery> item whose
-# text names $FNAME. Echoes clicked | noitem | nobutton.
+# text names $FNAME. Echoes clicked | noitem | nobutton. The command's raw output is
+# kept in $CLICK_RAW for saved_download.
 click_in_item() {
-  playwright-cli eval "() => { const g=[...document.querySelectorAll('.mx-name-$1')].find(e=>e.offsetParent!==null); if(!g) return 'nogallery'; const it=[...g.querySelectorAll('.widget-gallery-item')].find(i=>(i.innerText||'').indexOf('$FNAME')>=0) || ((g.innerText||'').indexOf('$FNAME')>=0 ? g : null); if(!it) return 'noitem'; const b=[...it.querySelectorAll('.mx-name-$2')].find(e=>e.offsetParent!==null); if(!b) return 'nobutton'; b.click(); return 'clicked'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const g=[...document.querySelectorAll('.mx-name-$1')].find(e=>e.offsetParent!==null); if(!g) return 'nogallery'; const it=[...g.querySelectorAll('.widget-gallery-item')].find(i=>(i.innerText||'').indexOf('$FNAME')>=0) || ((g.innerText||'').indexOf('$FNAME')>=0 ? g : null); if(!it) return 'noitem'; const b=[...it.querySelectorAll('.mx-name-$2')].find(e=>e.offsetParent!==null); if(!b) return 'nobutton'; b.click(); return 'clicked'; }" > "$CLICK_RAW" 2> "$CLICK_RAW.err"
+  _tt_eval_str < "$CLICK_RAW"
+  cat "$CLICK_RAW.err" >> "$CLICK_RAW" 2>/dev/null
 }
 
 # ----------------------------------------------- SETUP 1. the consultant's week
