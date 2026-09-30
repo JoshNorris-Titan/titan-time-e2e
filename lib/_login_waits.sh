@@ -165,23 +165,17 @@ tt_hr_click_tab() {
   tt_hr_try_click_tab "$1" || tt_fail "HR dashboard tab '$1' could not be opened (${2:-$1})"
 }
 
-# Core.Login selectors — name first, the pre-rename way as a fallback.
+# Core.Login selectors, by widget name.
 #
-# Josh renamed the Core.Login widgets in the model on 2026-09-30: the username box
-# textBox1 -> txtLoginUsername and the Sign In button actionButton1 -> btnSignIn.
-# The rename reaches dev only with the NEXT deploy, and every login in the suite
-# (tt_login, seed_login, the emailprep probe and tool) goes through these two
-# selectors -- so each is a CSS selector LIST that matches the new name on a
-# deployed-after model and the old selector on a deployed-before one. On any one
-# deploy only one half of the submit list exists; the username halves resolve to
-# the same <input>, so neither list ever matches two elements.
-#
-# TODO: once the rename is deployed to dev, delete the fallback half of each list
-# (", input.form-control[type=text]" and ", .mx-name-actionButton1").
+# Josh named the Core.Login widgets on 2026-09-30 (textBox1 -> txtLoginUsername,
+# actionButton1 -> btnSignIn) and that reached dev with the customer-link security
+# deploy (c8cb6095). Every login in the suite (tt_login, seed_login, the emailprep
+# probe and tool, the forgot/reset-password specs) goes through these two. The
+# pre-rename fallback halves #145 carried were removed once the names were live.
 #
 # Must not contain a single quote: callers splice them into JS strings.
-TT_LOGIN_USER_SEL=".mx-name-txtLoginUsername input, input.form-control[type=text]"
-TT_LOGIN_SUBMIT_SEL=".mx-name-btnSignIn, .mx-name-actionButton1"
+TT_LOGIN_USER_SEL=".mx-name-txtLoginUsername input"
+TT_LOGIN_SUBMIT_SEL=".mx-name-btnSignIn"
 
 # _tt_login_form_variant — which sign-in form is on screen right now:
 #   'old' = the stock Mendix /login.html form (#usernameInput)
