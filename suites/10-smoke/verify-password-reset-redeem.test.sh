@@ -21,7 +21,10 @@
 #
 # WHAT IT ASSERTS
 #   0. the fixture account exists, is active, and has the email this step reads
-#      mail for (read as e2e_tm, which can read Administration.Account);
+#      mail for (read as the administrator: e2e_tm's Administration.Account
+#      read does not include Name or Active on a Consultant's account - measured
+#      on dev 2026-09-30, the row comes back with only Email and FullName - so a
+#      Name-keyed retrieve as e2e_tm reports a provisioned account as absent);
 #   A. Forgot password? on Core.Login, with the account's login, answers with the
 #      generic confirmation, and a reset link to that address arrives;
 #   B. the link opens the reset page in a fresh session;
@@ -106,11 +109,11 @@ restore() {
 trap restore EXIT
 
 # ----------------------------------------------------- 0. the fixture account
-tt_login "e2e_tm" "Add Customer"
+acct_admin_login "$TT_ADMIN_U" "$TT_ADMIN_P"
 ACC="$(playwright-cli eval "() => new Promise(res => { try { const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"//Administration.Account[Name = '$PU']\", filter:{amount:2}, callback:o=>{ clearTimeout(t); if(!o||!o.length) return res('ABSENT'); res(String(o[0].get('Active'))+'~'+String(o[0].get('Email')||'')); }, error:e=>{ clearTimeout(t); res('ERR:'+e.message); } }); } catch(e){ res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str)"
 case "$ACC" in
   ABSENT) tt_fail "there is no account '$PU' on $TT_BASE. Provision it once by hand (see this file's header, and README section 4): Accounts Overview -> New local user, email $PEMAIL, role Consultant, password TT_PWRESET_PASS." ;;
-  ERR:*)  tt_fail "could not read Administration.Account as e2e_tm ($ACC)" ;;
+  ERR:*)  tt_fail "could not read Administration.Account as the administrator ($ACC)" ;;
   true~*) ;;
   *)      tt_fail "account '$PU' is not active ($ACC) - the request flow silently sends nothing for an inactive account" ;;
 esac
