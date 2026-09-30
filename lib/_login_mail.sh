@@ -323,6 +323,36 @@ tt_mail_find_message() {
     | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{d=d.trim(); try{ d=JSON.parse(d); }catch(e){} if(!String(d).trim()) process.exit(1); process.stdout.write(d+"\n"); })'
 }
 
+# tt_mail_links_to <address> [link-regex] [max] - every DISTINCT link matching
+# <link-regex> (default: customer-approval) in mail addressed to exactly <address>,
+# one per line, in the list's order (Sent, newest first), at most [max] (default 4).
+# Prints nothing when there is none. Prints NOGRID / NOFILTER and returns 1 when the
+# Emails Sent page could not answer, so a caller can tell "no mail" from "no page".
+#
+# WHY THIS EXISTS. Since per-email approval links (model, 2026-09-24) every approval
+# email carries its own token, and an earlier one is never revoked: it keeps working
+# until its own ExpiresAt (CONST_ApprovalTokenLifetimeDays, 7). So a link already
+# sitting in Emails Sent is as good as a freshly minted one, and reading it costs a
+# search instead of a Remind (gated to one per entry per day) plus a wait on the
+# outbound queue. tt_customer_link is the caller; it validates each link on the
+# token page before trusting it, because "not revoked" is not "covers this entry".
+tt_mail_links_to() {
+  local addr="$1" rx="${2:-customer-approval}" max="${3:-4}" out esc
+  out="$(_tt_mail_lookup "$addr")"
+  case "$out" in
+    NOGRID|NOFILTER) echo "$out"; return 1 ;;
+    UNSETTLED)       echo "NOGRID"; return 1 ;;
+    EMPTY|MATCHES:0) return 0 ;;
+  esac
+  esc="${addr//\'/\\\'}"
+  playwright-cli eval "() => { const l=document.querySelector('.mx-name-lstEmailsSent'); if(!l) return ''; const want='$esc'.trim().toLowerCase(); const g=(r,n)=>(((r.querySelector('.mx-name-'+n)||{}).innerText)||'').replace(/\\s+/g,' ').trim(); return [...l.querySelectorAll('.mx-name-cntEmailsSentRow')].filter(r=>g(r,'txtRowTo').split(/[;,]/).some(a=>a.trim().toLowerCase()===want)).map(r=>g(r,'txtRowPlainBody')+' '+g(r,'txtRowContent')).join('\\n'); }" 2>/dev/null \
+    | _tt_eval_str \
+    | grep -oE "https?://[^ \"'<>()~]+${rx}[^ \"'<>()~]*" \
+    | awk '!seen[$0]++' \
+    | head -n "$max"
+  return 0
+}
+
 # --- the API the tests use -------------------------------------------------
 
 # tt_mail_prepare - make sure mail is readable, and mark what is already there.

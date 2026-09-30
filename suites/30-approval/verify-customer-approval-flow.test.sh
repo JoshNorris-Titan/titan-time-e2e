@@ -8,11 +8,13 @@
 # token trio has room for its slow path.
 #
 # Idempotent end-to-end check:
-#   1. As HR, on the Client Approval tab, trigger "Remind" on a pending entry for
-#      the E2E consultant (reminding does NOT consume the entry). If no pending
-#      entry exists, submit one as the consultant first, then remind.
-#   2. Read the resulting token email from the configured mail backend and
-#      extract the /p/customer-approval/<token> link.
+#   1. Find a pending entry for the E2E consultant and a live approval link to it
+#      (tt_customer_link): reuse an approval email already in the app's Emails
+#      Sent when its link lists that entry; submit one as the consultant when
+#      nothing is pending; press HR's "Remind" (once per entry per day, by design)
+#      only when no email in the mailbox can serve.
+#   2. The /p/customer-approval/<token> link comes out of that real approval email
+#      to the project's approver, either way.
 #   3. Open that link ANONYMOUSLY (no login) and assert the Customer Approval page
 #      renders, lists the pending timesheet(s), that every listed row is actually
 #      awaiting this client's decision, and that the entry the client opens is the
@@ -91,59 +93,24 @@ CUSTOMER="Costco"
 PROJECT="E2E Customer Approval"
 APPROVER="$FX_APPROVER_EMAIL"   # the fixture sets this as $PROJECT's approver
 
-# Fail fast on a misconfigured backend, before the login/click sequence.
-tt_mail_prepare
-
-# 1) HR: remind an existing pending entry (create one first if the pool is empty).
-tt_login "e2e_hr" "$TT_HR_READY"
-tt_hr_click_tab "Client approval"
-sleep 2
-
-TS=$(date +%s%3N)
-if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
-  echo "reminded existing pending entry (week: $WEEK)"
-else
-  echo "no pending '$CONSULTANT_NAME' entry on '$PROJECT' — creating one via the consultant"
-  tt_login "e2e_consultant" "My Timesheets"
-  # Must be an entry on THIS project: a generic submit can land on any assignment,
-  # and only $PROJECT routes to $CUSTOMER's approval token.
-  tt_consultant_submit_project_row "$PROJECT"
-  # ORDER IS LOAD-BEARING. Submitting may itself have sent mail, so the high-water
-  # mark has to be reset — but tt_mail_prepare reads the Emails Sent page, which is
-  # Administrator-only, so it LOGS IN AS THE ADMINISTRATOR and leaves the browser
-  # there. Doing that after opening the HR dashboard navigates away from it, and the
-  # remind below then hunts for the week picker on the admin's page and reports "no
-  # pending entry" — with every HR widget reading ABSENT — for a queue it never
-  # looked at. Reset the inbox FIRST, open the HR dashboard LAST. The primary path
-  # above already has this order.
-  tt_mail_prepare
-  TS=$(date +%s%3N)
-  tt_login "e2e_hr" "$TT_HR_READY"
-  tt_hr_click_tab "Client approval"
-  sleep 2
-  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
-    || tt_fail "still no pending '$CONSULTANT_NAME' entry on '$PROJECT' after creating one"
-  echo "reminded newly-created entry (week: $WEEK)"
-fi
-
-# 2) fetch the token link from the reminder email.
-# The recipient is named, not guessed: tt_mail_token with no recipient takes the
-# first approval link in ANY fresh mail, and on 2026-09-28 that was another
-# approver's (Manual TT744's) - see the Remind note in lib/_login_tokens.sh.
-LINK=$(tt_mail_token "$TS" customer-approval "$APPROVER") \
-  || tt_fail "token email not received within timeout"
+# 1) + 2) a live approval link from a real approval email, and the pending entry it lists.
+# tt_customer_link (lib/_login_tokens.sh) reuses an approval email already in Emails
+# Sent when its link lists a pending '$PROJECT' entry for the consultant, submits one
+# week as the consultant when nothing is pending, and presses HR's Remind only when
+# no email in the mailbox can serve. Remind is allowed once per entry per day, so
+# depending on it sent every spec after the day's first down a fresh-submit plus
+# mail-queue path that ran 300-450 s and timed out. The link still comes from a real
+# approval email to $APPROVER, and everything below asserts on what it opens.
+tt_customer_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER"   || tt_fail "no pending '$CONSULTANT_NAME' entry on '$PROJECT' with a live approval link, even after submitting one"
+LINK="$TT_CL_LINK"
+WEEK="$TT_CL_WEEK"          # a tt_week_key, e.g. "Sep 27 - Oct 03"
+WEEKFRAG="$TT_CL_WEEKFRAG"  # its leading "Mon DD", which every rendering of the week contains
+[ -n "$WEEK" ] || tt_fail "could not determine the week under test"
+[ -n "$WEEKFRAG" ] || tt_fail "could not read a leading 'Mon DD' out of the week '$WEEK'"
 case "$LINK" in
   *"/p/customer-approval/"*) ;;
-  *) tt_fail "email link is not a customer-approval link: $LINK" ;;
+  *) tt_fail "the approval email's link is not a customer-approval link: $LINK" ;;
 esac
-echo "received token link"
-
-# The HR tab and the token page do not render a week the same way — HR gives
-# "Aug 30 - Sep 05, 2026", the token row gives "Aug 30-Sep 05 2026" and the review
-# popup gives "Aug 30 - Sep 05" — so match on the leading "Mon DD", which every
-# rendering of that week contains.
-WEEKFRAG="$(printf '%s' "$WEEK" | grep -oE '^[A-Za-z]{3} [0-9]{1,2}' || true)"
-[ -n "$WEEKFRAG" ] || WEEKFRAG="$WEEK"
 echo "matching the token page on '$WEEKFRAG'"
 
 # 3) anonymous: open the token page and verify render + the identity of the entry.

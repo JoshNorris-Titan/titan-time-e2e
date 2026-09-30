@@ -134,6 +134,199 @@ tt_hr_remind_e2e_entry() {
 }
 
 # ---------------------------------------------------------------------------
+# tt_customer_link <consultantName> <projectName> <approverEmail> [weekKey]
+#
+# A LIVE customer-approval link whose page lists a pending <consultantName> entry on
+# <projectName>, and that entry's week. Sets:
+#
+#   TT_CL_LINK      the /p/customer-approval/<token> URL, read from a real email
+#   TT_CL_WEEK      the entry's week as a tt_week_key ("Sep 27 - Oct 03")
+#   TT_CL_WEEKFRAG  its leading "Mon DD", which every rendering of that week contains
+#   TT_CL_HOW       reused | created | reminded — which path produced them
+#
+# Pass [weekKey] when the caller has already made the entry it wants: only a row for
+# that week then counts, and nothing is created. tt_fail's when no path yields a link.
+#
+# WHY THIS EXISTS. The customer specs used to get their link by pressing HR's Remind
+# and reading the mail it sent. Remind is allowed once per entry per day (by design),
+# so from the second spec of the day onward the button was gone (remindCards=0,
+# remindGated=1), the walk reported "no pending entry" about an entry that was
+# sitting in the queue, and each spec fell back to submitting a brand-new week as the
+# consultant AND waiting on the outbound mail queue for a fresh message — 300-450 s
+# of an 8 m budget, and the specs timed out.
+#
+# The link does not need to be fresh. Since per-email approval links (model,
+# 2026-09-24) every approval email carries its own token, none is revoked by a later
+# one, and each works until its own 7-day expiry; the page it opens lists everything
+# that approver has waiting. So, in order:
+#
+#   1. REUSE: read the approval links already in Emails Sent for <approverEmail> and
+#      open each cold until one lists our row. "Not revoked" is not the same as
+#      "covers this entry" (a link from before this run's 00-setup rebuilt the
+#      project may open and list nothing of ours), so a link is trusted only when its
+#      own page shows the row.
+#   2. CREATE: a live link that lists no row of ours means nothing is pending, so
+#      submit one week as the consultant and look again through the same link.
+#   3. REMIND: only when no link in the mailbox can be made to show the row — the
+#      first customer spec of every run, since the bookend clears remove the E2E
+#      approver's mail — press Remind (submitting a week first when there is nothing
+#      to remind) and read the link of the mail it raises by searching for the
+#      approver, which sees a QUEUED message the newest-first list does not.
+#
+# Every spec still opens the link itself afterwards and asserts the row, the popup's
+# project and the week, so a wrong answer here fails the spec instead of passing it.
+# ---------------------------------------------------------------------------
+
+# _tt_cl_page <consultantName> <projectName> — what the token page in this browser
+# shows, once it has painted. Echoes one line:
+#   ROWS:<period>|<period>…  our pending rows (text after "hours": the week)
+#   LIVE                     an approval page with no row of ours
+#   DEAD                     the link-invalid page, or nothing painted in ~25 s
+_tt_cl_page() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" i r seen=""
+  for i in $(seq 1 25); do
+    r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); const e=document.querySelector('.mx-name-containerNoPendingApprovals'); const bad=document.querySelector('.mx-name-textLinkInvalidHeading'); if(!g && !e) return bad ? 'DEAD' : 'WAIT'; if(!g) return 'LIVE'; const txt=r=>((r.innerText||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()); const rows=[...g.querySelectorAll('.widget-gallery-item')].map(txt).filter(t=>t.indexOf('$who')>=0 && t.indexOf('$proj')>=0 && t.indexOf('hours')>=0).map(t=>t.slice(t.lastIndexOf('hours')+5).trim()); return rows.length ? 'ROWS:'+rows.join('|') : 'LIVE'; }" 2>/dev/null | _tt_eval_str)"
+    case "$r" in
+      DEAD|ROWS:*) echo "$r"; return 0 ;;
+      LIVE)
+        # The gallery can paint before its items arrive: an empty answer is only
+        # believed once it has been seen twice, a second apart.
+        [ -n "$seen" ] && { echo "LIVE"; return 0; }
+        seen=1 ;;
+    esac
+    sleep 1
+  done
+  echo "DEAD"
+}
+
+# _tt_cl_try <consultantName> <projectName> <weekKey|''> <link>…
+# Open each link cold; on the first whose page lists a matching row set TT_CL_LINK /
+# TT_CL_WEEK and return 0. Links that opened a live page are left in _TT_CL_LIVE.
+_tt_cl_try() {
+  local who="$1" proj="$2" want="$3" link page p key tok IFS_SAVE
+  shift 3
+  _TT_CL_LIVE=""
+  for link in "$@"; do
+    [ -n "$link" ] || continue
+    playwright-cli cookie-clear >/dev/null 2>&1
+    playwright-cli goto "$link" >/dev/null 2>&1
+    page="$(_tt_cl_page "$who" "$proj")"
+    tok="${link##*/customer-approval/}"
+    echo "  [customer-link] link ${tok:0:6}...: ${page:0:160}" >&2
+    case "$page" in
+      DEAD) continue ;;
+    esac
+    _TT_CL_LIVE="$_TT_CL_LIVE $link"
+    case "$page" in
+      ROWS:*)
+        IFS_SAVE="$IFS"; IFS='|'
+        for p in ${page#ROWS:}; do
+          key="$(tt_week_key "$p")"
+          [ -n "$key" ] || continue
+          if [ -z "$want" ] || [ "$key" = "$want" ]; then
+            IFS="$IFS_SAVE"
+            TT_CL_LINK="$link"; TT_CL_WEEK="$key"
+            return 0
+          fi
+        done
+        IFS="$IFS_SAVE" ;;
+    esac
+  done
+  return 1
+}
+
+tt_customer_link() {
+  local who="$1" proj="$2" approver="$3" want="${4:-}" links started i
+  TT_CL_LINK=""; TT_CL_WEEK=""; TT_CL_WEEKFRAG=""; TT_CL_HOW=""
+  if [ -n "$want" ]; then want="$(tt_week_key "$want")"; fi
+
+  # ---- 1. reuse a link already in the mailbox
+  links="$(tt_mail_links_to "$approver" customer-approval)"
+  case "$links" in
+    NOGRID|NOFILTER) tt_mail_prepare; links="" ;;   # tt_fail's with the real reason if mail is unreadable
+  esac
+  # shellcheck disable=SC2086 # one link per word, by construction
+  if _tt_cl_try "$who" "$proj" "$want" $links; then
+    TT_CL_HOW="reused"
+  elif [ -n "$_TT_CL_LIVE" ] && [ -z "$want" ]; then
+    # ---- 2. a live link that lists nothing of ours: nothing is pending, so make one
+    echo "  [customer-link] a live link lists no pending '$who' / '$proj' row - submitting one as the consultant" >&2
+    tt_login "e2e_consultant" "My Timesheets"
+    tt_consultant_submit_project_row "$proj"
+    # The entry reaches AwaitingCustomerApproval asynchronously; give it a few looks.
+    # Without the submitted week there is nothing to look for, and step 3 finds the
+    # new card on HR's tab instead.
+    if [ -n "${TT_SUBMITTED_WEEK:-}" ]; then
+      for i in 1 2 3; do
+        # shellcheck disable=SC2086
+        if _tt_cl_try "$who" "$proj" "$TT_SUBMITTED_WEEK" $_TT_CL_LIVE; then TT_CL_HOW="created"; break; fi
+        sleep 5
+      done
+    fi
+  fi
+
+  # ---- 3. remind, and read the link out of the mail it raises
+  # The only path when the mailbox holds no usable link - which is EVERY run's first
+  # customer spec, because the bookend clears take the E2E approver's mail with them
+  # (measured 2026-09-30: after a run, Emails Sent holds nothing to that address).
+  if [ -z "$TT_CL_HOW" ]; then
+    # Nothing in the mailbox for this approver at all means the clear ran and nothing
+    # has been submitted since, so HR's queue is empty too: submit first, rather than
+    # paying for a walk of every listed week to learn that. A caller that named its
+    # week made its own entry already.
+    if [ -z "$want" ] && [ -z "$links" ]; then
+      echo "  [customer-link] no approval mail to '$approver' yet - submitting a '$proj' week as the consultant" >&2
+      tt_login "e2e_consultant" "My Timesheets"
+      tt_consultant_submit_project_row "$proj"
+    fi
+    echo "  [customer-link] no link in the mailbox shows a pending '$who' / '$proj' row - reminding" >&2
+    tt_login "e2e_hr" "$TT_HR_READY"
+    tt_hr_click_tab "Client approval"
+    sleep 2
+    if ! TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")"; then
+      [ -z "$want" ] || tt_fail "no live link lists week '$want' for '$who' / '$proj', and HR has nothing to remind for it"
+      echo "  [customer-link] HR has nothing to remind - submitting one as the consultant" >&2
+      tt_login "e2e_consultant" "My Timesheets"
+      tt_consultant_submit_project_row "$proj"
+      tt_login "e2e_hr" "$TT_HR_READY"
+      tt_hr_click_tab "Client approval"
+      sleep 2
+      TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")"         || tt_fail "still no pending '$who' entry on '$proj' after creating one"
+    fi
+    TT_CL_WEEK="$(tt_week_key "$TT_CL_WEEK")"
+    # A caller that named its week gets that week: the link lists everything the
+    # approver has waiting, whichever card the Remind happened to land on.
+    [ -z "$want" ] || TT_CL_WEEK="$want"
+    # Read the new link by SEARCHING for the approver, not by waiting for it to
+    # surface in the unfiltered list: a message is listed from QUEUED, but it has no
+    # SentDate until the ~2-minute send event delivers it, so it sorts to the far end
+    # of the newest-first list, and tt_mail_token only saw it after delivery. A search
+    # finds it at once. Freshness is proven the same way as a reused link - the page
+    # it opens has to list the reminded week.
+    started="$(date +%s)"
+    while [ -z "$TT_CL_HOW" ]; do
+      links="$(tt_mail_links_to "$approver" customer-approval)"
+      case "$links" in NOGRID|NOFILTER) links="" ;; esac
+      # shellcheck disable=SC2086
+      if [ -n "$links" ] && _tt_cl_try "$who" "$proj" "$TT_CL_WEEK" $links; then
+        TT_CL_HOW="reminded"; break
+      fi
+      [ $(( $(date +%s) - started )) -ge 240 ]         && tt_fail "no approval email to '$approver' whose link lists week '$TT_CL_WEEK' within 240 s of the Remind"
+      sleep 10
+    done
+  fi
+
+  case "$TT_CL_LINK" in
+    *"/p/customer-approval/"*) ;;
+    *) tt_fail "the approval link is not a customer-approval link: $TT_CL_LINK" ;;
+  esac
+  [ -n "$TT_CL_WEEK" ] || tt_fail "could not determine the week under test"
+  TT_CL_WEEKFRAG="${TT_CL_WEEK%% - *}"
+  echo "  customer link for '$who' / '$proj' week '$TT_CL_WEEK' ($TT_CL_HOW)"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Anonymous customer-approval (token) page helpers
 #
 # WHAT A ROW IS, AND WHAT IDENTIFIES IT. Main.Customer_Approval renders one
