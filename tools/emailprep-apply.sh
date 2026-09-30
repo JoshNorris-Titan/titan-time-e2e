@@ -78,9 +78,9 @@ admin_login() {
   local attempt i landed
   for attempt in 1 2 3; do
     [ "$(reach_login_form)" = "ok" ] || { echo "  (attempt $attempt: never got a clean Sign In form)"; continue; }
-    playwright-cli fill "input.form-control[type=text]" "$ADMIN_U" >/dev/null 2>&1
+    playwright-cli fill "$TT_LOGIN_USER_SEL" "$ADMIN_U" >/dev/null 2>&1
     playwright-cli fill "input.form-control[type=password]" "$ADMIN_P" >/dev/null 2>&1
-    playwright-cli click ".mx-name-actionButton1" >/dev/null 2>&1
+    playwright-cli click "$TT_LOGIN_SUBMIT_SEL" >/dev/null 2>&1
     landed=""
     for i in $(seq 1 25); do
       if [ "$(ev "() => String(/Admin Hub/i.test(document.body.innerText))")" = "true" ]; then landed="admin"; break; fi

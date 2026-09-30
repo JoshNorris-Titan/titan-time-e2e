@@ -79,18 +79,18 @@ seed_login() {
       sleep 2
     done
 
-    playwright-cli fill "input.form-control[type=text]" "$user" >/dev/null 2>&1
+    playwright-cli fill "$TT_LOGIN_USER_SEL" "$user" >/dev/null 2>&1
     sleep 1
     playwright-cli fill "input.form-control[type=password]" "$pass" >/dev/null 2>&1
     sleep 1
     # Confirm the field took before submitting. Mendix inputs commit on a real focus
     # change, and a fill that silently wrote nothing would submit empty credentials and
     # look identical to a wrong password.
-    if [ "$(pw "() => { const t=document.querySelector('input.form-control[type=text]'); return String(!!t && t.value==='$user'); }")" != "true" ]; then
+    if [ "$(pw "() => { const t=document.querySelector('$TT_LOGIN_USER_SEL'); return String(!!t && t.value==='$user'); }")" != "true" ]; then
       seed_log "  login: username field did not take (attempt $i)"
       continue
     fi
-    playwright-cli click ".mx-name-actionButton1" >/dev/null 2>&1
+    playwright-cli click "$TT_LOGIN_SUBMIT_SEL" >/dev/null 2>&1
 
     # Identity + landing text in ONE eval — see the COST note on pw().
     for j in $(seq 1 12); do

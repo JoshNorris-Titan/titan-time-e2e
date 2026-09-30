@@ -4,7 +4,7 @@
 #
 # Flow: consultant timesheet → per-row "Exp/Tim" button (.mx-name-btnEntryDocs →
 # Main.ACT_AssignmentEntry_Docs) → Main.AssignmentAttachment_Upload page → the
-# "Timesheet Attachments" tab (FileUploader `fileUploader2`, whose dataview source is
+# "Timesheet Attachments" tab (tabTimesheetUpload; FileUploader `fileUploader2`, whose dataview source is
 # Main.ACT_CreateTimeSheetAttachment → Main.AssignmentAttachment + Main.AttachmentDocument)
 # → upload a file → Save (save_changes + close_page) → reopen → the file is still listed.
 #
@@ -38,7 +38,9 @@ FNAME="$(basename "$ATTACH_FILE")"
 # Opens the first entry's docs page and switches to the Timesheet Attachments tab.
 open_docs_timesheet_tab() {
   playwright-cli click ":nth-match(.mx-name-btnEntryDocs, 1)" >/dev/null 2>&1; sleep 3
-  playwright-cli eval "() => { const t=[...document.querySelectorAll('a,li,button,[role=tab]')].find(e=>/Timesheet Attachments/i.test((e.innerText||'').trim())); if(t){t.click(); return 'ok';} return 'no-tab'; }" >/dev/null 2>&1
+  # Name first (tabTimesheetUpload, Josh's 2026-09-30 rename), caption as the
+  # pre-deploy fallback. TODO: drop the caption half once the rename is on dev.
+  playwright-cli eval "() => { const n=document.querySelector('.mx-name-tabTimesheetUpload'); const t=(n && (n.querySelector('a,[role=tab]')||n)) || [...document.querySelectorAll('a,li,button,[role=tab]')].find(e=>/Timesheet Attachments/i.test((e.innerText||'').trim())); if(t){t.click(); return 'ok';} return 'no-tab'; }" >/dev/null 2>&1
   sleep 2
 }
 
@@ -66,7 +68,9 @@ shows_file || tt_fail "'$FNAME' did not stage in the uploader after upload"
 echo "staged $FNAME in the uploader"
 
 # 4) Save (commits the AttachmentDocument + closes the page).
-playwright-cli eval "() => { const p=document.querySelector('.mx-dialog,.mx-window,[class*=modal]')||document; const b=[...p.querySelectorAll('button')].find(x=>/^\s*save\s*$/i.test(x.innerText||'') && x.offsetParent!==null); if(b){b.click(); return 'saved';} return 'no-save'; }" >/dev/null 2>&1
+# Name first (btnAttachmentUploadSave, the 2026-09-30 rename), the visible "Save"
+# caption as the pre-deploy fallback. TODO: drop the caption half once deployed.
+playwright-cli eval "() => { const p=document.querySelector('.mx-dialog,.mx-window,[class*=modal]')||document; const b=document.querySelector('.mx-name-btnAttachmentUploadSave') || [...p.querySelectorAll('button')].find(x=>/^\s*save\s*$/i.test(x.innerText||'') && x.offsetParent!==null); if(b){b.click(); return 'saved';} return 'no-save'; }" >/dev/null 2>&1
 sleep 3
 tt_dismiss_dialogs >/dev/null 2>&1
 sleep 2
