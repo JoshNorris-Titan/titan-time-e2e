@@ -62,9 +62,13 @@
 #                    catches a selector typo that would otherwise waste 40 minutes.
 #   SEED_SKIP_SUBMIT / SEED_SKIP_HR   run only one half
 set -uo pipefail
-cd "$(dirname "$0")/../.."   # seeders/ -> tests/ -> project root
-source tests/lib/_login.sh
-source tests/lib/_seed.sh
+# Resolve the suite root by walking up to the directory that holds lib/, the same way
+# every verify-*.test.sh does. `cd ../..` + `tests/lib/...` assumed the suite was still
+# nested inside the Mendix checkout and dies on its first line anywhere else.
+TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
+cd "$TT_ROOT"
+source "$TT_ROOT/lib/_login.sh"
+source "$TT_ROOT/lib/_seed.sh"
 
 if [ -z "${TT_BASE_URL:-}" ]; then
   echo "FAIL: TT_BASE_URL must be set explicitly. This seeder submits, approves and" >&2
@@ -74,6 +78,21 @@ fi
 
 CONSULTANTS="${SEED_CONSULTANTS:-e2e_consultant|e2e_consultant2|e2e_consultant3}"
 PROVE="${SEED_PROVE:-0}"
+
+# Who applies the HR stages. Parameterised so manual-env/ can drive this ladder against
+# the 'Manual *' data set with manual_hr; the default is unchanged for the e2e set.
+HR_USER="${SEED_HR_USER:-e2e_hr}"
+
+# SEED_WEEK_PLAN — an EXPLICIT plan instead of resolve_weeks, for topping up a data set
+# that already exists. One line per week: "<username>|<week label>|<stage>|<pattern>",
+# label as the history gallery prints it ("Sep 13 - Sep 19"). A week that has never been
+# visited has no Timesheet row and is not in the gallery, so seed_goto_any also walks
+# BACK with the arrows to reach it (visiting it is what creates it).
+WEEK_PLAN="${SEED_WEEK_PLAN:-}"
+
+# SEED_EXPORT_MONTHS — pipe-separated substrings; when set, the export stage exports only
+# the months whose label matches one of them, instead of every month on the tab.
+EXPORT_MONTHS="${SEED_EXPORT_MONTHS:-}"
 
 # Stage ladder, OLDEST week first. Each entry is "<stage>|<hour-pattern>".
 STAGES="${SEED_STAGES:-export|full40_lines
@@ -420,6 +439,28 @@ seed_step_next() {
   return 1
 }
 
+# seed_goto_any <label> — seed_goto_week (gallery, then forward), then BACKWARD arrows.
+seed_goto_any() {
+  local want="$1" wantkey i j before after
+  seed_goto_week "$want" && return 0
+  wantkey="$(tt_week_key "$want")"; [ -n "$wantkey" ] || return 1
+  playwright-cli goto "$TT_BASE/" >/dev/null 2>&1
+  for j in $(seq 1 12); do sleep 2; [ -n "$(seed_week_caption)" ] && break; done
+  for i in $(seq 1 "${SEED_MAX_BACK:-8}"); do
+    before="$(seed_week_caption)"
+    playwright-cli click ".mx-name-btnWeekPrev" >/dev/null 2>&1
+    after="$before"
+    for j in $(seq 1 8); do
+      sleep 2
+      after="$(seed_week_caption)"
+      [ -n "$after" ] && [ "$after" != "$before" ] && break
+    done
+    [ "$after" = "$before" ] && return 1
+    [ "$(seed_week_key)" = "$wantkey" ] && return 0
+  done
+  return 1
+}
+
 seed_consultant() {
   local user="$1" plan label stage pat rows rc
   log "=== consultant $user ==="
@@ -435,7 +476,11 @@ seed_consultant() {
     return 0
   fi
 
-  plan="$(resolve_weeks)" || return 1
+  if [ -n "$WEEK_PLAN" ]; then
+    plan="$(printf '%s\n' "$WEEK_PLAN" | awk -F'|' -v u="$user" '$1==u { print $2"|"$3"|"$4 }')"
+  else
+    plan="$(resolve_weeks)" || return 1
+  fi
   [ -n "$plan" ] || { log "  !! no week plan resolved"; return 1; }
   log "  plan:"
   printf '%s\n' "$plan" | while IFS='|' read -r l s p; do [ -n "$l" ] && log "    $l -> $s ($p)"; done
@@ -449,7 +494,7 @@ seed_consultant() {
 
   printf '%s\n' "$plan" | while IFS='|' read -r label stage pat; do
     [ -n "$label" ] || continue
-    if ! seed_goto_week "$label"; then
+    if ! seed_goto_any "$label"; then
       log "  $label: could not navigate to it — skipped"
       continue
     fi
@@ -640,7 +685,8 @@ reject_owned() {
   echo "$n"
 }
 
-# hr_drive_week <label> <stage> — push one week as far as its stage says. Cumulative: an
+# hr_drive_week <label> <stage> — push one week as far as its stage says. process_only
+# processes what is already on Weekly to process and approves nothing. Cumulative: an
 # entry cannot be Processed before it has cleared both approval tabs.
 hr_drive_week() {
   local label="$1" stage="$2" got
@@ -661,7 +707,7 @@ hr_drive_week() {
       if seed_click_tab "WEEKLY TO PROCESS" && select_week "$label"; then
         got="$(reject_owned)"; log "    WEEKLY TO PROCESS: rejected $got"
       else log "    WEEKLY TO PROCESS: '$label' not offered"; fi ;;
-    process|export)
+    process|export|process_only)
       if seed_click_tab "WEEKLY TO PROCESS" && select_week "$label"; then
         got="$(act_on_week "$TT_HR_BTN_PROCESS" '^(process|view & process|yes|confirm|ok|approve)$')"
         log "    WEEKLY TO PROCESS: processed $got"
@@ -695,6 +741,9 @@ hr_export_all() {
   for m in $months; do
     IFS="$OLD"
     [ -n "$m" ] || { IFS='|'; continue; }
+    if [ -n "$EXPORT_MONTHS" ] && ! printf '%s' "$m" | grep -qE "$EXPORT_MONTHS"; then
+      log "    $m: not in SEED_EXPORT_MONTHS - left awaiting export"; IFS='|'; continue
+    fi
     case "$(tt_hr_group_expand "$m")" in OK:*) : ;; *) log "    $m: could not expand - skipped"; IFS='|'; continue ;; esac
     c="$(tt_hr_group_census "$ownexpr")"; total="${c%%|*}"; owned="${c##*|}"
     log "    $m: $total entr(ies), $owned owned by the e2e consultants"
@@ -757,7 +806,7 @@ fi
 
 if [ "${SEED_SKIP_HR:-0}" != "1" ] && [ "$PROVE" != "1" ]; then
   log "=== HR stages ==="
-  if seed_login_role "e2e_hr" "$TT_HR_READY"; then
+  if seed_login_role "$HR_USER" "$TT_HR_READY"; then
     log "  KPIs before (pending manager client process invoice sent): $(seed_kpis)"
     # Depth order, and approve_mgr LAST: its output sits on CLIENT APPROVAL, the tab
     # entries were observed drifting off within ~10 minutes, so it is left as fresh as
@@ -766,7 +815,7 @@ if [ "${SEED_SKIP_HR:-0}" != "1" ] && [ "$PROVE" != "1" ]; then
       log "  !! no seeded plan at $PLAN_FILE — run the consultant phase first, or point"
       log "     SEED_PLAN_FILE at the plan from that run"
     else
-      for WANT in export process approve_all reject approve_mgr; do
+      for WANT in export process process_only approve_all reject approve_mgr; do
         sort -u "$PLAN_FILE" | while IFS='|' read -r label stage pat; do
           [ -n "$label" ] || continue
           [ "$stage" = "$WANT" ] || continue
@@ -777,7 +826,7 @@ if [ "${SEED_SKIP_HR:-0}" != "1" ] && [ "$PROVE" != "1" ]; then
     fi
     log "  KPIs after: $(seed_kpis)"
   else
-    log "  !! cannot sign in as e2e_hr — no HR stage applied"
+    log "  !! cannot sign in as $HR_USER — no HR stage applied"
   fi
 fi
 
