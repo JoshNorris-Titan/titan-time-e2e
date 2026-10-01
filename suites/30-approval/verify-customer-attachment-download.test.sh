@@ -23,11 +23,13 @@
 #          file as an expense receipt (with an amount) on the Expense Report tab,
 #          then submits; HR reminds the client. HR then reads both documents back by
 #          the entry's guid - the CONTROL that says there is something to refuse.
-#   A. through the link: the attachment is listed; btnAttachmentDownload saves a
-#      file of the fixture's exact size; btnAttachmentView fetches it or opens it
-#      (a /file request or a new tab) without showing the refusal;
-#   B. through the link: the receipt is listed; btnExpenseDownload saves a file of
-#      the fixture's exact size;
+#   A. through the link: the attachment is listed; btnAttachmentDownload delivers
+#      the fixture's exact bytes - saved as a download, or opened in a new tab whose
+#      body is that size (a "Download file" with show-in-browser does the latter);
+#      btnAttachmentView fetches it or opens it (a /file request or a new tab)
+#      without showing the refusal;
+#   B. through the link: the receipt is listed; btnExpenseDownload delivers the
+#      fixture's exact bytes, saved or in a new tab, as in A;
 #   C. a fresh anonymous session that never opened the link: every one of the four
 #      entities reads 0 (or is refused) for this entry although HR sees them; the
 #      document's /file URL does not return the file; and the attachment download
@@ -97,6 +99,50 @@ upload_into() {
 # file_requests — how many /file? requests the browser has made on this page.
 file_requests() {
   playwright-cli requests --static 2>/dev/null | grep -cE '/file\?'
+}
+
+# req_count — how many requests (static included) the current page has made.
+req_count() {
+  playwright-cli requests --static 2>/dev/null | grep -cE '^[0-9]+\. '
+}
+
+# after_click_evidence — on a download that saved nothing: every request the page
+# made since REQ_BEFORE (with its status), the open tabs, then the /file evidence.
+# Needed because the /file request in that evidence is "the last one on the page",
+# which can be the gallery's own thumbnail rather than anything the click asked for.
+after_click_evidence() {
+  echo "  requests since the click:"
+  playwright-cli requests --static 2>/dev/null | grep -E '^[0-9]+\. ' | tail -n +"$((REQ_BEFORE+1))" | cut -c1-200 | sed 's/^/    /'
+  echo "  tabs now:"
+  playwright-cli tab-list 2>/dev/null | grep -E '^- [0-9]+:' | cut -c1-160 | sed 's/^/    /'
+  _tt683_download_evidence "$(_tt683_zip_request_index)"
+}
+
+# delivered_in_tab — when a Download press saved nothing, did it open the file in a
+# NEW TAB instead? A "Download file" activity with "show in browser" set does exactly
+# that (measured on dev 2026-09-30: btnExpenseDownload opened
+# /file?...&name=attachment-test.png&target=window in tab 1 and saved nothing). That
+# still hands the customer the file, so it counts - but only on proof of the bytes:
+# the new tab's own navigation entry has to report a body of exactly $FSIZE bytes.
+# Closes every tab above 0 and returns to the review page either way. Echoes the
+# byte count and returns 0, or echoes why not and returns 1.
+delivered_in_tab() {
+  local idx n="" why="no new tab"
+  for idx in $(playwright-cli tab-list 2>/dev/null | grep -E "^- [0-9]+:.*/file\?[^)]*name=$FNAME" | grep -oE '^- [0-9]+' | grep -oE '[0-9]+'); do
+    [ "$idx" -gt 0 ] || continue
+    playwright-cli tab-select "$idx" >/dev/null 2>&1
+    sleep 1
+    n="$(playwright-cli eval "() => { const e=performance.getEntriesByType('navigation')[0]; return e ? String(e.decodedBodySize) : 'none'; }" 2>/dev/null | _tt_eval_str)"
+    why="a /file tab for $FNAME whose body is [$n] bytes"
+    break
+  done
+  for idx in $(playwright-cli tab-list 2>/dev/null | grep -oE '^- [0-9]+:' | grep -oE '[0-9]+' | sort -rn); do
+    [ "$idx" -gt 0 ] && playwright-cli tab-close "$idx" >/dev/null 2>&1
+  done
+  playwright-cli tab-select 0 >/dev/null 2>&1
+  if [ "$n" = "$FSIZE" ]; then printf '%s' "$n"; return 0; fi
+  printf '%s' "$why"
+  return 1
 }
 
 # saved_download <marker> — the file saved after <marker>, waited for up to 30 s.
@@ -215,7 +261,7 @@ for xp in "$ATT_XP" "$EXP_XP" "$AA_XP" "$ER_XP"; do
 done
 DOC_GUID="$(playwright-cli eval "() => new Promise(res => { const t=setTimeout(()=>res('ERR:timeout'),15000); mx.data.get({ xpath: \"$ATT_XP\", filter:{amount:1}, callback:o=>{ clearTimeout(t); res(o&&o.length?o[0].getGuid():''); }, error:e=>{ clearTimeout(t); res('ERR:'+e.message); } }); })" 2>/dev/null | _tt_eval_str)"
 case "$DOC_GUID" in ''|ERR:*) tt_fail "HR could not read the attachment document's guid ($DOC_GUID)" ;; esac
-note "SETUP: entry $GUID carries ${HR_N[$ATT_XP]} attachment document(s) and ${HR_N[$EXP_XP]} receipt(s) (HR)"
+note "SETUP: entry $GUID carries ${HR_N[$ATT_XP]} attachment document(s) (first: $DOC_GUID) and ${HR_N[$EXP_XP]} receipt(s) (HR)"
 
 cl_remind_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER" "$WEEKKEY" \
   || tt_fail "no live approval link lists week $WEEKKEY for '$CONSULTANT_NAME' / '$PROJECT' moments after it was submitted"
@@ -249,6 +295,7 @@ if [ -z "$listed" ]; then
   bad "A: the Time Sheet Attachments tab does not list $FNAME, which HR reads on the entry"
 else
   MARK="$(mktemp)"; sleep 1
+  REQ_BEFORE="$(req_count)"
   r="$(click_in_item gallery2 btnAttachmentDownload)"
   if [ "$r" != "clicked" ]; then
     bad "A: could not press btnAttachmentDownload on the $FNAME item ($r)"
@@ -256,9 +303,11 @@ else
     got="$(wc -c < "$P" | tr -d ' ')"
     [ "$got" = "$FSIZE" ] && note "A: btnAttachmentDownload saved $got bytes - the fixture's exact size" \
       || bad "A: btnAttachmentDownload saved $got bytes, the fixture is $FSIZE ($P)"
+  elif T="$(delivered_in_tab)"; then
+    note "A: btnAttachmentDownload opened the file in a new tab, $T bytes - the fixture's exact size"
   else
-    bad "A: btnAttachmentDownload saved no file within 30 s. Dialog: $(cl_dialog_text)"
-    _tt683_download_evidence "$(_tt683_zip_request_index)"
+    bad "A: btnAttachmentDownload saved no file within 30 s and opened none ($T). Dialog: $(cl_dialog_text)"
+    after_click_evidence
   fi
   rm -f "$MARK"
   cl_dismiss_refusal >/dev/null
@@ -283,11 +332,14 @@ else
     # does not always become current - in run cls-post-3 it closed the review page
     # itself, and B then found no Expense Report tab. tab-list prints one "- N: ..."
     # line per tab, 0-based, so the review page is 0 and the new ones sit above it.
+    # delivered_in_tab does the closing; what it read is evidence only here, because
+    # View's contract is "fetches or opens", not a byte count.
     if [ "$after_tabs" -gt "$before_tabs" ]; then
-      for idx in $(playwright-cli tab-list 2>/dev/null | grep -oE '^- [0-9]+:' | grep -oE '[0-9]+' | sort -rn); do
-        [ "$idx" -gt 0 ] && playwright-cli tab-close "$idx" >/dev/null 2>&1
-      done
-      playwright-cli tab-select 0 >/dev/null 2>&1
+      if T="$(delivered_in_tab)"; then
+        note "A: View's tab holds the attachment, $T bytes"
+      else
+        note "A: View's tab could not be read as the attachment ($T)"
+      fi
       tt_wait_for ".mx-name-btnCustomerApprove" "the review popup, back on the first tab after View's tab was closed"
     fi
   fi
@@ -304,6 +356,7 @@ if [ -z "$listed" ]; then
   bad "B: the Expense Report tab does not list the receipt $FNAME, which HR reads on the entry"
 else
   MARK="$(mktemp)"; sleep 1
+  REQ_BEFORE="$(req_count)"
   r="$(click_in_item galExpenseAttachments btnExpenseDownload)"
   if [ "$r" != "clicked" ]; then
     bad "B: could not press btnExpenseDownload on the receipt ($r) - before the customer-link security change it was the auto-named actionButton8"
@@ -311,9 +364,11 @@ else
     got="$(wc -c < "$P" | tr -d ' ')"
     [ "$got" = "$FSIZE" ] && note "B: btnExpenseDownload saved $got bytes - the fixture's exact size" \
       || bad "B: btnExpenseDownload saved $got bytes, the fixture is $FSIZE ($P)"
+  elif T="$(delivered_in_tab)"; then
+    note "B: btnExpenseDownload opened the receipt in a new tab, $T bytes - the fixture's exact size"
   else
-    bad "B: btnExpenseDownload saved no file within 30 s. Dialog: $(cl_dialog_text)"
-    _tt683_download_evidence "$(_tt683_zip_request_index)"
+    bad "B: btnExpenseDownload saved no file within 30 s and opened none ($T). Dialog: $(cl_dialog_text)"
+    after_click_evidence
   fi
   rm -f "$MARK"
 fi
