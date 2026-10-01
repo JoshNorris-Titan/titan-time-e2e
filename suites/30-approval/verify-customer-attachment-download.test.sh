@@ -35,6 +35,14 @@
 #      document's /file URL does not return the file; and the attachment download
 #      action, called with the document's guid, saves nothing.
 #
+# RED UNTIL MODEL FIX (A, 2026-09-30, dev after c8cb6095). Through a link that covers
+# the entry, btnAttachmentDownload runs two /xas/ calls and then
+#   GET /file?guid=<the entry's AttachmentDocument>&name=attachment-test.png&target=internal => 560
+# and nothing is saved, while the same run's tt683 ZIP downloads save normally and
+# btnExpenseDownload hands over the receipt (58702 bytes, in a new tab). The customer
+# cannot download the consultant's timesheet attachment. Reported to Josh; not a
+# test defect, so not skipped.
+#
 # THE UPLOAD POPUP (Main.AssignmentAttachment_Upload) is selected by name: its tabs
 # tabTimesheetUpload / tabExpenseUpload and its Save buttons btnAttachmentUploadSave /
 # btnExpenseUploadSave (Josh's 2026-09-30 rename; before it they were the auto-named
@@ -306,7 +314,7 @@ else
   elif T="$(delivered_in_tab)"; then
     note "A: btnAttachmentDownload opened the file in a new tab, $T bytes - the fixture's exact size"
   else
-    bad "A: btnAttachmentDownload saved no file within 30 s and opened none ($T). Dialog: $(cl_dialog_text)"
+    bad "A: btnAttachmentDownload saved no file within 30 s and delivered none in a tab ($T). Dialog: $(cl_dialog_text)"
     after_click_evidence
   fi
   rm -f "$MARK"
@@ -367,7 +375,7 @@ else
   elif T="$(delivered_in_tab)"; then
     note "B: btnExpenseDownload opened the receipt in a new tab, $T bytes - the fixture's exact size"
   else
-    bad "B: btnExpenseDownload saved no file within 30 s and opened none ($T). Dialog: $(cl_dialog_text)"
+    bad "B: btnExpenseDownload saved no file within 30 s and delivered none in a tab ($T). Dialog: $(cl_dialog_text)"
     after_click_evidence
   fi
   rm -f "$MARK"
