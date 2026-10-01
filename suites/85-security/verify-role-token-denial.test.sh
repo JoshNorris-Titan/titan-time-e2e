@@ -2,8 +2,9 @@
 # tt-timeout: 8m
 # verify-role-token-denial.test.sh
 #
-# No signed-in role may retrieve Main.ApprovalToken - not the consultant, not the
-# project manager, not HR, not the Titan Manager, and not the administrator.
+# No signed-in role may retrieve Main.ApprovalToken or Main.ApprovalVisit - not the
+# consultant, not the project manager, not HR, not the Titan Manager, and not the
+# administrator.
 #
 # WHY THIS ENTITY AND ONLY THIS ENTITY. An approval token is a bearer credential:
 # whoever holds the string can approve a customer's timesheets with no login at
@@ -67,7 +68,14 @@ TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do c
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_authz.sh"
 
+# Main.ApprovalVisit sits beside the token for the same reason: it has NO access
+# rule for any role either (customer-link security change, 2026-09-29). A visit
+# records which projects an anonymous session's link covers and every anonymous
+# read rule keys on it, so a staff role able to list visits could see which
+# customer opened which link, and a rule added to make one screen work would hand
+# them every approver's email. Both are asked of every role, in the same loop.
 TOKENS="//Main.ApprovalToken"
+VISITS="//Main.ApprovalVisit"
 # The control entity. Every staff role and the administrator hold an unconstrained
 # read on Main.Project, so it is the one question all five sessions can be asked
 # with the same expected shape - a number, and in a seeded environment a positive
@@ -104,27 +112,39 @@ check_role() {
     tt_fail "$user retrieved 0 projects. The control is meant to prove the retrieve machinery works for this session; a zero here means the question below was never really asked, and its zero would be meaningless. Run suites/00-setup first - it builds the projects."
   fi
 
-  n="$(tt_authz_count "$TOKENS")"
-  case "$n" in
-    ERR:no-mx-client)
-      tt_fail "the Mendix client API was not available to $user, so the data layer was never asked" ;;
-    ERR:*)
-      echo "  $user ($role): the data layer refused the request outright ($n) - control saw $ctrl project(s)" ;;
-    ''|*[!0-9]*)
-      tt_fail "$user: the token retrieve returned something that is not a count: [$n]" ;;
-    0)
-      echo "  $user ($role): retrieved 0 approval tokens - control saw $ctrl project(s)" ;;
-    *)
-      echo "FAIL: $user ($role) retrieved $n approval token(s)."
-      echo "      Main.ApprovalToken has NO access rule for any role, so no signed-in"
-      echo "      session should be able to retrieve it at all. Each row is a bearer"
-      echo "      credential that approves a customer's timesheets with no login, so a"
-      echo "      role that can list them can approve on the client's behalf, and the"
-      echo "      approval is credited to the client rather than to whoever used it."
-      echo "      The fix belongs on the entity access rules for Main.ApprovalToken -"
-      echo "      most likely a rule added recently to make a screen or data source work."
-      fails=$((fails+1)) ;;
-  esac
+  local xp
+  for xp in "$TOKENS" "$VISITS"; do
+    n="$(tt_authz_count "$xp")"
+    case "$n" in
+      ERR:no-mx-client)
+        tt_fail "the Mendix client API was not available to $user, so the data layer was never asked" ;;
+      ERR:*)
+        echo "  $user ($role): $xp - the data layer refused the request outright ($n) - control saw $ctrl project(s)" ;;
+      ''|*[!0-9]*)
+        tt_fail "$user: the $xp retrieve returned something that is not a count: [$n]" ;;
+      0)
+        echo "  $user ($role): retrieved 0 rows of $xp - control saw $ctrl project(s)" ;;
+      *)
+        if [ "$xp" = "$VISITS" ]; then
+          echo "FAIL: $user ($role) retrieved $n approval visit(s)."
+          echo "      Main.ApprovalVisit has NO access rule for any role. Each row says"
+          echo "      which projects one anonymous session's approval link covers, under"
+          echo "      the approver's email; every anonymous read rule in the app keys on"
+          echo "      it. The fix belongs on the entity access rules for Main.ApprovalVisit."
+          fails=$((fails+1))
+          continue
+        fi
+        echo "FAIL: $user ($role) retrieved $n approval token(s)."
+        echo "      Main.ApprovalToken has NO access rule for any role, so no signed-in"
+        echo "      session should be able to retrieve it at all. Each row is a bearer"
+        echo "      credential that approves a customer's timesheets with no login, so a"
+        echo "      role that can list them can approve on the client's behalf, and the"
+        echo "      approval is credited to the client rather than to whoever used it."
+        echo "      The fix belongs on the entity access rules for Main.ApprovalToken -"
+        echo "      most likely a rule added recently to make a screen or data source work."
+        fails=$((fails+1)) ;;
+    esac
+  done
 }
 
 check_role "e2e_consultant" "My Timesheets"               "Consultant"
@@ -139,4 +159,4 @@ check_role "e2e_tm"         "Add Customer"                "TitanManager"
 check_role "${TT_ADMIN_USER:-MxAdmin}" "Welcome to your homepage" "-" "${TT_ADMIN_PASS:-${TT_PASS:-}}"
 
 [ "$fails" -eq 0 ] || exit 1
-echo "PASS: verify-role-token-denial - no signed-in role (consultant, project manager, HR, Titan Manager, administrator) can retrieve Main.ApprovalToken, and each session proved it could retrieve the control entity first"
+echo "PASS: verify-role-token-denial - no signed-in role (consultant, project manager, HR, Titan Manager, administrator) can retrieve Main.ApprovalToken or Main.ApprovalVisit, and each session proved it could retrieve the control entity first"

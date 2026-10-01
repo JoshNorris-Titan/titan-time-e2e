@@ -477,18 +477,20 @@ tt683_process_one() {
   [ "$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; r.querySelector('$TT_HR_BTN_PROCESS').click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ] || return 1
   sleep 4
 
-  # Main.AssignmentEntry_Process opens with a footer 'Process' button whose widget
-  # name is generated (actionButton3), so it is matched on its caption. 20 x 2s
-  # because the page can be slow to paint on cloud dev.
+  # Main.AssignmentEntry_Process opens with a footer 'Process' button. It was
+  # auto-named (actionButton3) and matched on its caption until the customer-link
+  # security change named it btnProcessConfirm; it is selected by that name now.
+  # Visible only: the page is a popup and Mendix leaves closed copies in the DOM.
+  # 20 x 2s because the page can be slow to paint on cloud dev.
   local clicked=""
   for i in $(seq 1 20); do
-    if [ "$(playwright-cli eval "() => { const b=[...document.querySelectorAll('button')].filter(e=>e.offsetParent!==null).find(e=>/^process/i.test((e.innerText||'').trim()) && !e.closest('$TT_HR_LST_ENTRIES')); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ]; then
+    if [ "$(playwright-cli eval "() => { const b=[...document.querySelectorAll('.mx-name-btnProcessConfirm')].find(e=>e.offsetParent!==null); if(b){b.click(); return 'ok';} return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ]; then
       clicked=1; break
     fi
     sleep 2
   done
   if [ -z "$clicked" ]; then
-    echo "  (skipping '$label' - its Process page offers no Process button)" >&2
+    echo "  (skipping '$label' - its Process page shows no .mx-name-btnProcessConfirm)" >&2
     tt683_close_process_popup
     return 2
   fi

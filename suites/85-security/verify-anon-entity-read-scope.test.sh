@@ -4,12 +4,20 @@
 #
 # tt-timeout: 8m
 #
-# WHY THIS EXISTS. verify-anonymous-data-denial asks about Main.ChangeLog and
-# Main.ApprovalToken - the two entities Anonymous is genuinely denied - and passes.
-# Its PASS line reads much broader than what it proved.
-# docs/reference/SECURITY-FINDING-anonymous-grants.md lists unconstrained
+# WHY THIS EXISTS. verify-anonymous-data-denial asks about the entities Anonymous
+# has no rule on at all - Main.ChangeLog, Main.ApprovalToken, Main.ApprovalVisit.
+# docs/reference/SECURITY-FINDING-anonymous-grants.md recorded unconstrained
 # anonymous READ on Main.Timesheet, Customer, Project, Assignment, LineItem and
-# AttachmentDocument as well. None of those has ever been asked.
+# AttachmentDocument as well, and this step asks each of those.
+#
+# RED UNTIL THE CUSTOMER-LINK SECURITY CHANGE IS DEPLOYED. That change (model,
+# 2026-09-29) replaced every one of those grants with a rule that admits only rows
+# on a project covered by a live Main.ApprovalVisit of the CURRENT session. This
+# session never opens an approval link, so it has no visit, and every count below
+# must be 0 or refused. Before the deploy this step fails on the entities the old
+# grants exposed; after it, it is one of the two acceptance checks for the deploy
+# (with B of verify-anon-approve-without-token). The WITH-a-visit half - what a
+# session that did open a link may read - is verify-anon-visit-read-scope.
 #
 # This is deliberately a DIFFERENT question from the signed-in one, and the
 # distinction is worth writing down because it has already been investigated and
@@ -44,7 +52,16 @@ fails=0
 note() { echo "  $*"; }
 bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
-ENTITIES="Main.Timesheet Main.AssignmentEntry Main.Customer Main.Project Main.Assignment Main.LineItem Main.AttachmentDocument"
+# The first seven are the original finding. The next three joined with the
+# customer-link security change (2026-09-29), which gave each of them a
+# visit-scoped anonymous rule: the attachment and expense rows a customer's review
+# popup reads. Administration.Account is here because the Anonymous user role lost
+# Administration.User in the same change - it held it for no reason any screen
+# needed - and a regrant would hand out every login and email address. And
+# Main.WeekSelectorHelper is NON-PERSISTABLE, so a retrieve of it can only ever be
+# refused (HR's control is refused too, and the line below says so); it is listed so
+# that a change making it persistable, or granting it to Anonymous, is noticed.
+ENTITIES="Main.Timesheet Main.AssignmentEntry Main.Customer Main.Project Main.Assignment Main.LineItem Main.AttachmentDocument Main.AssignmentAttachment Main.ExpenseReport Main.ExpenseReportDocuments Administration.Account Main.WeekSelectorHelper"
 
 # ---------------------------------------------------------- controls, as an entitled user
 tt_login "e2e_hr" "$TT_HR_READY"

@@ -67,8 +67,11 @@ if [ ! -f "$CHECKER" ]; then
     fi
     echo "      Set TT_MODEL_DIR to the Mendix model checkout whose register should be"
     echo "      enforced. Checkouts beside this repo that carry the comparator:"
+    # Siblings of this repo, and siblings of its parent: a git worktree of this repo
+    # (tests-wt/<branch>/) sits one level deeper than the main checkout (tests/), so
+    # from a worktree the model checkouts are two levels up, not one.
     found=""
-    for d in "$TT_ROOT"/../*/; do
+    for d in "$TT_ROOT"/../*/ "$TT_ROOT"/../../*/; do
       [ -f "$d/tools/check_mirrors.py" ] || continue
       echo "        TT_MODEL_DIR=\"$(cd "$d" && pwd)\""
       found=1

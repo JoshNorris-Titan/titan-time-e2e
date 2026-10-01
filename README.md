@@ -6,7 +6,7 @@
 It drives a real browser through the real app — logging in, filling a timesheet, approving it,
 downloading the export — and reports PASS or FAIL for every step.
 
-![Steps](https://img.shields.io/badge/steps-131-1f6feb)
+![Steps](https://img.shields.io/badge/steps-136-1f6feb)
 ![Runtime](https://img.shields.io/badge/runtime-30–45%20min-6e7781)
 ![Driver](https://img.shields.io/badge/driver-playwright--cli-2ead33)
 ![CI](https://img.shields.io/badge/CI-manual%20trigger%20only-d29922)
@@ -20,7 +20,7 @@ Think of it as a checklist a robot works through, top to bottom, in about half a
 
 <table>
 <tr><td><b>What it tests</b></td><td>The running Titan Time web app, through a real browser</td></tr>
-<tr><td><b>How long</b></td><td>Roughly 90–130 minutes for all 131 steps</td></tr>
+<tr><td><b>How long</b></td><td>Roughly 90–130 minutes for all 136 steps</td></tr>
 <tr><td><b>What it changes</b></td><td>Only the <code>e2e_*</code> test consultants' data — never real timesheets</td></tr>
 <tr><td><b>Where it runs</b></td><td>Your machine, or GitHub, against local / dev / acceptance</td></tr>
 <tr><td><b>Who reads this page</b></td><td>Anyone who needs to know what is and isn't covered</td></tr>
@@ -141,7 +141,7 @@ flowchart LR
 Steps 1–64, grouped into eight blocks.
 
 > [!NOTE]
-> This walkthrough documents 64 steps; the suite currently discovers 131
+> This walkthrough documents 64 steps; the suite currently discovers 136
 > (`suites/expected-count.txt`). The blocks below are accurate for what they cover
 > and the gap is undocumented, not untested — `./run-tests.sh --list` is the
 > authoritative inventory. The badge and the table above are checked against
@@ -176,6 +176,31 @@ Two things these deliberately do **not** assert, both stated in the files themse
 empty-comment guard on the HR reject route (`Main.ACT_ApprovalHelper_Reject` has no such branch —
 the PM and client routes do), and the role×entity denial matrix is one entity wide because the
 model grants every staff role unconstrained read on almost everything else.
+
+</details>
+
+<details>
+<summary><h4>Added 2026-09-29 &nbsp;·&nbsp; customer-link security</h4></summary>
+
+Five new steps and four changed, for the model change that ties everything an approval link can do
+to a **visit** recorded when the link is opened (`Main.ApprovalVisit`: the anonymous session's own
+user, the token, the approver's email, the covered projects). **All of them are red or unproven
+until that change is deployed** — they describe the app after it, not before.
+
+| Step | What it proves |
+|---|---|
+| `85-security/verify-anon-visit-read-scope` | A session that opened a real link reads only its approver's pending entries and projects — no other status, not the other approver's project, no accounts, tokens or visits — and a fresh session reads nothing |
+| `85-security/verify-anon-expired-link-mid-visit` | An approval page **already open** refuses Approve once the link stops covering the entry (HR archives the project in a second browser; the token itself cannot be expired from any client, by design), and nothing moves |
+| `30-approval/verify-customer-row-approve` | The list's own per-row Approve (`btnApprove`, a different microflow from the popup's) approves, logs exactly one `Token` change-log row |
+| `30-approval/verify-customer-attachment-download` | Through the link the client downloads the timesheet attachment and the expense receipt (`btnExpenseDownload`) byte-for-byte and can open the attachment; a session that never opened the link reads none of them and gets no file |
+| `10-smoke/verify-password-reset-redeem` | The full self-service reset on its **own** account (`TT_PWRESET_USER`): request, mailed link, mismatch refused, set, sign in with the new password, link refused a second time; Anonymous cannot create a `Core.PasswordResetForm` |
+| `85-security/verify-anon-approve-without-token` *(rewritten C/D)* | A refusal now ends normally, so C/D no longer judge the call's answer; Status **and** the entry's change-log count, read back by guid, must be unchanged |
+| `85-security/verify-anon-entity-read-scope` *(extended)* | Also asks AssignmentAttachment, ExpenseReport, ExpenseReportDocuments, Administration.Account and WeekSelectorHelper |
+| `85-security/verify-anonymous-data-denial`, `verify-role-token-denial` *(extended)* | `Main.ApprovalVisit` has no access rule for any role, anonymous or signed in |
+
+Not written: a cross-approver **action** step. The approve actions take the entry *and* the page's
+helper object, and the harness can pass one object, so the refusal would come from the wrong check.
+The read half of that case is in `verify-anon-visit-read-scope`.
 
 </details>
 
@@ -893,6 +918,7 @@ using. Details in [`tools/README.md`](tools/README.md).
 | `TT_ROLE_PASS` | Password shared by the `e2e_*` role accounts (see below) |
 | `TT_E2E_CONSULTANTS` | Which consultants the wipe steps are allowed to clear |
 | `TT_E2E_CLEAR_DEPTH` | `deep` (default) also deletes their assignments and the projects those were on; `shallow` is the old transactional-only clear. There is no automatic fallback — against an environment that has not been redeployed with the deep control, the clear fails and names the reason |
+| `TT_PWRESET_USER` / `TT_PWRESET_EMAIL` / `TT_PWRESET_PASS` | The account `verify-password-reset-redeem` resets (default `e2e_pwreset`, `jnorris+ttreset@titanconsulting.net`, and `TT_ROLE_PASS`). Its own account, never a shared one; provisioned by hand like the role accounts, as a Consultant with that email. The step restores `TT_PWRESET_PASS` on the way out |
 
 **The role accounts.** `e2e_consultant`, `e2e_consultant2`, `e2e_hr`, `e2e_pm`, `e2e_pm2` and
 `e2e_tm`, all sharing `TT_ROLE_PASS`. They are **not** created by any fixture — `fx_ensure_*` only

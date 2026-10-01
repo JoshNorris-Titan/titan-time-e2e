@@ -72,47 +72,32 @@ CONSULTANT_NAME="${TT_REPLAY_CONSULTANT:-E2E Consultant}"
 TOKEN_DRAIN_MAX="${TOKEN_DRAIN_MAX:-10}"
 
 # --------------------------------------------------------- 1. get a live token
-tt_mail_prepare
-TS=$(date +%s%3N)
-tt_login "e2e_hr" "$TT_HR_READY"
-tt_hr_click_tab "Client approval"
-sleep 2
-
-if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
-  echo "  reminded an existing pending entry (week: $WEEK)"
-else
-  echo "  no pending '$CONSULTANT_NAME' entry - creating one via the consultant"
-  tt_login "e2e_consultant" "My Timesheets"
-  tt_consultant_submit_project_row "$PROJECT"
-  # Reset the inbox high-water mark BEFORE opening the HR dashboard: tt_mail_prepare
-  # signs in as the administrator to read Emails Sent, so calling it afterwards
-  # navigates away from the dashboard and the remind then hunts for a week picker on
-  # the admin's page. verify-customer-token-approve documents this at length.
-  tt_mail_prepare
-  TS=$(date +%s%3N)
-  tt_login "e2e_hr" "$TT_HR_READY"
-  tt_hr_click_tab "Client approval"
-  sleep 2
-  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
-    || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
-  echo "  reminded a newly-created entry (week: $WEEK)"
-fi
+# tt_customer_link (lib/_login_tokens.sh) reuses an approval email already in Emails
+# Sent when its link lists a pending '$PROJECT' entry for the consultant, submits one
+# week as the consultant when nothing is pending, and presses HR's Remind only when no
+# email in the mailbox can serve. Remind is allowed once per entry per day, so this
+# spec used to depend on being the day's first to press it. The link still comes from
+# a real approval email to $APPROVER (named, never guessed - see the Remind note in
+# lib/_login_tokens.sh), and A-C below assert on what it opens.
+tt_customer_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER"
+LINK="$TT_CL_LINK"
+WEEK="$TT_CL_WEEK"          # a tt_week_key, e.g. "Sep 27 - Oct 03"
+# The HR tab and the token page render the same week differently, so match on the
+# leading "Mon DD" that every rendering contains. The page is already scoped to one
+# approver, so the fragment is not doing the identifying on its own.
+WEEKFRAG="$TT_CL_WEEKFRAG"
 [ -n "$WEEK" ] || tt_fail "could not determine the week under test"
-
-# The recipient is named, not guessed: tt_mail_token with no recipient takes the
-# first approval link in ANY fresh mail, and on 2026-09-28 that was another
-# approver's (Manual TT744's) - see the Remind note in lib/_login_tokens.sh.
-LINK=$(tt_mail_token "$TS" customer-approval "$APPROVER") || tt_fail "token email not received within timeout"
+[ -n "$WEEKFRAG" ] || tt_fail "could not read a leading 'Mon DD' out of the week '$WEEK'"
+# B's absence check matches on WEEKFRAG alone, so the week has to be a real range
+# key: a fragment cut from anything else could match some other row, or none.
+case "$WEEK" in
+  [A-Z][a-z][a-z]" "[0-9][0-9]" - "[A-Z][a-z][a-z]" "[0-9][0-9]) ;;
+  *) tt_fail "the week under test '$WEEK' is not a week key ('Mon DD - Mon DD'), so B's match on '$WEEKFRAG' could not be trusted" ;;
+esac
 case "$LINK" in
   *"/p/customer-approval/"*) ;;
   *) tt_fail "the email link is not a customer-approval link: $LINK" ;;
 esac
-
-# The HR tab and the token page render the same week differently, so match on the
-# leading "Mon DD" that every rendering contains. The page is already scoped to one
-# approver, so the fragment is not doing the identifying on its own.
-WEEKFRAG="$(printf '%s' "$WEEK" | grep -oE '^[A-Za-z]{3} [0-9]{1,2}' || true)"
-[ -n "$WEEKFRAG" ] || WEEKFRAG="$WEEK"
 
 # ---------------------------------------------------------------- helpers
 # open_cold — throw the session away and open the link as a first-time visitor.
@@ -174,7 +159,7 @@ open_cold || tt_fail "the token link did not open an approval page in a cold ano
 
 BEFORE="$(rows_offered)"
 case "$BEFORE" in ''|*[!0-9]*) tt_fail "could not count the rows the token page is offering: [$BEFORE]" ;; esac
-[ "$BEFORE" -gt 0 ] || tt_fail "the token page opened but offers no rows at all, moments after HR reminded a pending entry for '$CONSULTANT_NAME' / '$PROJECT'. Nothing can be approved, so replay cannot be tested. This is the TT-741 symptom - the email says there is a timesheet to approve and the link shows an empty page - and if it reproduces here it is a product finding, not a test defect."
+[ "$BEFORE" -gt 0 ] || tt_fail "the token page opened but offers no rows at all, moments after its own page listed a pending entry for '$CONSULTANT_NAME' / '$PROJECT'. Nothing can be approved, so replay cannot be tested. This is the TT-741 symptom - the email says there is a timesheet to approve and the link shows an empty page - and if it reproduces here it is a product finding, not a test defect."
 echo "  the token link opens and offers $BEFORE row(s)"
 
 [ "$(tt_token_row_present "$CONSULTANT_NAME" "$WEEKFRAG")" = "true" ] \
