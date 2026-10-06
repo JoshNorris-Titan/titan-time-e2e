@@ -58,7 +58,7 @@ N_ARCH="$(tt_authz_expect_count "archived assignments" "//Main.Assignment[Archiv
 [ "$N_ARCH" -gt 0 ] || tt_fail "precondition: no archived assignment exists on this environment, so the Archived view has nothing to show"
 
 for _ in 1 2 3; do
-  tt_try_click_text "Reports" || true
+  tt_try_click_text "Reports"
   sleep 2
   [ "$(ev "() => String(!!document.querySelector('.mx-name-cardReportOnProject'))")" = "true" ] && break
 done
@@ -79,7 +79,7 @@ case "~$R~" in
   "~~")                            bad "A: Status = Archived shows no rows, though the data holds $N_ARCH archived assignments" ;;
   *)                               note "A ok: the Archived view dropped the active rows ($(printf '%s' "$R" | tr '~' '\n' | grep -c .) rows)" ;;
 esac
-tt_combobox_select_text ".mx-name-cbStatusFilter" "Active" >/dev/null 2>&1 || true
+tt_combobox_select_text ".mx-name-cbStatusFilter" "Active" >/dev/null 2>&1
 sleep 2
 
 # ------------------------------------------------------------------ B. sort

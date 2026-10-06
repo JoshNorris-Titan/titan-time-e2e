@@ -134,7 +134,7 @@ fi
 # Abandon the assignment.
 playwright-cli click ".modal-content .mx-name-btnCancel" >/dev/null 2>&1
 sleep 3
-fx_close_modals >/dev/null 2>&1 || true
+fx_close_modals >/dev/null 2>&1
 
 # ------------------------------------------------------------------ E. committed, as chosen
 N="$(count_proj)"

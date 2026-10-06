@@ -109,7 +109,7 @@ N="$(tt_authz_count "$ASG_XP")"
 open_on_project() {
   local i
   for i in 1 2 3; do
-    tt_try_click_text "Reports" || true
+    tt_try_click_text "Reports"
     sleep 2
     if [ "$(ev "() => String(!!document.querySelector('.mx-name-cardReportOnProject'))")" = "true" ]; then
       playwright-cli click ".mx-name-cardReportOnProject" >/dev/null 2>&1
@@ -190,7 +190,7 @@ fi
 # ------------------------------------------------------------------ E. archive
 playwright-cli click ".mx-name-btnArchiveRow" >/dev/null 2>&1
 sleep 2
-tt_clear_dialogs 3 >/dev/null 2>&1 || true
+tt_clear_dialogs 3 >/dev/null 2>&1
 D_ARCH="$(tt_authz_readback "$ASG_XP" Archived)"
 if wait_row absent && [ "$D_ARCH" = "true" ]; then
   note "E ok: archived - off the Active roster, Archived stored true"

@@ -88,7 +88,7 @@ note "month: $MONTH_NAME $YEAR (${PICK#*|} qualifying E2E entries)"
 
 # ------------------------------------------------------------------ A. open and run
 for _ in 1 2 3; do
-  tt_try_click_text "Reports" || true
+  tt_try_click_text "Reports"
   sleep 2
   [ "$(ev "() => String(!!document.querySelector('.mx-name-cardReportMonthlyHours'))")" = "true" ] && break
 done

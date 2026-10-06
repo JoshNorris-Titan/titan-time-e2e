@@ -116,13 +116,47 @@ case "$DATA" in ERR:*|''|NONE) tt_fail "could not read $CUSER's timesheets from 
 
 # Make sure there are two statuses to tell apart.
 DISTINCT="$(printf '%s' "$DATA" | tr '~' '\n' | cut -d'|' -f1 | grep . | sort -u | wc -l | tr -d ' ')"
+ONLY="$(printf '%s' "$DATA" | tr '~' '\n' | cut -d'|' -f1 | grep . | sort -u | head -1)"
+
+# seed_draft_week - walk forward to the first week whose 'E2E Manager Approval' row
+# is editable and offers Save Draft, type 2 h on Monday and save it as a draft. A
+# Submit would only add another week of the status the history already has (in a
+# suite run that is Awaiting_Approval: run 2026-10-06 saw 3 -> 5 Awaiting weeks and
+# B still had nothing to exclude), so the second status has to be Draft.
+seed_draft_week() {
+  local i ord
+  for i in $(seq 1 "${TT_SUBMIT_WEEK_HORIZON:-30}"); do
+    ord="$(tt_week_row_of "E2E Manager Approval" editable)"
+    if [ -n "$ord" ] && [ "$ord" != "0" ] && [ "$(tt_week_actionable)" = "true" ]; then
+      tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDayMon input, $ord)" "2"
+      tt_commit_focused
+      sleep 1
+      playwright-cli click ".mx-name-btnSaveDraft" >/dev/null 2>&1 || tt_fail "seed: no Save Draft on $(tt_current_week)"
+      sleep 3
+      tt_clear_dialogs 4 >/dev/null 2>&1
+      note "seed: saved $(tt_current_week) as a draft"
+      return 0
+    fi
+    playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
+    sleep 2
+  done
+  tt_fail "seed: no editable 'E2E Manager Approval' week with Save Draft within ${TT_SUBMIT_WEEK_HORIZON:-30} weeks"
+}
+
 if [ "$DISTINCT" -lt 2 ]; then
-  note "only one status among $CUSER's weeks - submitting one on E2E Manager Approval so B has something to exclude"
-  tt_consultant_submit_project_row "E2E Manager Approval"
-  tt_clear_dialogs 4 >/dev/null 2>&1 || true
+  if [ "$ONLY" = "Draft" ]; then
+    note "every one of $CUSER's weeks is Draft - submitting one on E2E Manager Approval so B has something to exclude"
+    tt_consultant_submit_project_row "E2E Manager Approval"
+  else
+    note "every one of $CUSER's weeks is ${ONLY:-unset} - saving one Draft week so B has something to exclude"
+    seed_draft_week
+  fi
+  tt_clear_dialogs 4 >/dev/null 2>&1
   tt_login "$CUSER" "My Timesheets"
   tt_wait_for "$GAL" "the timesheet history gallery"
   DATA="$(data_weeks)"
+  DISTINCT="$(printf '%s' "$DATA" | tr '~' '\n' | cut -d'|' -f1 | grep . | sort -u | wc -l | tr -d ' ')"
+  [ "$DISTINCT" -ge 2 ] || tt_fail "seed: $CUSER's weeks still share one status after seeding (data: $DATA)"
 fi
 N_ALL="$(count_of "$DATA")"
 

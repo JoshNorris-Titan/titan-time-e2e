@@ -74,7 +74,7 @@ validations() { ev "() => [...document.querySelectorAll('.mx-validation-message,
 open_cc_tab() {
   acct_overview_open || tt_fail "$ACCT_LAST_ERROR"
   for _ in 1 2 3 4 5; do
-    playwright-cli click ".mx-name-tabCCContacts" >/dev/null 2>&1 || tt_try_click_text "CC Contacts" >/dev/null 2>&1 || true
+    playwright-cli click ".mx-name-tabCCContacts" >/dev/null 2>&1 || tt_try_click_text "CC Contacts" >/dev/null 2>&1
     sleep 2
     [ "$(ev "() => String(!!document.querySelector('.mx-name-btnNewCCContact') && document.querySelector('.mx-name-btnNewCCContact').offsetParent!==null)")" = "true" ] && return 0
   done
@@ -171,7 +171,7 @@ esac
 tt_combobox_select_text ".mx-name-cbReplaceWith" "$NAME2" || tt_fail "E: '$NAME2' is not offered as a replacement"
 playwright-cli click ".mx-name-btnReplaceApply" >/dev/null 2>&1
 sleep 3
-tt_clear_dialogs 3 >/dev/null 2>&1 || true
+tt_clear_dialogs 3 >/dev/null 2>&1
 L1="$(linked "$MAIL1")"; L2="$(linked "$MAIL2")"
 if [ "$L1" = "0" ] && [ "$L2" = "1" ]; then
   note "E ok: $LINKED_LOGIN moved from contact 1 to contact 2"
@@ -186,7 +186,7 @@ for m in "$MAIL1" "$MAIL2"; do
   tt_wait_for ".mx-name-btnDelete" "the Delete confirmation (btnDelete)"
   playwright-cli click ".mx-name-btnDelete" >/dev/null 2>&1
   sleep 3
-  tt_clear_dialogs 3 >/dev/null 2>&1 || true
+  tt_clear_dialogs 3 >/dev/null 2>&1
 done
 ROWS="$(cc_rows)"
 N="$(cc_count "starts-with(FullName, 'E2E CC $EPOCH')")"

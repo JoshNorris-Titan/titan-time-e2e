@@ -109,7 +109,7 @@ sleep 1
 # 0 hours, which routes straight to HR and would make every route assertion lie.
 playwright-cli click ".mx-name-btnSaveDraft" >/dev/null 2>&1
 sleep 3
-tt_clear_dialogs 4 >/dev/null 2>&1 || true
+tt_clear_dialogs 4 >/dev/null 2>&1
 tt_refetch_week
 [ "$(tt_current_week)" = "$GRID_WEEK" ] || tt_fail "re-reading the week landed on $(tt_current_week), not $GRID_WEEK"
 MON_MGR="$(ev "() => String((document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon input')[$R_MGR - 1]||{}).value||'')")"
