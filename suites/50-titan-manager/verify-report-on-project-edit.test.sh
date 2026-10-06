@@ -25,9 +25,14 @@
 #
 # WHAT IT ASSERTS
 #   A. the new assignment is on the Active roster with the project's approval pips
-#      (manager required, client not required - the flags it was created with);
-#   B. clicking the row opens the panel on THAT assignment (project, consultant,
-#      weekly hours 40);
+#      (manager required, client not required - the flags it was created with), and
+#      TT-763's hover text on each: txtPipManagerRequired "Project manager approval
+#      required", txtPipClientNotRequired "Client approval not required". The pips
+#      are containers (pipManagerRequired / ...NotRequired, pipClient...), shown by
+#      conditional visibility on the project's flags - not buttons;
+#   B. the row's View button (btnOpenRow -> Main.ACT_Report_Row_Open; the row itself
+#      has no click action on the deployed page) opens the panel on THAT assignment
+#      (project, consultant, weekly hours 40);
 #   C. Edit -> weekly hours 32 and client contact changed -> Save: the panel shows 32,
 #      the assignment stores 32, the PROJECT stores the new contact, and the edit
 #      claim (Assignment_EditingBy) is released;
@@ -37,12 +42,10 @@
 #   E. Archive: the row leaves the (default, Active) roster and the assignment
 #      stores Archived = true.
 #
-# THE STATUS FILTER AND SORT HEADERS ARE NOT USED HERE. On dev (2026-09-29) picking
-# a status in cbStatusFilter, or clicking a sort header, does not re-run the
-# roster at all - the widget has no on-change action - so this spec works on the
-# page's default Active view, which Save, Cancel and Archive DO refresh. That bug
-# is pinned separately by verify-report-on-project-status-filter (red until the
-# model is fixed).
+# THE STATUS FILTER AND SORT HEADERS ARE NOT USED HERE. This spec works on the
+# page's default Active view, which Save, Cancel and Archive refresh. The filter and
+# sort (which did not reach the roster on 2026-09-29, and since TT-765 do) are
+# verify-report-on-project-status-filter's job.
 #
 # Consumes: one project "E2E OnProject <epoch>" and one assignment of
 # E2E Consultant Three to it. Env: TT_BASE_URL, TT_ROLE_PASS
@@ -126,12 +129,21 @@ if wait_row present; then
   else
     bad "A: row pips/consultant read [$PIPS], expected [true|false|false|true|$CONS] (manager-required, not client-required)"
   fi
+  # TT-763: each pip carries its own hover text. textContent, not innerText: the tip
+  # is hidden until hover, and innerText of a hidden element is empty.
+  TIPS="$(ev "() => { const r=$ROW_JS; const t=s=>{ const e=r.querySelector('.mx-name-'+s); return e ? (e.textContent||'').replace(/\\s+/g,' ').trim() : '(absent)'; }; return t('txtPipManagerRequired')+'|'+t('txtPipClientNotRequired'); }")"
+  if [ "$TIPS" = "Project manager approval required|Client approval not required" ]; then
+    note "A ok: the pips' hover text reads '${TIPS%%|*}' and '${TIPS#*|}' (TT-763)"
+  else
+    bad "A: the pips' hover text reads [$TIPS], expected [Project manager approval required|Client approval not required] (TT-763)"
+  fi
 else
   tt_fail "A: '$PROJ' is not on the Active roster although its assignment exists (rows: $(ev "() => [...document.querySelectorAll('.mx-name-lstRoster .mx-name-txtRowProject')].map(e=>e.innerText.trim()).join(', ').slice(0,300)"))"
 fi
 
 # ------------------------------------------------------------------ B. panel
-ev "() => { const r=$ROW_JS; if(r){ r.click(); return 'ok'; } return 'none'; }" >/dev/null
+OPENED="$(ev "() => { const r=$ROW_JS; if(!r) return 'norow'; const b=[...r.querySelectorAll('.mx-name-btnOpenRow')].find(e=>e.offsetParent!==null) || r.querySelector('.mx-name-btnOpenRow'); if(!b) return 'nobutton'; b.click(); return 'ok'; }")"
+[ "$OPENED" = "ok" ] || tt_fail "B: could not press the row's .mx-name-btnOpenRow ($OPENED)"
 tt_wait_for ".mx-name-btnEditRow" "the On Project side panel (btnEditRow)"
 P_PROJ="$(panel lblPanelProject)"; P_CONS="$(panel lblPanelConsultant)"; P_WEEK="$(panel lblPanelWeekly)"
 if [ "$P_PROJ" = "$PROJ" ] && [ "$P_CONS" = "$CONS" ] && eqn "$(num "$P_WEEK")" 40; then

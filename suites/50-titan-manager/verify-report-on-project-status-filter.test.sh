@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# RED UNTIL MODEL FIX. The On Project report's Status filter and sort headers must
-# change the roster they sit above.
+# The On Project report's (now captioned "Assignment Report", TT-765) Status filter
+# and sort headers must change the roster they sit above.
 #
 # tt-timeout: 6m
 #
-# THE BUG (seen on cloud dev, 2026-09-29, model HEAD 7500058f). On
+# FIXED IN THE MODEL, DEPLOYED (TT-765, fa8f6d17). On the deployed
+# Main.Report_OnProject (read from disk) cbStatusFilter, and the new column filters
+# cbFltProject / cbFltCustomer / cbFltConsultant, have on-change
+# Main.ACT_Report_FiltersChanged, which changes the ReportSelection and so re-runs
+# lstRoster's data source; hdrProject (and hdrCustomer / hdrConsultant / hdrEnds) call
+# Main.ACT_Report_SortBy. This spec is expected green; it stays as the regression
+# guard for the bug below, and is unproven until a dev run shows it.
+#
+# THE BUG AS IT WAS (seen on cloud dev, 2026-09-29, model HEAD 7500058f). On
 # Main.Report_OnProject, picking "Archived" in cbStatusFilter changes the picker's
 # text and nothing else: the roster (lstRoster, data source
 # Main.DS_Report_OnProject, which DOES filter on ReportSelection/StatusFilter) keeps
@@ -90,7 +98,7 @@ for _ in 1 2; do
 done
 
 if [ "$fails" -ne 0 ]; then
-  echo "FAIL: verify-report-on-project-status-filter - $fails problem(s): the On Project filter/sort do not reach the roster (red until model fix)."
+  echo "FAIL: verify-report-on-project-status-filter - $fails problem(s): the On Project filter/sort do not reach the roster (fixed by TT-765 - a regression if this is red)."
   exit 1
 fi
 echo "PASS: verify-report-on-project-status-filter - the Archived filter and the Project sort both re-run the roster."

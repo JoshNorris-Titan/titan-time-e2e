@@ -7,8 +7,8 @@
 #
 # WHY THIS EXISTS. Reports -> Monthly Hours Report (Main.Report_MonthlyHours) is
 # what HR and the Titan Manager bill from, and nothing checked a figure on it.
-# Main.ACT_Report_MonthlyHours_Run rebuilds it whenever the month, year or sort
-# changes: it works out the weeks whose Friday falls in the month (Saturday week
+# Main.ACT_Report_MonthlyHours_Run rebuilds it whenever the month, year or a column
+# filter changes: it works out the weeks whose Friday falls in the month (Saturday week
 # endings, up to five), takes every AssignmentEntry whose timesheet ends in one of
 # them and is neither Draft nor Rejected, and sums TotalHours into one row per
 # customer x project x consultant, per week. Processed is 'Y' only when every entry
@@ -34,8 +34,21 @@
 #   C. no expected E2E row is missing, and no E2E row appears that the data does
 #      not explain (a Draft or Rejected entry leaking in would do that);
 #   D. Processed reads Y exactly when every entry behind the row is Exported;
-#   E. Sort by Consultant orders the rows by consultant name;
-#   F. Back to Reports returns to the hub.
+#   E. the Consultant column header sorts (TT-765): one click marks it tt-sort-asc
+#      and orders the rows by consultant ascending, a second marks it tt-sort-desc
+#      and orders them descending;
+#   F. the Consultant column filter (TT-765, cbFltConsultant) narrows the report to
+#      exactly that consultant's rows - as many as B found for them - and clearing
+#      it brings every row back;
+#   G. Back to Reports returns to the hub.
+#
+# TT-765 (deployed) REMOVED the "Sort by" dropdown (cbSortOption) this spec used to
+# drive. Sorting is now a click on a header (cntHeadCustomer / cntHeadProject /
+# cntHeadConsultant -> Main.ACT_Report_MonthlyHours_SortBy, which flips SortAscending
+# when the same column is clicked again; DS_Report_MonthlyHours_Rows sorts), and each
+# of those columns has a filter in cntFilterRow (cbFltCustomer / cbFltProject /
+# cbFltConsultant, on Administration.Account.FullName etc., on-change
+# Main.ACT_Report_MonthlyHours_Run). Names read from the deployed page on disk.
 #
 # NON-DESTRUCTIVE: it creates only the report's own header/row objects, which the
 # report deletes and rebuilds on every run.
@@ -134,24 +147,103 @@ for key in "${!GOT[@]}"; do
   [ -n "${SEEN[$key]:-}" ] || bad "C: the report has a row for ${key#*|} on ${key%%|*} (${GOT[$key]}) that no qualifying entry explains"
 done
 
-# ------------------------------------------------------------------ E. sort by consultant
-tt_combobox_select_text ".mx-name-cbSortOption" "Consultant" || bad "E: no 'Consultant' sort option"
-sleep 3
-ORDER="$(ev "() => { const n=[...document.querySelectorAll('.mx-name-lstReportRows .mx-name-txtRowConsultant')].map(e=>(e.innerText||'').trim()); const ok=n.every((x,i)=>i===0||n[i-1].toLowerCase().localeCompare(x.toLowerCase())<=0); return (ok?'SORTED':'UNSORTED')+'|'+n.length+'|'+n.join(', ').slice(0,300); }")"
-case "$ORDER" in
-  SORTED\|0\|*) bad "E: sorting by consultant emptied the report" ;;
-  SORTED*)      note "E ok: rows ordered by consultant (${ORDER#SORTED|})" ;;
-  *)            bad "E: sorted by consultant, the rows read ${ORDER#UNSORTED|}" ;;
-esac
+# ------------------------------------------------------------------ E. header sort
+row_count() { ev "() => String(document.querySelectorAll('.mx-name-lstReportRows .mx-name-cntReportRow').length)"; }
+head_class() { ev "() => (document.querySelector('.mx-name-cntHeadConsultant')||{}).className||'__MISSING__'"; }
+# consultant_order <asc|desc> - SORTED|<n>|<names> or UNSORTED|<n>|<names>
+consultant_order() {
+  ev "() => { const n=[...document.querySelectorAll('.mx-name-lstReportRows .mx-name-txtRowConsultant')].map(e=>(e.innerText||'').trim()); const c=(a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()); const ok=n.every((x,i)=>i===0||('$1'==='asc' ? c(n[i-1],x)<=0 : c(n[i-1],x)>=0)); return (ok?'SORTED':'UNSORTED')+'|'+n.length+'|'+n.join(', ').slice(0,300); }"
+}
+# sort_consultant <asc|desc> - click the Consultant header (at most twice) until its
+# class reads tt-sort-<dir>, then wait up to 10 s for the rows to follow.
+sort_consultant() {
+  local dir="$1" k o=""
+  for k in 1 2; do
+    case "$(head_class)" in *"tt-sort-$dir"*) break ;; esac
+    playwright-cli click ".mx-name-cntHeadConsultant" >/dev/null 2>&1
+    sleep 2
+  done
+  for k in $(seq 1 10); do
+    o="$(consultant_order "$dir")"
+    case "$o" in SORTED\|0\|*) ;; SORTED*) break ;; esac
+    sleep 1
+  done
+  printf '%s' "$o"
+}
+TOTAL_ROWS="$(row_count)"
+for dir in asc desc; do
+  ORDER="$(sort_consultant "$dir")"
+  HC="$(head_class)"
+  case "$HC" in
+    __MISSING__) bad "E: no .mx-name-cntHeadConsultant header to sort by (TT-765)"; break ;;
+    *"tt-sort-$dir"*) ;;
+    *) bad "E: after clicking the Consultant header it reads class [$HC], not tt-sort-$dir" ;;
+  esac
+  case "$ORDER" in
+    SORTED\|0\|*) bad "E: sorting by consultant ($dir) emptied the report" ;;
+    SORTED*)      note "E ok: rows ordered by consultant, $dir (${ORDER#SORTED|})" ;;
+    *)            bad "E: header says $dir by consultant, the rows read ${ORDER#UNSORTED|}" ;;
+  esac
+done
 
-# ------------------------------------------------------------------ F. back
+# ------------------------------------------------------------------ F. column filter
+# One E2E consultant B found on the report; prefer one whose name is not a prefix of
+# another's, though the pick below matches the option text exactly either way.
+FCONS=""
+for key in "${!GOT[@]}"; do
+  c="${key#*|}"
+  [ -z "$FCONS" ] && FCONS="$c"
+  [ "$c" = "E2E Consultant Two" ] && FCONS="$c"
+done
+WANT_ROWS=0
+for key in "${!GOT[@]}"; do [ "${key#*|}" = "$FCONS" ] && WANT_ROWS=$((WANT_ROWS+1)); done
+if [ -z "$FCONS" ]; then
+  bad "F: no E2E row on the report to filter to"
+else
+  PICKED=""
+  for _ in $(seq 1 6); do
+    if [ "$(ev "() => String(document.querySelectorAll('[role=option]').length)")" = "0" ]; then
+      playwright-cli click ".mx-name-cbFltConsultant" >/dev/null 2>&1
+      sleep 1
+    fi
+    PICKED="$(ev "() => { const o=[...document.querySelectorAll('[role=option]')].find(e=>(e.innerText||'').trim()==='$FCONS'); if(o){ o.click(); return 'PICKED'; } return 'NOMATCH:'+[...document.querySelectorAll('[role=option]')].map(e=>(e.innerText||'').trim()).join(', ').slice(0,200); }")"
+    [ "$PICKED" = "PICKED" ] && break
+    sleep 1
+  done
+  if [ "$PICKED" != "PICKED" ]; then
+    bad "F: cbFltConsultant does not offer '$FCONS' ($PICKED)"
+  else
+    F=""
+    for _ in $(seq 1 15); do
+      F="$(ev "() => { const n=[...document.querySelectorAll('.mx-name-lstReportRows .mx-name-txtRowConsultant')].map(e=>(e.innerText||'').trim()); return n.length+'|'+n.filter(x=>x!=='$FCONS').length+'|'+[...new Set(n)].join(', ').slice(0,200); }")"
+      case "$F" in 0\|*) ;; *\|0\|*) break ;; esac
+      sleep 1
+    done
+    FN="${F%%|*}"; FO="${F#*|}"; FO="${FO%%|*}"
+    if [ "$FN" = "$WANT_ROWS" ] && [ "$FO" = "0" ]; then
+      note "F ok: filtered to '$FCONS', the report shows exactly their $FN row(s)"
+    else
+      bad "F: filtered to '$FCONS' the report shows $FN row(s), $FO of them for someone else (consultants: ${F#*|*|}); B found $WANT_ROWS for them"
+    fi
+    playwright-cli eval "() => { const b=document.querySelector('.mx-name-cbFltConsultant .widget-combobox-clear-button'); if(b){ b.click(); return 'ok'; } return 'none'; }" >/dev/null 2>&1
+    N_BACK=""
+    for _ in $(seq 1 15); do N_BACK="$(row_count)"; [ "$N_BACK" = "$TOTAL_ROWS" ] && break; sleep 1; done
+    if [ "$N_BACK" = "$TOTAL_ROWS" ]; then
+      note "F ok: clearing the filter brought all $TOTAL_ROWS row(s) back"
+    else
+      bad "F: after clearing the consultant filter the report shows [$N_BACK] row(s), it showed $TOTAL_ROWS before filtering"
+    fi
+  fi
+fi
+
+# ------------------------------------------------------------------ G. back
 playwright-cli click ".mx-name-btnBack" >/dev/null 2>&1
 BACK=""
 for _ in $(seq 1 10); do BACK="$(ev "() => String(!!document.querySelector('.mx-name-cardReportMonthlyHours') && !document.querySelector('.mx-name-cbMonth'))")"; [ "$BACK" = "true" ] && break; sleep 1; done
-[ "$BACK" = "true" ] && note "F ok: Back returned to the Reports hub" || bad "F: Back to Reports did not return to the hub"
+[ "$BACK" = "true" ] && note "G ok: Back returned to the Reports hub" || bad "G: Back to Reports did not return to the hub"
 
 if [ "$fails" -ne 0 ]; then
   echo "FAIL: verify-report-monthly-hours - $fails problem(s) with the Monthly Hours report for $MONTH_NAME $YEAR."
   exit 1
 fi
-echo "PASS: verify-report-monthly-hours - every E2E row for $MONTH_NAME $YEAR matches its entries week by week, and sort and Back work."
+echo "PASS: verify-report-monthly-hours - every E2E row for $MONTH_NAME $YEAR matches its entries week by week, and header sort, the consultant filter and Back work."
