@@ -98,8 +98,10 @@ silently did nothing). "The app is broken" is a conclusion you earn with evidenc
 
 ## CI and the autofix loop
 
-Workflow `e2e.yml` runs nightly at 02:00 CT (two cron entries plus a gate job, because GitHub cron is
-UTC-only) and on demand, against cloud dev. **`/e2e-autofix` babysits it**, and under
+Workflow `e2e.yml` runs nightly and on demand, against cloud dev. The cron is **due at 20:17 CT** (two
+cron entries plus a gate job, because GitHub cron is UTC-only), but GitHub has delivered it 4.5-9 h
+late since 2026-09-25, so it typically **starts around 02:00-03:30 CT**; the gate skips one delivered
+more than 10 h late (after 06:17 CT). The reasoning and the delay data are in the workflow's header. **`/e2e-autofix` babysits it**, and under
 `/loop /e2e-autofix` unattended: read the latest run, and if it is red for a **test-side** reason,
 diagnose, reproduce locally against the same environment, fix, prove red-to-green, open the PR,
 **merge it**, re-dispatch. Procedure: `..\main\.claude\skills\e2e-autofix\SKILL.md`.
