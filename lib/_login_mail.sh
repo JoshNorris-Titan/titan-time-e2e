@@ -621,16 +621,40 @@ tt_week_row_of() {
 # and verify-tt647-a5 failed every run with "no editable week with a
 # 'E2E Dual Approval' row found" - which read like a missing fixture and was not
 # (the assignment exists on dev, 2026-07-01..2027-12-31).
+#
+# HORIZON (2026-10-06). This walked 12 weeks forward from today, the same number
+# lib/_tt654.sh found too small on 2026-09-1x: every weekly Submit closes that week
+# for ALL of the consultant's projects, and every seeding helper walks forward from
+# today, so the suite eats this pool in run order. In run 37409110184 (full,
+# --no-fail-fast) verify-pm-approve-foreign-entry-refused - one of the last specs to
+# seed an e2e_consultant week - failed "no editable week with a 'E2E Manager
+# Approval' row found", while the same seeding passed in every spec before it. By
+# then the run had already filled weeks out to Dec 06 - Dec 12 (75-export exported
+# that week; HR's To Process tab listed Nov 29 - Dec 5 at tt647), i.e. 10 of the 12
+# weeks ahead of Oct 4, before 76-bulk and 85-security seeded more. Same horizon as
+# TT654_WEEK_HORIZON, same census on
+# failure, so the next failure names its cause:
+#   -  no editable '<proj>' row that week (not assigned, outside the window, or
+#      the week is submitted and its rows locked)
+#   S  the row is editable but the week offers no Submit
+TT_SUBMIT_WEEK_HORIZON="${TT_SUBMIT_WEEK_HORIZON:-30}"
 tt_consultant_submit_project_row() {
-  local proj="$1" ord="" i d
-  for i in $(seq 1 12); do
+  local proj="$1" ord="" i d census="" from="" to=""
+  from="$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()" 2>/dev/null | _tt_eval_str)"
+  for i in $(seq 1 "$TT_SUBMIT_WEEK_HORIZON"); do
     ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const isTarget=(mon)=>{let el=mon; for(let k=0;k<12;k++){el=el.parentElement; if(!el)break; const t=el.innerText||''; if(t.indexOf('$proj')>=0 && el.querySelectorAll('.mx-name-txtDayMon').length===1) return true;} return false;}; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); if(isTarget(mons[n]) && inp && !inp.disabled && !inp.readOnly && document.querySelector('.mx-name-btnSubmit')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p')
     ord="${ord%\"}"; ord="${ord#\"}"
     [ -n "$ord" ] && [ "$ord" != "0" ] && break
+    if [ "$(tt_week_row_of "$proj" editable)" = "0" ]; then census="${census}-"; else census="${census}S"; fi
     playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
     sleep 2
   done
-  { [ -n "$ord" ] && [ "$ord" != "0" ]; } || tt_fail "consultant: no editable week with a '$proj' row found"
+  if [ -z "$ord" ] || [ "$ord" = "0" ]; then
+    to="$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()" 2>/dev/null | _tt_eval_str)"
+    tt_fail "consultant: no editable week with a '$proj' row found within $TT_SUBMIT_WEEK_HORIZON weeks
+  walked ${from:-<unknown>} -> ${to:-<unknown>}, one character per week: $census
+  ('-' = no editable '$proj' row that week: not assigned, outside the window, or submitted and locked; 'S' = an editable row but no Submit button)"
+  fi
 
   # Record WHICH week is being submitted, as a canonical tt_week_key. Callers need
   # it to find the entry they just created rather than any card that happens to
