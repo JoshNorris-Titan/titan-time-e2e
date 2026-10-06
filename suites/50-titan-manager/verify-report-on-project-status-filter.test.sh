@@ -32,7 +32,10 @@
 #   A. with Status = Archived, no row for an assignment the data says is active
 #      (E2E Consultant on E2E Manager Approval) remains, and at least one row shows;
 #   B. clicking the Project header until it sorts descending puts the rows in
-#      descending project order.
+#      descending project order - compared on the database collation's first-level
+#      key (letters and digits, lowercased), as lib/_login_gallery.sh's
+#      tt_combobox_sorted does: dev's Postgres ignores case, spaces and punctuation,
+#      so a punctuation-significant localeCompare disagrees with a correct sort.
 # It leaves the filter on Active.
 # Env: TT_BASE_URL, TT_ROLE_PASS
 set -uo pipefail
@@ -86,7 +89,7 @@ for _ in 1 2 3; do
   playwright-cli click ".mx-name-hdrProject" >/dev/null 2>&1
   sleep 3
 done
-ORDER="$(ev "() => { const n=[...document.querySelectorAll('.mx-name-lstRoster .mx-name-txtRowProject')].map(e=>(e.innerText||'').trim()); const ok=n.length>1 && n.every((x,i)=>i===0||n[i-1].toLowerCase().localeCompare(x.toLowerCase())>=0); return (ok?'DESC':'NOTDESC')+'|'+n.slice(0,8).join(', '); }")"
+ORDER="$(ev "() => { const n=[...document.querySelectorAll('.mx-name-lstRoster .mx-name-txtRowProject')].map(e=>(e.innerText||'').trim()); const k=t=>t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,''); const bad=n.findIndex((x,i)=>i>0&&k(n[i-1]).localeCompare(k(x))<0); const ok=n.length>1 && bad<0; return (ok?'DESC':'NOTDESC')+'|'+(bad>0?'first break at #'+bad+': '+n[bad-1]+' > '+n[bad]+' | ':'')+n.slice(0,8).join(', '); }")"
 case "$ORDER" in
   DESC*) note "B ok: descending by project (${ORDER#DESC|})" ;;
   *)     bad "B: the Project header reads [$st] but the rows are not in descending project order: ${ORDER#NOTDESC|}" ;;
