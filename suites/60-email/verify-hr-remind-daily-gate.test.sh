@@ -19,7 +19,8 @@
 # difference between that being a known behaviour and a recurring mystery.
 #
 # WHAT IT ASSERTS
-#   A. the Client Approval tab has a pending entry to act on - fatal otherwise,
+#   A. the Client Approval tab has a pending E2E entry to act on (one is submitted
+#      when there is none) - fatal if even that fails,
 #      because everything below would be vacuous;
 #   B. after a remind, the card for that entry is GATED - btnClientRemindBlocked
 #      is present where btnClientRemind was;
@@ -34,7 +35,8 @@
 # the assertion - that a gated card stays gated and offers no second send - is the
 # same one. The step says which of the two worlds it ran in.
 #
-# Consumes: may send one reminder email to the fixture approver address.
+# Consumes: may send one reminder email to the fixture approver address, and may
+# submit one e2e_consultant week on the project when the tab holds none of ours.
 # Env: TT_BASE_URL, TT_ROLE_PASS
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
@@ -50,55 +52,75 @@ bad()  { echo "  FAILED: $*"; fails=$((fails+1)); }
 
 count_sel() { playwright-cli eval "() => String(document.querySelectorAll('$1').length)" 2>/dev/null | _tt_eval_str; }
 
-tt_login "e2e_hr" "$TT_HR_READY"
-tt_hr_click_tab "Client approval"
-sleep 3
+# ONE WEEK, PINNED (2026-10-06). Before and after used to be counted on whatever week
+# the tab happened to show, and the remind walked the week picker to find its card -
+# so when the default week's remindable card was someone else's (a targeted run on
+# dev: 1 remindable, 1 gated, neither ours), the walk left a DIFFERENT week selected
+# and C compared two weeks ("went from 2 to 1 card(s)"). Now the week holding our
+# card is found first and every count, the remind and the read-back happen on it.
+# When the tab holds no card of ours at all, one is submitted - the same seeding
+# tt_customer_link does - rather than asserting on unrelated cards.
+hr_tab() { tt_login "e2e_hr" "$TT_HR_READY"; tt_hr_click_tab "Client approval"; sleep 3; }
+hr_tab
+MODE=open
+WEEK="$(tt_hr_find_remind_week "$CONSULTANT" "$PROJECT" open)" \
+  || { MODE=gated; WEEK="$(tt_hr_find_remind_week "$CONSULTANT" "$PROJECT" gated)"; } \
+  || WEEK=""
+if [ -z "$WEEK" ]; then
+  note "no '$CONSULTANT' / '$PROJECT' card on the Client Approval tab - submitting one as the consultant"
+  tt_login "e2e_consultant" "My Timesheets"
+  tt_consultant_submit_project_row "$PROJECT"
+  MODE=open
+  for _ in 1 2 3 4 5 6; do
+    hr_tab
+    WEEK="$(tt_hr_find_remind_week "$CONSULTANT" "$PROJECT" open)" && break
+    WEEK=""
+    sleep 5
+  done
+  [ -n "$WEEK" ] || tt_fail "the Client Approval tab shows no '$CONSULTANT' / '$PROJECT' card even after submitting a week (${TT_SUBMITTED_WEEK:-?}), so there is nothing to remind about and this step has no verdict."
+fi
+note "pinned week $WEEK (our card is $MODE)"
 
 OPEN_BEFORE="$(count_sel "$TT_HR_BTN_REMIND")"
 GATED_BEFORE="$(count_sel "$TT_HR_BTN_REMIND_BLOCKED")"
 case "$OPEN_BEFORE$GATED_BEFORE" in
   *ERR*|'') tt_fail "could not read the Client Approval tab's remind buttons" ;;
 esac
-note "before: $OPEN_BEFORE remindable card(s), $GATED_BEFORE already gated"
+note "before ($WEEK): $OPEN_BEFORE remindable card(s), $GATED_BEFORE already gated"
 
-# --------------------------------------------------------------- A. something to act on
-if [ "${OPEN_BEFORE:-0}" -eq 0 ] && [ "${GATED_BEFORE:-0}" -eq 0 ]; then
-  tt_fail "the Client Approval tab shows no pending entry at all, so there is nothing to remind about and this step has no verdict. suites/30-approval puts one there; run the suite in order."
-fi
-
-if [ "${OPEN_BEFORE:-0}" -eq 0 ]; then
-  note "A: every card is ALREADY gated - an earlier spec in this run reminded this approver, which lib/_login_core.sh documents. Asserting the gate holds."
+if [ "$MODE" = "gated" ]; then
+  note "A: our card is ALREADY gated - an earlier spec in this run reminded this approver, which lib/_login_core.sh documents. Asserting the gate holds."
 else
-  note "A ok: $OPEN_BEFORE card(s) can still be reminded"
+  note "A ok: our card can be reminded"
   RC=0
-  WEEK="$(tt_hr_remind_e2e_entry "$CONSULTANT" "$PROJECT")" || RC=$?
+  tt_hr_remind_here "$CONSULTANT" "$PROJECT" || RC=$?
   case "$RC" in
     0) note "reminded '$CONSULTANT' / '$PROJECT' for week $WEEK; D ok: TT-768's 'Reminder sent to {name} ({email}).' message showed and was dismissed" ;;
     2) bad "D: the Remind for '$CONSULTANT' / '$PROJECT' week $WEEK did not end in TT-768's 'Reminder sent to {name} ({email}).' message (see the [remind] line above)" ;;
-    *) note "note: no remindable card matched '$CONSULTANT' / '$PROJECT'; asserting on whatever the tab shows" ;;
+    *) tt_fail "the '$CONSULTANT' / '$PROJECT' card in week $WEEK offered Remind a moment ago and now does not - nothing was reminded, so B/C have no verdict" ;;
   esac
   sleep 3
   tt_hr_click_tab "Client approval"
   sleep 3
+  tt_hr_select_week "$WEEK" || tt_fail "week $WEEK is no longer offered on the Client Approval tab after the remind"
 fi
 
-# ------------------------------------------------------------------------ B/C. the gate
 OPEN_AFTER="$(count_sel "$TT_HR_BTN_REMIND")"
 GATED_AFTER="$(count_sel "$TT_HR_BTN_REMIND_BLOCKED")"
-note "after: $OPEN_AFTER remindable card(s), $GATED_AFTER gated"
+note "after ($WEEK): $OPEN_AFTER remindable card(s), $GATED_AFTER gated"
 
-if [ "${GATED_AFTER:-0}" -gt 0 ]; then
-  note "B ok: $GATED_AFTER card(s) show the gated state"
+if [ "$(tt_hr_card_gated_here "$CONSULTANT" "$PROJECT")" = "true" ]; then
+  note "B ok: the '$CONSULTANT' / '$PROJECT' card shows the gated state"
 else
-  bad "B: no card is gated. Either the remind did not send, or a customer can be reminded about the same timesheet repeatedly in one day."
+  bad "B: the '$CONSULTANT' / '$PROJECT' card in week $WEEK is not gated. Either the remind did not send, or a customer can be reminded about the same timesheet repeatedly in one day."
 fi
 
 TOTAL_BEFORE=$(( ${OPEN_BEFORE:-0} + ${GATED_BEFORE:-0} ))
 TOTAL_AFTER=$(( ${OPEN_AFTER:-0} + ${GATED_AFTER:-0} ))
 if [ "$TOTAL_AFTER" -eq "$TOTAL_BEFORE" ]; then
-  note "C ok: the tab still shows $TOTAL_AFTER card(s); reminding moved one between states rather than changing the queue"
+  note "C ok: week $WEEK still shows $TOTAL_AFTER card(s); reminding moved one between states rather than changing the queue"
 else
-  bad "C: the tab went from $TOTAL_BEFORE to $TOTAL_AFTER card(s) across a remind - reminding is not supposed to consume the entry"
+  bad "C: week $WEEK went from $TOTAL_BEFORE to $TOTAL_AFTER card(s) across a remind - reminding is not supposed to consume the entry"
 fi
 
 if [ "$fails" -ne 0 ]; then

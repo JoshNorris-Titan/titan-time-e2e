@@ -102,6 +102,65 @@ tt_hr_remind_confirm() {
   return 0
 }
 
+# _tt_hr_card_js <who> <proj> <sel> — JS prelude: HIT() is the button matching <sel>
+# whose OWN card (the climb stops at an ancestor holding more than one such button)
+# names <who> and <proj>, or null. Same one-card rule as tt_hr_remind_e2e_entry.
+_tt_hr_card_js() {
+  printf '%s' "const HIT=()=>{ const rs=[...document.querySelectorAll('$3')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('$3').length!==1) break; const t=el.innerText||''; if(t.indexOf('$1')>=0 && ('$2'==='' || t.indexOf('$2')>=0)) return r; } } return null; };"
+}
+
+# tt_hr_find_remind_week <consultantName> <projectName> [open|gated]
+#
+# Walk the open picker tab's weeks and stop on the first whose card for
+# <consultantName>/<projectName> offers Remind (open, the default) or shows the
+# gated look-alike (gated). Echoes that week's label and LEAVES IT SELECTED, so a
+# caller can count and act on that one week; returns 1 when no week has one. Clicks
+# nothing on a card.
+tt_hr_find_remind_week() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" mode="${3:-open}" sel labels lbl i js
+  sel="$TT_HR_BTN_REMIND"; [ "$mode" = "gated" ] && sel="$TT_HR_BTN_REMIND_BLOCKED"
+  js="$(_tt_hr_card_js "$who" "$proj" "$sel")"
+  for i in $(seq 1 20); do
+    playwright-cli eval "() => String(!!document.querySelector('$TT_HR_GAL_WEEKS'))" 2>/dev/null | grep -qiw true && break
+    sleep 1
+  done
+  labels="$(tt_hr_week_labels)"
+  local IFS='|'
+  for lbl in $labels; do
+    [ -n "$lbl" ] || continue
+    unset IFS
+    if tt_hr_select_week "$lbl"; then
+      for i in 1 2 3 4; do
+        if [ "$(playwright-cli eval "() => { $js return String(!!HIT()); }" 2>/dev/null | _tt_eval_str)" = "true" ]; then
+          echo "$lbl"; return 0
+        fi
+        sleep 1
+      done
+    fi
+    IFS='|'
+  done
+  unset IFS
+  return 1
+}
+
+# tt_hr_remind_here <consultantName> <projectName> — press Remind on that card in
+# the week ALREADY selected (no walk), then read and dismiss TT-768's confirmation.
+# 0 confirmed, 1 no such remindable card here, 2 reminded but no confirmation.
+tt_hr_remind_here() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" js
+  js="$(_tt_hr_card_js "$who" "$proj" "$TT_HR_BTN_REMIND")"
+  [ "$(playwright-cli eval "() => { $js const b=HIT(); if(!b) return 'false'; b.click(); return 'true'; }" 2>/dev/null | _tt_eval_str)" = "true" ] || return 1
+  tt_hr_remind_confirm
+}
+
+# tt_hr_card_gated_here <consultantName> <projectName> — true | false: that card,
+# in the week already selected, shows btnClientRemindBlocked.
+tt_hr_card_gated_here() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" js
+  js="$(_tt_hr_card_js "$who" "$proj" "$TT_HR_BTN_REMIND_BLOCKED")"
+  playwright-cli eval "() => { $js return String(!!HIT()); }" 2>/dev/null | _tt_eval_str
+}
+
 # tt_hr_remind_e2e_entry <consultantName> [projectName]
 #
 # Returns 0 (week label on STDOUT) once the Remind was clicked AND its TT-768
@@ -245,13 +304,22 @@ tt_hr_remind_e2e_entry() {
 
 # _tt_cl_page <consultantName> <projectName> — what the token page in this browser
 # shows, once it has painted. Echoes one line:
-#   ROWS:<period>|<period>…  our pending rows (text after "hours": the week)
+#   ROWS:<period>|<period>…  our pending rows, each its card's week (txtCustWeek)
+#
+# The week is read from the card's own WEEK field, .mx-name-txtCustWeek. Until
+# TT-769 (deployed 2026-10-02) the row was one line ending "<n> hours <period>",
+# and this took the text after "hours". TT-769 relaid the card as label/value
+# facts PROJECT, WEEK, TOTAL "<n> hours" - hours LAST - so that slice returned ''
+# for every row: links listing our week logged "ROWS:" / "ROWS:|", tt_week_key('')
+# never matched, and all three customer specs timed out "no approval email ...
+# within 240 s of the Remind" (run 37409110184) with the right mail in hand. A
+# matching card without the field is reported, not read as an empty week.
 #   LIVE                     an approval page with no row of ours
 #   DEAD                     the link-invalid page, or nothing painted in ~25 s
 _tt_cl_page() {
   local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" i r seen=""
   for i in $(seq 1 25); do
-    r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); const e=document.querySelector('.mx-name-containerNoPendingApprovals'); const bad=document.querySelector('.mx-name-textLinkInvalidHeading'); if(!g && !e) return bad ? 'DEAD' : 'WAIT'; if(!g) return 'LIVE'; const txt=r=>((r.innerText||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()); const rows=[...g.querySelectorAll('.widget-gallery-item')].map(txt).filter(t=>t.indexOf('$who')>=0 && t.indexOf('$proj')>=0 && t.indexOf('hours')>=0).map(t=>t.slice(t.lastIndexOf('hours')+5).trim()); return rows.length ? 'ROWS:'+rows.join('|') : 'LIVE'; }" 2>/dev/null | _tt_eval_str)"
+    r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); const e=document.querySelector('.mx-name-containerNoPendingApprovals'); const bad=document.querySelector('.mx-name-textLinkInvalidHeading'); if(!g && !e) return bad ? 'DEAD' : 'WAIT'; if(!g) return 'LIVE'; const txt=r=>((r.innerText||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()); const rows=[...g.querySelectorAll('.widget-gallery-item')].filter(it=>{ const t=txt(it); return t.indexOf('$who')>=0 && t.indexOf('$proj')>=0 && t.indexOf('hours')>=0; }).map(it=>{ const w=it.querySelector('.mx-name-txtCustWeek'); return w ? txt(w) : '(no txtCustWeek in: '+txt(it).slice(0,100)+')'; }); return rows.length ? 'ROWS:'+rows.join('|') : 'LIVE'; }" 2>/dev/null | _tt_eval_str)"
     case "$r" in
       DEAD|ROWS:*) echo "$r"; return 0 ;;
       LIVE)
