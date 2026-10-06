@@ -147,6 +147,34 @@ actionable="$(tt_token_rows_all_actionable)"
 [ "$actionable" = "true" ] \
   || tt_fail "the token page lists a row that is not awaiting client approval (tt_token_rows_all_actionable: $actionable)"
 
+# 3e) NO FEEDBACK TAB FOR THE CLIENT (ST-36). The red Feedback tab sits in the
+# Titan top-bar layout this page uses, and until the 2026-09-28 model commit it
+# showed to Anonymous too: Atlas_Core.FeedbackWidget is visible to the module roles
+# Atlas_Core.Administrator/User, and project security gave the Anonymous user role
+# Atlas_Core.User. A submission sends a screenshot and window.location.href to the
+# Mendix Portal's feedback inbox. The fix lives in project security, so the next
+# Atlas_Core upgrade or a re-ticked role can bring the tab back with nothing in the
+# layout changing; this is the check that notices.
+#
+# The widget portals its one button into <body> and renders nothing when hidden,
+# so absence of the class it always carries is the whole assertion. The layout
+# renders with the page, and the pending list waited for above is on that page.
+fb="$(playwright-cli eval "() => String(document.querySelectorAll('.mxfeedback-start-button, .mx-name-feedback1').length)" 2>/dev/null | _tt_eval_str)"
+[ "$fb" = "0" ] \
+  || tt_fail "the anonymous customer-approval page shows the Feedback tab ($fb element(s)) — ST-36: visitors must not see it"
+echo "no Feedback tab on the anonymous approval page"
+
+# Evidence for ST-36's open question, logged and never asserted: does the address
+# bar still hold the approval code once the page has opened? (It would ride along
+# in any feedback submission, browser history and screenshots.) The code itself is
+# never printed.
+CODE="${LINK##*/p/customer-approval/}"
+HREF="$(playwright-cli eval "() => location.href" 2>/dev/null | _tt_eval_str)"
+case "$HREF" in
+  *"$CODE"*) echo "  [address bar] still holds the approval code: ${HREF%%"$CODE"*}<code>" ;;
+  *)         echo "  [address bar] does not hold the approval code: $HREF" ;;
+esac
+
 # 3d) THE PROJECT ASSERTION, on the surface that now carries it. Open the review
 # popup for our row and require the Entry Details panel to name the consultant, the
 # project and the week. This is where 'E2E Customer Approval' moved to; it is also
