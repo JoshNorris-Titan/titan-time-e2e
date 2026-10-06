@@ -10,7 +10,7 @@
 # anonymous READ on Main.Timesheet, Customer, Project, Assignment, LineItem and
 # AttachmentDocument as well, and this step asks each of those.
 #
-# RED UNTIL THE CUSTOMER-LINK SECURITY CHANGE IS DEPLOYED. That change (model,
+# THE CUSTOMER-LINK SECURITY CHANGE IS DEPLOYED (c8cb6095). That change (model,
 # 2026-09-29) replaced every one of those grants with a rule that admits only rows
 # on a project covered by a live Main.ApprovalVisit of the CURRENT session. This
 # session never opens an approval link, so it has no visit, and every count below

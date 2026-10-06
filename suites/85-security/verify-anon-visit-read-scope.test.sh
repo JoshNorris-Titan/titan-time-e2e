@@ -47,9 +47,9 @@
 # spec built on it would pass for the wrong reason and was not written. The mid-visit
 # refusal of a real page action is verify-anon-expired-link-mid-visit.
 #
-# RED / UNPROVEN UNTIL THE CHANGE IS DEPLOYED. Before it, the anonymous rules are the
-# old status-only ones, so C/E/F read other approvers' rows and H reads them with no
-# visit at all.
+# THE CHANGE IS DEPLOYED (c8cb6095, on dev since 2026-09-30). Before it the anonymous
+# rules were the old status-only ones, so C/E/F read other approvers' rows and H read
+# them with no visit at all. Unproven until a dev run of this branch passes.
 #
 # Consumes: nothing - it reminds a pending entry (or submits one when none is
 # waiting) and approves nothing. Clears cookies - safe here, in 85-security.

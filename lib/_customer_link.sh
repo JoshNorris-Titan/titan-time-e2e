@@ -16,15 +16,22 @@
 # LineItem, AssignmentAttachment, AttachmentDocument, ExpenseReport,
 # ExpenseReportDocuments) now admits only rows on a project covered by a live visit OF
 # THE CURRENT SESSION, whose token is still Active and unexpired - and, for entries,
-# only AwaitingCustomerApproval. Approve, Reject, View, the per-row Approve and the
-# three downloads re-check that the link covers the entry and, when it does not, show
+# only AwaitingCustomerApproval. Approve, Reject, View and the per-row Approve
+# re-check that the link covers the entry (SUB_CustomerToken_CoversEntry).
 #
-#   "This approval link is no longer valid. Please open the most recent approval
-#    email from Titan Consulting and use the link in that message."
+# WHAT A REFUSAL LOOKS LIKE SINCE TT-778 (model 73b0683b, deployed 2026-10-05). On the
+# "Link covers entry?" = false branch the action no longer shows the in-place
+# message "This approval link is no longer valid. Please open the most recent
+# approval email ..." (RETIRED). Instead Approve and Reject close the review popup,
+# and all four then OPEN THE PAGE Main.Customer_LinkInvalid, whose heading is
+# .mx-name-textLinkInvalidHeading = "This approval link is no longer valid" (read
+# from the generated ACT_Customer_{ApprovePage,RejectPage,ShowPage,ApproveHelper} of
+# the 10-05 build, and the page from disk). The retired dialog showing up instead is
+# a TT-778 regression, and cl_await_refusal says so rather than accepting it.
 #
-# and END NORMALLY. That last part matters to every spec below: a refusal is not an
-# ERR on the wire, so it can only be proved by reading the entry back and finding it
-# unmoved - never by the shape of the call's answer.
+# Either way the action ENDS NORMALLY. That matters to every spec below: a refusal
+# is not an ERR on the wire, so it can only be proved by reading the entry back and
+# finding it unmoved - never by the shape of the call's answer.
 #
 # Provides:
 #   cl_remind_link <consultant> <project> <approver> [weekKey]
@@ -38,16 +45,23 @@
 #   cl_entry_guid <consultant> <project> <week-key>     HR: the pending entry's guid
 #   cl_entry_status <guid> / cl_log_count <guid>        HR: readbacks for one entry
 #   cl_dialog_text                                      the topmost visible dialog
-#   cl_await_refusal <tries> [confirm caption]          wait for the refusal message
+#   cl_await_refusal <tries> [confirm caption]          wait for the refusal: the
+#                                                       Customer_LinkInvalid page
+#   cl_link_invalid_shown                               'true' when that page is up
 #   cl_click_tab <tab widget name>                      open a tab page by its name
 #   cl_staff_open / cl_staff <cmd…> / cl_staff_close    a SECOND browser for staff
 #
 # Env: none of its own beyond CL_STAFF_SESSION (default tt-staff).
 # ---------------------------------------------------------------------------
 
-# The refusal every link-covered action shows. A fragment, so rewording the second
-# sentence does not fail a spec, and removing the refusal does.
+# The refusal every link-covered action shows since TT-778: the Customer_LinkInvalid
+# page, found by its heading's NAME (a contract) and checked against a fragment of
+# its copy (so a reworded heading that still says the link is dead does not fail a
+# spec, and a different page carrying the same widget name does).
+CL_LINK_INVALID_SEL='.mx-name-textLinkInvalidHeading'
 CL_REFUSAL_RE='no longer valid'
+# The RETIRED in-place message's second sentence. Seeing it means TT-778 regressed.
+CL_OLD_REFUSAL_RE='most recent approval email'
 
 # The named playwright-cli session the staff half of a two-session spec runs in.
 CL_STAFF_SESSION="${CL_STAFF_SESSION:-tt-staff}"
@@ -158,24 +172,42 @@ cl_dialog_text() {
   playwright-cli eval "() => { const d=$(_tt_dialog_js); return d ? (d.innerText||'').replace(/\\s+/g,' ').trim().slice(0,300) : ''; }" 2>/dev/null | _tt_eval_str
 }
 
+# cl_link_invalid_text — the Customer_LinkInvalid heading's text when that page is
+# on screen (heading visible), else ''.
+cl_link_invalid_text() {
+  playwright-cli eval "() => { const h=[...document.querySelectorAll('$CL_LINK_INVALID_SEL')].find(e=>e.offsetParent!==null); return h ? (h.innerText||'').replace(/\\s+/g,' ').trim() : ''; }" 2>/dev/null | _tt_eval_str
+}
+
+# cl_link_invalid_shown — 'true' when Main.Customer_LinkInvalid is on screen: its
+# heading is visible AND reads "no longer valid".
+cl_link_invalid_shown() {
+  if printf '%s' "$(cl_link_invalid_text)" | grep -qi "$CL_REFUSAL_RE"; then echo true; else echo false; fi
+}
+
 # cl_await_refusal <tries> [confirm caption]
 #
-# Poll up to <tries> seconds for the "no longer valid" refusal. When a dialog is up
-# that is NOT the refusal and offers a button captioned exactly [confirm caption]
-# (the action's own confirmation), press it once and keep waiting. The review popup
-# itself is never treated as that confirmation - its own Approve button carries the
-# same caption, and pressing it again would be a second approval attempt. Echoes the
-# refusal text and returns 0, or echoes the last dialog seen and returns 1.
+# Poll up to <tries> seconds for the TT-778 refusal: the Customer_LinkInvalid page
+# (cl_link_invalid_shown). When a dialog is up that is NOT the refusal and offers a
+# button captioned exactly [confirm caption] (the action's own confirmation), press
+# it once and keep waiting. The review popup itself is never treated as that
+# confirmation - its own Approve button carries the same caption, and pressing it
+# again would be a second approval attempt.
 #
-# Deliberately does not use tt_clear_dialogs: that helper presses 'ok', and the
-# refusal's only button IS ok - it would dismiss the evidence before it was read.
+# Echoes "Customer_LinkInvalid: <heading>" and returns 0. Returns 1, echoing why,
+# when the RETIRED in-place message appears instead (a TT-778 regression - not a
+# pass, even though it is also a refusal) or nothing came within <tries> seconds.
 cl_await_refusal() {
-  local tries="$1" confirm="${2:-}" i t="" pressed=""
+  local tries="$1" confirm="${2:-}" i t="" h pressed=""
   for i in $(seq 1 "$tries"); do
-    t="$(cl_dialog_text)"
-    if printf '%s' "$t" | grep -qi "$CL_REFUSAL_RE"; then
-      printf '%s' "$t"
+    h="$(cl_link_invalid_text)"
+    if printf '%s' "$h" | grep -qi "$CL_REFUSAL_RE"; then
+      printf 'Customer_LinkInvalid: %s' "$h"
       return 0
+    fi
+    t="$(cl_dialog_text)"
+    if printf '%s' "$t" | grep -qi "$CL_OLD_REFUSAL_RE"; then
+      printf 'the RETIRED in-place refusal (since TT-778 the action opens Customer_LinkInvalid instead): %s' "$t"
+      return 1
     fi
     if [ -n "$t" ] && [ -n "$confirm" ] && [ -z "$pressed" ]; then
       if [ "$(playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'none'; if(d.querySelector('.mx-name-btnCustomerApprove,.mx-name-btnCustomerReject')) return 'none'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>(x.innerText||'').trim().toLowerCase()==='$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')'); if(!b) return 'none'; b.click(); return 'pressed'; }" 2>/dev/null | _tt_eval_str)" = "pressed" ]; then
@@ -184,13 +216,15 @@ cl_await_refusal() {
     fi
     sleep 1
   done
-  printf '%s' "${t:-(no dialog)}"
+  printf 'no Customer_LinkInvalid page within %ss; last dialog: %s' "$tries" "${t:-(none)}"
   return 1
 }
 
-# cl_dismiss_refusal — press OK on the refusal message, if it is up.
+# cl_dismiss_refusal — press OK on the RETIRED refusal message, if it is up, so a
+# spec that has already failed on it can still go on to read the entry back. The
+# TT-778 refusal is a page, not a dialog, and has nothing to dismiss.
 cl_dismiss_refusal() {
-  playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'none'; if(!/$CL_REFUSAL_RE/i.test(d.innerText||'')) return 'other'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^ok\$/i.test((x.innerText||'').trim())); if(!b) return 'nobutton'; b.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'none'; if(!/$CL_OLD_REFUSAL_RE/i.test(d.innerText||'')) return 'other'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^ok\$/i.test((x.innerText||'').trim())); if(!b) return 'nobutton'; b.click(); return 'ok'; }" 2>/dev/null | _tt_eval_str
 }
 
 # cl_click_tab <tab page widget name> — select a tab page by its Name.

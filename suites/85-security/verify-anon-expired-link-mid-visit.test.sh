@@ -25,7 +25,7 @@
 # the one way staff legitimately can: HR ARCHIVES THE PROJECT (Main.Project.Archived
 # is writable by HR, TitanManager and Administrator). SUB_CustomerToken_CoversEntry
 # requires [Archived = false()] on the covered project, so this takes the same
-# "Link covers entry?" = false branch an expired or revoked token takes, and shows
+# "Link covers entry?" = false branch an expired or revoked token takes, and gets
 # the same refusal. The literally-expired case needs a model-side test hook (the
 # same Test Data action verify-approval-token-invariants is waiting for) and is
 # left to the unit tests in Core's "995. Unit Tests" until one exists.
@@ -41,13 +41,17 @@
 #   A. the link opens and the review popup for OUR entry (consultant + week, and the
 #      popup names the project) shows an Approve button;
 #   B. HR archives the project, and reads Archived back as true;
-#   C. pressing Approve on the page that was already open shows the refusal
-#      ("This approval link is no longer valid...");
+#   C. pressing Approve on the page that was already open is refused the TT-778
+#      way: the review popup closes and Main.Customer_LinkInvalid opens
+#      (.mx-name-textLinkInvalidHeading, "This approval link is no longer valid").
+#      The retired in-place message ("...open the most recent approval email...")
+#      appearing instead is a failure - that is TT-778 regressing;
 #   D. read back as HR by guid: Status is still AwaitingCustomerApproval and the
-#      entry's change-log row count is unchanged - C's dialog alone could sit on
-#      top of an approval that went through.
+#      entry's change-log row count is unchanged - C's page alone could follow an
+#      approval that went through.
 #
-# RED / UNPROVEN UNTIL THE CHANGE IS DEPLOYED: before it, C approves the entry.
+# The customer-link security change (c8cb6095) and TT-778 (73b0683b) are both
+# deployed; until a dev run proves C, treat its PASS as unproven.
 #
 # Consumes: nothing when the app is right (the entry is left pending and the
 # project un-archived). If the app is wrong it approves one E2E Consultant entry on
@@ -147,8 +151,13 @@ clicked="$(playwright-cli eval "() => { const b=document.querySelector('.mx-name
 fails=0
 if MSG="$(cl_await_refusal 20 "Approve")"; then
   echo "  C: the open page refused: $MSG"
+  # TT-778: ACT_Customer_ApprovePage closes the review popup before it opens the page.
+  if [ "$(cl_visible '.mx-name-btnCustomerApprove')" = "true" ]; then
+    echo "  FAILED: C: Customer_LinkInvalid opened but the review popup's Approve is still on screen - the popup was not closed"
+    fails=$((fails+1))
+  fi
 else
-  echo "  FAILED: C: pressing Approve on the already-open page did not show the refusal. Last dialog: $MSG"
+  echo "  FAILED: C: pressing Approve on the already-open page was not refused with the Customer_LinkInvalid page: $MSG"
   fails=$((fails+1))
 fi
 cl_dismiss_refusal >/dev/null

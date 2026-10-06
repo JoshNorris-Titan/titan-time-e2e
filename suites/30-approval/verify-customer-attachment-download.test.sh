@@ -5,7 +5,7 @@
 # tt-timeout: 15m
 #
 # WHY THIS EXISTS. The client's review popup (Main.Customer_ReviewTimesheetEntry)
-# has two file surfaces: the Time Sheet Attachments tab (btnAttachmentView,
+# has two file surfaces: the Timesheet Attachments tab (tabAttachments; btnAttachmentView,
 # btnAttachmentDownload) and the Expense Report tab (btnExpenseDownload - it was the
 # auto-named actionButton8 until the customer-link security change named it). No
 # spec ever put a file on an entry and then read it back through the link. The
@@ -35,13 +35,18 @@
 #      document's /file URL does not return the file; and the attachment download
 #      action, called with the document's guid, saves nothing.
 #
-# RED UNTIL MODEL FIX (A, 2026-09-30, dev after c8cb6095). Through a link that covers
-# the entry, btnAttachmentDownload runs two /xas/ calls and then
+# A WAS RED ON 2026-09-30 (dev after c8cb6095). Through a link that covers the
+# entry, btnAttachmentDownload ran two /xas/ calls and then
 #   GET /file?guid=<the entry's AttachmentDocument>&name=attachment-test.png&target=internal => 560
-# and nothing is saved, while the same run's tt683 ZIP downloads save normally and
-# btnExpenseDownload hands over the receipt (58702 bytes, in a new tab). The customer
-# cannot download the consultant's timesheet attachment. Reported to Josh; not a
-# test defect, so not skipped.
+# and saved nothing, while btnExpenseDownload handed over the receipt (58702 bytes,
+# in a new tab). Since then TT-778 (73b0683b) reworked the attachment flows
+# (SUB_downladAttachment, SUB_ShowAttachmentDocument, SUB_DownloadExpenseReport) and
+# TT-776 put the "Timesheet Attachments" tab (tabAttachments) back on the customer
+# review popup, with view and download. A is expected green on the deployed model,
+# and is UNPROVEN until a dev run shows it; if it is still 560, that is the app.
+#
+# A refusal here, since TT-778, may be the Customer_LinkInvalid page rather than a
+# dialog; A's View check treats either as a refusal.
 #
 # THE UPLOAD POPUP (Main.AssignmentAttachment_Upload) is selected by name: its tabs
 # tabTimesheetUpload / tabExpenseUpload and its Save buttons btnAttachmentUploadSave /
@@ -300,7 +305,7 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 if [ -z "$listed" ]; then
-  bad "A: the Time Sheet Attachments tab does not list $FNAME, which HR reads on the entry"
+  bad "A: the Timesheet Attachments tab does not list $FNAME, which HR reads on the entry"
 else
   MARK="$(mktemp)"; sleep 1
   REQ_BEFORE="$(req_count)"
@@ -327,6 +332,7 @@ else
   else
     sleep 5
     refusal="$(cl_dialog_text)"
+    [ "$(cl_link_invalid_shown)" = "true" ] && refusal="the Customer_LinkInvalid page: $(cl_link_invalid_text)"
     after_req="$(file_requests)"; after_tabs="$(playwright-cli tab-list 2>/dev/null | grep -c .)"
     if printf '%s' "$refusal" | grep -qi "$CL_REFUSAL_RE"; then
       bad "A: btnAttachmentView was refused for the customer whose link covers the entry: $refusal"

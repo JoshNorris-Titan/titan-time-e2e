@@ -15,8 +15,9 @@
 # SINCE THAT CHANGE each of them first asks Main.SUB_CustomerToken_CoversEntry
 # whether the link THIS SESSION opened covers the entry (a live Main.ApprovalVisit
 # for the session's own user, on the entry's project, with an Active unexpired
-# token). When it does not, the action shows "This approval link is no longer
-# valid..." and ENDS NORMALLY - it is not an error on the wire. And Anonymous may
+# token). When it does not, the action opens Main.Customer_LinkInvalid ("This
+# approval link is no longer valid"; TT-778 - before it, an in-place message said
+# the same) and ENDS NORMALLY - it is not an error on the wire. And Anonymous may
 # now read an entry only through such a visit, so a session that never opened a
 # link can enumerate nothing (B).
 #
@@ -104,9 +105,12 @@ log_count() {
   tt_authz_count "//Main.ChangeLog[Main.ChangeLog_AssignmentEntry = '$1']"
 }
 
-# refusal_shown — the refusal dialog's text if one is on screen, else ''.
+# refusal_shown — what refusal is on screen, else ''. Since TT-778 the actions open
+# Main.Customer_LinkInvalid (.mx-name-textLinkInvalidHeading) instead of the retired
+# in-place "no longer valid ... most recent approval email" message; both are
+# reported, labelled, so a run says which one it saw. Evidence only - E decides.
 refusal_shown() {
-  playwright-cli eval "() => { const d=[...document.querySelectorAll('$TT_DIALOG_SEL')].filter(x=>x.offsetParent!==null).pop(); const t=d ? (d.innerText||'').replace(/\s+/g,' ').trim() : ''; return /no longer valid/i.test(t) ? t.slice(0,160) : ''; }" 2>/dev/null | _tt_eval_str
+  playwright-cli eval "() => { const h=[...document.querySelectorAll('.mx-name-textLinkInvalidHeading')].find(e=>e.offsetParent!==null); if(h) return 'Customer_LinkInvalid page: '+(h.innerText||'').replace(/\s+/g,' ').trim(); const d=[...document.querySelectorAll('$TT_DIALOG_SEL')].filter(x=>x.offsetParent!==null).pop(); const t=d ? (d.innerText||'').replace(/\s+/g,' ').trim() : ''; return /no longer valid/i.test(t) ? 'RETIRED in-place message (TT-778 regressed?): '+t.slice(0,160) : ''; }" 2>/dev/null | _tt_eval_str
 }
 
 # ------------------------------------------------------- control, as an entitled user
