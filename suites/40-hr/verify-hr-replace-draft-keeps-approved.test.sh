@@ -51,11 +51,8 @@
 # timesheet for it on the weeks the page passes; Three is in TT_E2E_CONSULTANTS, so
 # the bookend clears remove it.
 #
-# JOSH MUST RENAME a widget before this can pass anywhere, fix or no fix:
-#   Main.HR_ConfirmRewriteTimesheet  actionButton1 ("Replace Draft")
-#                                    -> btnConfirmReplaceDraft
-# The suite selects on .mx-name-* only and never on a generated name. Until the
-# rename is deployed the step fails at the confirm with a message naming it.
+# The confirm is Main.HR_ConfirmRewriteTimesheet's btnConfirmReplaceDraft ("Replace
+# Draft"), named in model commit c8cb6095 and deployed.
 #
 # Env: TT_BASE_URL, TT_ROLE_PASS. Optional TT_EVIDENCE_DIR for screenshots.
 set -uo pipefail
@@ -153,7 +150,7 @@ hr_replace() {
   r="$(playwright-cli eval "() => { const d=$(_tt_dialog_js); if(!d) return 'nodialog'; const b=[...d.querySelectorAll('$HR_CONFIRM')].find(x=>x.offsetParent!==null); if(!b) return 'nobutton'; (b.querySelector('button')||b).click(); return 'ok'; }" 2>/dev/null | _tt_eval_str)"
   case "$r" in
     ok) ;;
-    nobutton) tt_fail "the replace-draft popup has no '$HR_CONFIRM'. Josh must rename actionButton1 (\"Replace Draft\") on Main.HR_ConfirmRewriteTimesheet to btnConfirmReplaceDraft - the suite never selects a generated widget name" ;;
+    nobutton) tt_fail "the replace-draft popup has no '$HR_CONFIRM' (Main.HR_ConfirmRewriteTimesheet's \"Replace Draft\", named since model commit c8cb6095) - was it renamed or removed?" ;;
     *) tt_fail "could not press Replace Draft ($r)" ;;
   esac
   sleep 4
