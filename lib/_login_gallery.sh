@@ -244,7 +244,7 @@ tt_pm_pending_rows() {
 
 # tt_combobox_sorted <combobox-css> <dismiss-css> <label>
 # Opens the (Mendix pluggable) combobox, asserts its rendered option list has >=2
-# items in ascending (case-insensitive) order, then clicks <dismiss-css> — a neutral
+# items in ascending order, then clicks <dismiss-css> — a neutral
 # field on the same form — to close the dropdown WITHOUT closing the popup.
 # (Escape closes the whole popup, so we never use it.)
 #
@@ -259,6 +259,17 @@ tt_pm_pending_rows() {
 # entity-access problem, and a full list in the wrong order is a sort-key problem.
 # Say which one it is.
 #
+# ASCENDING MEANS WHAT THE DATABASE MEANS (2026-10-06). These lists are database
+# sources sorted on the name, so the order is the database collation's, and dev's
+# Postgres collation (glibc en_US style) ignores case, spaces and punctuation at the
+# first level: "Manual HR - PM+Client" sorts before "Manual HR - PM Only" ("pmclient"
+# < "pmonly"). The old check, toLowerCase().localeCompare(), keeps punctuation
+# significant (space before '+') and so called that correctly sorted list
+# out of order (run 37409110184, verify-assignment-dropdowns-sorted). Each option is
+# now compared on a key of its letters and digits only, lowercased - the same first-
+# level key the collation uses. A list in any other order, e.g. "B" before "A", still
+# fails.
+#
 # The eval result is read from line 2 via _tt_eval_str, never grepped out of the whole
 # output: playwright-cli echoes the SOURCE it ran, so a grep for a literal appearing in
 # the snippet matches that echo rather than the return value, and passes no matter what
@@ -268,7 +279,7 @@ tt_combobox_sorted() {
   playwright-cli click "$cb" >/dev/null 2>&1
   sleep 1
   # "<count>|<true|false>|<the options, comma separated>"
-  r="$(playwright-cli eval "() => { const o=[...document.querySelectorAll('[role=option]')].map(e=>e.innerText.trim()).filter(Boolean); const s=o.every((n,i)=>i===0||o[i-1].toLowerCase().localeCompare(n.toLowerCase())<=0); return o.length + '|' + s + '|' + o.join(', '); }" 2>/dev/null | _tt_eval_str)"
+  r="$(playwright-cli eval "() => { const o=[...document.querySelectorAll('[role=option]')].map(e=>e.innerText.trim()).filter(Boolean); const k=t=>t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,''); const s=o.every((n,i)=>i===0||k(o[i-1]).localeCompare(k(n))<=0); return o.length + '|' + s + '|' + o.join(', '); }" 2>/dev/null | _tt_eval_str)"
   playwright-cli click "$dismiss" >/dev/null 2>&1
 
   n="${r%%|*}"
