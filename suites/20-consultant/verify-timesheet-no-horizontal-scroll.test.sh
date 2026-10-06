@@ -70,8 +70,8 @@ case "$ORIG" in
      exit 1 ;;
 esac
 restore_viewport() {
-  # No `|| true`: this spec runs without `set -e`, so a failed restore cannot abort
-  # anything, and the verdict is already decided by the time the trap fires.
+  # Unguarded on purpose: this spec runs without `set -e`, so a failed restore cannot
+  # abort anything, and the verdict is already decided by the time the trap fires.
   playwright-cli resize "${ORIG%x*}" "${ORIG#*x}" >/dev/null 2>&1
 }
 trap restore_viewport EXIT INT TERM
