@@ -10,8 +10,8 @@
 # This is the case that would otherwise credit the consultant as their own
 # approver, which is the misleading output Josh explicitly ruled out.
 #
-# Seeds a zero-hour week for e2e_consultant2 on the sandbox project if the To
-# Process tab has no such card yet. Env: TT_BASE_URL, TT_ROLE_PASS.
+# Seeds its own zero-hour week for e2e_consultant2 and reads that week's card.
+# Env: TT_BASE_URL, TT_ROLE_PASS.
 set -uo pipefail
 # Resolve the suite root by walking up to the directory that holds lib/, so a test
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
@@ -119,32 +119,39 @@ seed_zero_hour_week() {
   echo "  submitted '$week' with zero hours"
 }
 
-# 1) Look for an existing no-approval card, otherwise seed one.
+# 1) Seed this step's OWN zero-hour week, every time, and read only that week.
+#
+# ALWAYS SEED (2026-10-06). This used to reuse "an existing no-approval card": the
+# first To Process week whose cards so much as MENTION '$CNAME'. That held while
+# every Consultant Two card on To Process was a zero-hour one. It no longer is -
+# Two is on 'E2E Manager Approval' too (lib/_fixtures.sh), and the 30-approval /
+# 40-hr specs submit and PM-approve Two's hours there. In run 37409110184 the walk
+# stopped on week Nov 29 - Dec 5 (cardsInSelectedWeek=1, no seeding line printed)
+# and read a PM-approved card, so line 1 legitimately said 'E2E ProjectManger'.
+# Nothing to do with TT-771, which only drops a stray "on" after "N/A" in the
+# Process popup. Same trap tt647_select_exact_week's header records for a1/a2/a6:
+# a card is identified by the week this step wrote, never by a name match.
+seed_zero_hour_week
 tt647_hr_open_tab "$TT647_TAB_TOPROCESS"
-if ! tt647_select_week_with "$CNAME" >/dev/null; then
-  echo "no To Process entry for '$CNAME' — seeding a zero-hour week"
-  seed_zero_hour_week
-  tt647_hr_open_tab "$TT647_TAB_TOPROCESS"
-  # Submit routes the entry into the queue ASYNCHRONOUSLY, so pin the week the
-  # seed just wrote and POLL for the card rather than walking the tab once.
-  # tt647_wait_for_card also separates "the week was never offered" (a filter left
-  # set on the tab) from "the week is there but holds no such card" (routing) --
-  # collapsing those is what made this read as a product defect.
-  # On failure, say which queue the entry DID reach before blaming the routing --
-  # an entry submitted with hours still on it lands in an approval queue, and that
-  # is a seed problem, not a product one. See tt647_locate_entry.
-  #
-  # GALLERY PAGING. This is the third thing to have failed here, and the one that
-  # produced "no card in it matches after ~60s" with a correctly routed entry:
-  # galTabEntries renders only four cards until it is scrolled, and this test's two
-  # seeded entries sorted past that. tt647_load_cards now runs inside the week
-  # selection, so the read below sees the whole week. Verified against dev
-  # 2026-08-31: every WEEKLY TO PROCESS week showed 4 cards under a heading reading
-  # "(5)", and one scroll took it to 5.
-  tt647_wait_for_card "$TT_A3_SEEDED_WEEK" "$CNAME" "" 10 \
-    || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab: $TT647_WAIT_ERR
-       Week '$TT_A3_SEEDED_WEEK' for '$CNAME' is currently on: $(tt647_locate_entry "$TT_A3_SEEDED_WEEK" "$CNAME"). If that names an APPROVAL QUEUE, the seeded hours were not zero when Submit ran. If it names no tab at all, the entries are Draft, Rejected or AwaitingExport — they were never submitted, or something moved them on."
-fi
+# Submit routes the entry into the queue ASYNCHRONOUSLY, so pin the week the
+# seed just wrote and POLL for the card rather than walking the tab once.
+# tt647_wait_for_card also separates "the week was never offered" (a filter left
+# set on the tab) from "the week is there but holds no such card" (routing) --
+# collapsing those is what made this read as a product defect.
+# On failure, say which queue the entry DID reach before blaming the routing --
+# an entry submitted with hours still on it lands in an approval queue, and that
+# is a seed problem, not a product one. See tt647_locate_entry.
+#
+# GALLERY PAGING. This is the third thing to have failed here, and the one that
+# produced "no card in it matches after ~60s" with a correctly routed entry:
+# galTabEntries renders only four cards until it is scrolled, and this test's two
+# seeded entries sorted past that. tt647_load_cards now runs inside the week
+# selection, so the read below sees the whole week. Verified against dev
+# 2026-08-31: every WEEKLY TO PROCESS week showed 4 cards under a heading reading
+# "(5)", and one scroll took it to 5.
+tt647_wait_for_card "$TT_A3_SEEDED_WEEK" "$CNAME" "" 10 \
+  || tt_fail "zero-hour entry for '$CNAME' did not reach the To Process tab: $TT647_WAIT_ERR
+     Week '$TT_A3_SEEDED_WEEK' for '$CNAME' is currently on: $(tt647_locate_entry "$TT_A3_SEEDED_WEEK" "$CNAME"). If that names an APPROVAL QUEUE, the seeded hours were not zero when Submit ran. If it names no tab at all, the entries are Draft, Rejected or AwaitingExport — they were never submitted, or something moved them on."
 
 tt647_require_widgets "To Process tab"
 
