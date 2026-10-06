@@ -90,8 +90,13 @@ if [ "${GATED:-0}" -eq 0 ]; then
     tt_fail "the Client Approval tab shows no pending entry at all, so there is no card to gate and this step has no verdict. suites/30-approval puts one there; run the suite in order."
   fi
   note "nothing gated yet; reminding '$CONSULTANT' / '$PROJECT' to produce the gated state"
-  tt_hr_remind_e2e_entry "$CONSULTANT" "$PROJECT" >/dev/null || \
-    note "note: no remindable card matched; measuring whatever the tab shows"
+  RC=0
+  tt_hr_remind_e2e_entry "$CONSULTANT" "$PROJECT" >/dev/null || RC=$?
+  case "$RC" in
+    0) ;;
+    2) note "note: the Remind did not end in TT-768's 'Reminder sent to ...' message (see [remind] above); measuring whatever the tab shows" ;;
+    *) note "note: no remindable card matched; measuring whatever the tab shows" ;;
+  esac
   sleep 3
   tt_hr_click_tab "Client approval"
   sleep 3

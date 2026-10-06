@@ -78,7 +78,12 @@ tt_login "e2e_hr" "$TT_HR_READY"
 tt_hr_click_tab "Client approval"
 sleep 2
 
-if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
+RC=0
+WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") || RC=$?
+# 2 = the card was reminded but TT-768's "Reminder sent to ..." never came
+# (lib/_login_tokens.sh, tt_hr_remind_confirm): not "no entry", so no new submit.
+[ "$RC" -eq 2 ] && tt_fail "the Remind for week '$WEEK' did not end in the 'Reminder sent to {name} ({email}).' confirmation (TT-768)"
+if [ "$RC" -eq 0 ]; then
   echo "  reminded an existing pending entry (week: $WEEK)"
 else
   echo "  no pending '$CONSULTANT_NAME' entry - creating one via the consultant"
@@ -93,8 +98,10 @@ else
   tt_login "e2e_hr" "$TT_HR_READY"
   tt_hr_click_tab "Client approval"
   sleep 2
-  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
-    || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
+  RC=0
+  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") || RC=$?
+  [ "$RC" -eq 2 ] && tt_fail "the Remind for week '$WEEK' did not end in the 'Reminder sent to {name} ({email}).' confirmation (TT-768)"
+  [ "$RC" -eq 0 ] || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
   echo "  reminded a newly-created entry (week: $WEEK)"
 fi
 [ -n "$WEEK" ] || tt_fail "could not determine the week under test"

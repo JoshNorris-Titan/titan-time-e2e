@@ -22,9 +22,12 @@
 #   B. an entry exists that is awaiting the OTHER PM's approval - established as a
 #      control, and fatal if absent, because everything below is vacuous without
 #      it;
-#   C. ACT_Page_Approve does not visibly succeed for the foreign PM;
+#   C. ACT_Page_Approve refuses the foreign PM - an error, or (the deployed shape)
+#      a normal end with the refusal message "This entry is waiting on someone
+#      else's approval. Refresh and try again.";
 #   D. ACT_ApprovalHelper_Approve likewise - the sibling that the dashboard button
-#      actually routes through;
+#      actually routes through. Its parameter is an ApprovalHelper, NOT the entry,
+#      so D builds one pointing at the entry, the way DS_ApprovalHelper_PM does;
 #   E. the entry's Status is UNCHANGED, read back as administrator. C and D only say the
 #      calls did not report success; this is the one that proves the hours did not
 #      move to ToProcess and on towards an invoice.
@@ -35,11 +38,20 @@
 # IF C/D/E FAIL this is a project manager approving another project manager's
 # work, which is the invoice boundary. It is a finding, not a flaky script.
 #
-# RED UNTIL MODEL FIX (2026-09-29). Once B could find its entry, C, D and E failed
-# on dev in two separate runs: e2e_pm2, who cannot even retrieve the entry (count
-# 0), called both actions with success and the entry went AwaitingManagerApproval
-# -> ToProcess. Neither ACT_Page_Approve nor ACT_ApprovalHelper_Approve checks that
-# the caller is the entry's project manager. The fix belongs in the model.
+# THE MODEL FIX (c8cb6095, deployed). On 2026-09-29 C, D and E failed on dev in two
+# runs: e2e_pm2, who cannot even retrieve the entry (count 0), called the actions
+# and the entry went AwaitingManagerApproval -> ToProcess. Since c8cb6095
+# ACT_Page_Approve, ACT_ApprovalHelper_Approve and ACT_ApprovalHelper_Reject call
+# SUB_AssignmentEntry_CanActOn (HR and Titan Manager pass; a PM passes only on their
+# own AwaitingManagerApproval entry). A refusal is a blocking Information message
+# and then a NORMAL end, so the call returns [ok] whether it refused or approved:
+# C and D therefore read the message, and E stays the decisive step.
+#
+# D'S CALL SHAPE (2026-10-05). D used to hand ACT_ApprovalHelper_Approve the
+# ENTRY's guid. Its parameter is a Main.ApprovalHelper, and the flow reaches the
+# entry through ApprovalHelper_AssignmentEntry, so it never saw this entry at all -
+# D could not fail. It now creates a (non-persistent) ApprovalHelper on the client,
+# sets that reference, and calls the action on the helper.
 #
 # SELF-SEEDING (2026-09-29). B used to fail with "no E2E entry is awaiting
 # 'e2e_pm' approval" on every full run: 76-bulk/verify-pm-approve-all runs just
@@ -146,16 +158,49 @@ SEEN="$(tt_authz_count "$TARGET")"
 note "entries awaiting $OWNER_PM that $OTHER_PM can retrieve: $SEEN"
 
 # ----------------------------------------------------------- C/D. call the actions
+# The actor refusal, verbatim from SUB_AssignmentEntry_CanActOn's callers.
+REFUSAL="This entry is waiting on someone else's approval. Refresh and try again."
+
+# dialog_text_dismiss - the topmost visible dialog's text (empty when none came up
+# within ~10 s), then click its OK/Close so the next call is not behind a modal.
+dialog_text_dismiss() {
+  local d t _
+  d="$(_tt_dialog_js)"
+  for _ in $(seq 1 10); do
+    t="$(playwright-cli eval "() => { const d=$d; return d ? (d.innerText||'').replace(/\\s+/g,' ').trim() : ''; }" 2>/dev/null | _tt_eval_str)"
+    [ -n "$t" ] && break
+    sleep 1
+  done
+  [ -n "$t" ] && playwright-cli eval "() => { const d=$d; if(!d) return 'none'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^(ok|close)\$/i.test((x.innerText||'').trim())); if(b){ b.click(); return 'clicked'; } return 'nobutton'; }" >/dev/null 2>&1
+  sleep 1
+  printf '%s' "$t"
+}
+
 A1="$(tt_authz_action 'Main.ACT_Page_Approve' "$GUID")"
 case "$A1" in
-  ERR:*) note "C ok: ACT_Page_Approve did not visibly succeed for $OTHER_PM ($A1)" ;;
-  *)     bad "C: ACT_Page_Approve returned [$A1] for '$OTHER_PM' on an entry awaiting '$OWNER_PM'" ;;
+  ERR:*) note "C ok: ACT_Page_Approve raised an error for $OTHER_PM ($A1)" ;;
+  *)
+    MSG1="$(dialog_text_dismiss)"
+    case "$MSG1" in
+      *"$REFUSAL"*) note "C ok: ACT_Page_Approve refused $OTHER_PM with \"$REFUSAL\"" ;;
+      *)            bad "C: ACT_Page_Approve returned [$A1] for '$OTHER_PM' on an entry awaiting '$OWNER_PM' without the refusal message (dialog: '${MSG1:-none}')" ;;
+    esac ;;
 esac
 
-A2="$(tt_authz_action 'Main.ACT_ApprovalHelper_Approve' "$GUID")"
+# D: build the ApprovalHelper the action expects, pointing at the foreign entry.
+A2="$(playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t=setTimeout(()=>res('ERR:timeout'),20000); mx.data.create({ entity: 'Main.ApprovalHelper', callback: function(h){ try { h.set('Main.ApprovalHelper_AssignmentEntry', '$GUID'); } catch(e){ clearTimeout(t); return res('ERR:set-'+e.message); } mx.data.action({ params: { applyto: 'selection', actionname: 'Main.ACT_ApprovalHelper_Approve', guids: [h.getGuid()] }, callback: function(r){ clearTimeout(t); res('ok'); }, error: function(e){ clearTimeout(t); res('ERR:action-'+((e&&e.message)||'refused')); } }); }, error: function(e){ clearTimeout(t); res('ERR:create-'+((e&&e.message)||'refused')); } }); } catch(e){ res('ERR:'+e.message); } })" 2>/dev/null | _tt_eval_str)"
 case "$A2" in
-  ERR:*) note "D ok: ACT_ApprovalHelper_Approve did not visibly succeed for $OTHER_PM ($A2)" ;;
-  *)     bad "D: ACT_ApprovalHelper_Approve returned [$A2] for '$OTHER_PM' on an entry awaiting '$OWNER_PM'" ;;
+  ERR:create-*|ERR:set-*)
+    # Not an answer about the action: the helper could not be built, so the
+    # question was never put. Say so rather than count it as a refusal.
+    bad "D: could not build an ApprovalHelper for the entry as '$OTHER_PM' ($A2), so ACT_ApprovalHelper_Approve was never asked" ;;
+  ERR:*) note "D ok: ACT_ApprovalHelper_Approve raised an error for $OTHER_PM ($A2)" ;;
+  *)
+    MSG2="$(dialog_text_dismiss)"
+    case "$MSG2" in
+      *"$REFUSAL"*) note "D ok: ACT_ApprovalHelper_Approve refused $OTHER_PM with \"$REFUSAL\"" ;;
+      *)            bad "D: ACT_ApprovalHelper_Approve returned [$A2] for '$OTHER_PM' on an entry awaiting '$OWNER_PM' without the refusal message (dialog: '${MSG2:-none}')" ;;
+    esac ;;
 esac
 
 # ------------------------------------------------------------------ E. did it move?
@@ -169,7 +214,7 @@ case "$AFTER" in
 esac
 
 if [ "$fails" -ne 0 ]; then
-  echo "FAIL: verify-pm-approve-foreign-entry-refused — $fails problem(s). C/D/E are findings about ACT_Page_Approve having no actor check."
+  echo "FAIL: verify-pm-approve-foreign-entry-refused — $fails problem(s). C/D/E are findings about the approve actions' actor check (SUB_AssignmentEntry_CanActOn)."
   exit 1
 fi
 echo "PASS: verify-pm-approve-foreign-entry-refused — '$OTHER_PM' could not approve an entry awaiting '$OWNER_PM'; Status still $AFTER."

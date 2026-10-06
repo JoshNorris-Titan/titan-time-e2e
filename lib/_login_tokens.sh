@@ -44,7 +44,129 @@ _tt_hr_tab_state() {
   echo "  [hr-tab] $label: $s" >&2
 }
 
+# tt_hr_remind_confirm — wait for, check and dismiss TT-768's Remind confirmation.
+#
+# Since TT-768 (model fa8f6d17, deployed) every HR Remind — Pending btnRemind
+# (Main.ACT_Email_RemindConsultant), btnManagerRemind (…RemindManager) and
+# btnClientRemind (…RemindCustomer) — ends in a BLOCKING Information message:
+#
+#     "Reminder sent to {name} ({email})."
+#
+# A blocking message puts a modal underlay over the page, so the NEXT real
+# playwright-cli click in the same session (a tab, a card, a login link) times
+# out against it. Every Remind therefore has to be followed by this.
+#
+# Polls up to ~30 s for the topmost visible dialog (the remind flow queues mail and,
+# for a customer, mints a token before the message reaches the client). Then:
+#   0  the dialog read "Reminder sent to <name> (<x@y>)." and its OK was clicked
+#      and the dialog is gone;
+#   2  no dialog came, or a dialog with OTHER text came (it is still dismissed with
+#      OK/Close so the session is usable, and its text is printed). Distinct from 1,
+#      which tt_hr_remind_e2e_entry keeps for "no card to remind", so a caller can
+#      tell "the Remind was refused or silent" from "there was nothing to remind".
+#
+# The text read is printed to STDERR (STDOUT of tt_hr_remind_e2e_entry is its week
+# label), and left in TT_REMIND_CONFIRM_TEXT for a caller that calls this directly.
+TT_REMIND_CONFIRM_RE='Reminder sent to .+ \(.+@.+\)\.'
+TT_REMIND_CONFIRM_TEXT=""
+tt_hr_remind_confirm() {
+  local d i t
+  d="$(_tt_dialog_js)"
+  TT_REMIND_CONFIRM_TEXT=""
+  for i in $(seq 1 30); do
+    t="$(playwright-cli eval "() => { const d=$d; if(!d) return ''; return (d.innerText||'').replace(/\\s+/g,' ').trim(); }" 2>/dev/null | _tt_eval_str)"
+    [ -n "$t" ] && break
+    sleep 1
+  done
+  TT_REMIND_CONFIRM_TEXT="$t"
+  if [ -z "$t" ]; then
+    echo "  [remind] TT-768: no confirmation dialog within 30 s of the Remind click - expected 'Reminder sent to {name} ({email}).'" >&2
+    return 2
+  fi
+  # OK on a match; on anything else take the dialog's own way out (OK or Close)
+  # so the session is not left behind a modal, and report what it said.
+  playwright-cli eval "() => { const d=$d; if(!d) return 'none'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^(ok|close)\$/i.test((x.innerText||'').trim())); if(b){ b.click(); return 'clicked'; } return 'nobutton'; }" >/dev/null 2>&1
+  for i in $(seq 1 10); do
+    [ "$(playwright-cli eval "() => String(!$d)" 2>/dev/null | _tt_eval_str)" = "true" ] && break
+    sleep 1
+  done
+  if ! printf '%s' "$t" | grep -Eq "$TT_REMIND_CONFIRM_RE"; then
+    echo "  [remind] TT-768: the Remind raised a dialog that is not the confirmation: '$t'" >&2
+    return 2
+  fi
+  if [ "$(playwright-cli eval "() => String(!$d)" 2>/dev/null | _tt_eval_str)" != "true" ]; then
+    echo "  [remind] TT-768: confirmation read '$t' but it was still up after OK" >&2
+    return 2
+  fi
+  echo "  [remind] confirmed and dismissed: $t" >&2
+  return 0
+}
+
+# _tt_hr_card_js <who> <proj> <sel> — JS prelude: HIT() is the button matching <sel>
+# whose OWN card (the climb stops at an ancestor holding more than one such button)
+# names <who> and <proj>, or null. Same one-card rule as tt_hr_remind_e2e_entry.
+_tt_hr_card_js() {
+  printf '%s' "const HIT=()=>{ const rs=[...document.querySelectorAll('$3')]; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('$3').length!==1) break; const t=el.innerText||''; if(t.indexOf('$1')>=0 && ('$2'==='' || t.indexOf('$2')>=0)) return r; } } return null; };"
+}
+
+# tt_hr_find_remind_week <consultantName> <projectName> [open|gated]
+#
+# Walk the open picker tab's weeks and stop on the first whose card for
+# <consultantName>/<projectName> offers Remind (open, the default) or shows the
+# gated look-alike (gated). Echoes that week's label and LEAVES IT SELECTED, so a
+# caller can count and act on that one week; returns 1 when no week has one. Clicks
+# nothing on a card.
+tt_hr_find_remind_week() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" mode="${3:-open}" sel labels lbl i js
+  sel="$TT_HR_BTN_REMIND"; [ "$mode" = "gated" ] && sel="$TT_HR_BTN_REMIND_BLOCKED"
+  js="$(_tt_hr_card_js "$who" "$proj" "$sel")"
+  for i in $(seq 1 20); do
+    playwright-cli eval "() => String(!!document.querySelector('$TT_HR_GAL_WEEKS'))" 2>/dev/null | grep -qiw true && break
+    sleep 1
+  done
+  labels="$(tt_hr_week_labels)"
+  local IFS='|'
+  for lbl in $labels; do
+    [ -n "$lbl" ] || continue
+    unset IFS
+    if tt_hr_select_week "$lbl"; then
+      for i in 1 2 3 4; do
+        if [ "$(playwright-cli eval "() => { $js return String(!!HIT()); }" 2>/dev/null | _tt_eval_str)" = "true" ]; then
+          echo "$lbl"; return 0
+        fi
+        sleep 1
+      done
+    fi
+    IFS='|'
+  done
+  unset IFS
+  return 1
+}
+
+# tt_hr_remind_here <consultantName> <projectName> — press Remind on that card in
+# the week ALREADY selected (no walk), then read and dismiss TT-768's confirmation.
+# 0 confirmed, 1 no such remindable card here, 2 reminded but no confirmation.
+tt_hr_remind_here() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" js
+  js="$(_tt_hr_card_js "$who" "$proj" "$TT_HR_BTN_REMIND")"
+  [ "$(playwright-cli eval "() => { $js const b=HIT(); if(!b) return 'false'; b.click(); return 'true'; }" 2>/dev/null | _tt_eval_str)" = "true" ] || return 1
+  tt_hr_remind_confirm
+}
+
+# tt_hr_card_gated_here <consultantName> <projectName> — true | false: that card,
+# in the week already selected, shows btnClientRemindBlocked.
+tt_hr_card_gated_here() {
+  local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" js
+  js="$(_tt_hr_card_js "$who" "$proj" "$TT_HR_BTN_REMIND_BLOCKED")"
+  playwright-cli eval "() => { $js return String(!!HIT()); }" 2>/dev/null | _tt_eval_str
+}
+
 # tt_hr_remind_e2e_entry <consultantName> [projectName]
+#
+# Returns 0 (week label on STDOUT) once the Remind was clicked AND its TT-768
+# confirmation was read and dismissed; 1 when no remindable card matched; 2 when
+# the card was reminded but the confirmation did not come (see tt_hr_remind_confirm
+# — the week label is still printed).
 #
 # Clicks Remind on a pending card for <consultantName>, walking the week list until
 # one matches. Pass <projectName> to require the card to be for that project too.
@@ -109,7 +231,10 @@ tt_hr_remind_e2e_entry() {
     for i in $(seq 1 8); do
       if playwright-cli eval "() => { const rs=[...document.querySelectorAll('$TT_HR_BTN_REMIND')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('$TT_HR_BTN_REMIND').length!==1) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
         echo "$lbl"
-        return 0
+        # TT-768: the Remind ends in a BLOCKING "Reminder sent to …" message. Clear
+        # it here, so the caller's next click is not swallowed by the modal underlay.
+        tt_hr_remind_confirm
+        return $?
       fi
       sleep 1
     done
@@ -179,13 +304,22 @@ tt_hr_remind_e2e_entry() {
 
 # _tt_cl_page <consultantName> <projectName> — what the token page in this browser
 # shows, once it has painted. Echoes one line:
-#   ROWS:<period>|<period>…  our pending rows (text after "hours": the week)
+#   ROWS:<period>|<period>…  our pending rows, each its card's week (txtCustWeek)
+#
+# The week is read from the card's own WEEK field, .mx-name-txtCustWeek. Until
+# TT-769 (deployed 2026-10-02) the row was one line ending "<n> hours <period>",
+# and this took the text after "hours". TT-769 relaid the card as label/value
+# facts PROJECT, WEEK, TOTAL "<n> hours" - hours LAST - so that slice returned ''
+# for every row: links listing our week logged "ROWS:" / "ROWS:|", tt_week_key('')
+# never matched, and all three customer specs timed out "no approval email ...
+# within 240 s of the Remind" (run 37409110184) with the right mail in hand. A
+# matching card without the field is reported, not read as an empty week.
 #   LIVE                     an approval page with no row of ours
 #   DEAD                     the link-invalid page, or nothing painted in ~25 s
 _tt_cl_page() {
   local who="${1//\'/\\\'}" proj="${2//\'/\\\'}" i r seen=""
   for i in $(seq 1 25); do
-    r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); const e=document.querySelector('.mx-name-containerNoPendingApprovals'); const bad=document.querySelector('.mx-name-textLinkInvalidHeading'); if(!g && !e) return bad ? 'DEAD' : 'WAIT'; if(!g) return 'LIVE'; const txt=r=>((r.innerText||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()); const rows=[...g.querySelectorAll('.widget-gallery-item')].map(txt).filter(t=>t.indexOf('$who')>=0 && t.indexOf('$proj')>=0 && t.indexOf('hours')>=0).map(t=>t.slice(t.lastIndexOf('hours')+5).trim()); return rows.length ? 'ROWS:'+rows.join('|') : 'LIVE'; }" 2>/dev/null | _tt_eval_str)"
+    r="$(playwright-cli eval "() => { const g=document.querySelector('.mx-name-galPendingEntries'); const e=document.querySelector('.mx-name-containerNoPendingApprovals'); const bad=document.querySelector('.mx-name-textLinkInvalidHeading'); if(!g && !e) return bad ? 'DEAD' : 'WAIT'; if(!g) return 'LIVE'; const txt=r=>((r.innerText||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim()); const rows=[...g.querySelectorAll('.widget-gallery-item')].filter(it=>{ const t=txt(it); return t.indexOf('$who')>=0 && t.indexOf('$proj')>=0 && t.indexOf('hours')>=0; }).map(it=>{ const w=it.querySelector('.mx-name-txtCustWeek'); return w ? txt(w) : '(no txtCustWeek in: '+txt(it).slice(0,100)+')'; }); return rows.length ? 'ROWS:'+rows.join('|') : 'LIVE'; }" 2>/dev/null | _tt_eval_str)"
     case "$r" in
       DEAD|ROWS:*) echo "$r"; return 0 ;;
       LIVE)
@@ -283,7 +417,12 @@ tt_customer_link() {
     tt_login "e2e_hr" "$TT_HR_READY"
     tt_hr_click_tab "Client approval"
     sleep 2
-    if ! TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")"; then
+    local _rc=0
+    TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")" || _rc=$?
+    # 2 = reminded, but no TT-768 confirmation: the mail may not have gone, so do
+    # not go and submit another week on top of it - say what happened.
+    [ "$_rc" -eq 2 ] && tt_fail "Remind on '$who' / '$proj' (week '$TT_CL_WEEK') did not end in TT-768's 'Reminder sent to {name} ({email}).' message - see the [remind] line above"
+    if [ "$_rc" -ne 0 ]; then
       [ -z "$want" ] || tt_fail "no live link lists week '$want' for '$who' / '$proj', and HR has nothing to remind for it"
       echo "  [customer-link] HR has nothing to remind - submitting one as the consultant" >&2
       tt_login "e2e_consultant" "My Timesheets"
@@ -291,7 +430,10 @@ tt_customer_link() {
       tt_login "e2e_hr" "$TT_HR_READY"
       tt_hr_click_tab "Client approval"
       sleep 2
-      TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")"         || tt_fail "still no pending '$who' entry on '$proj' after creating one"
+      _rc=0
+      TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")" || _rc=$?
+      [ "$_rc" -eq 2 ] && tt_fail "Remind on '$who' / '$proj' (week '$TT_CL_WEEK') did not end in TT-768's 'Reminder sent to {name} ({email}).' message - see the [remind] line above"
+      [ "$_rc" -eq 0 ] || tt_fail "still no pending '$who' entry on '$proj' after creating one"
     fi
     TT_CL_WEEK="$(tt_week_key "$TT_CL_WEEK")"
     # A caller that named its week gets that week: the link lists everything the
