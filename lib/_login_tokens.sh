@@ -44,7 +44,70 @@ _tt_hr_tab_state() {
   echo "  [hr-tab] $label: $s" >&2
 }
 
+# tt_hr_remind_confirm — wait for, check and dismiss TT-768's Remind confirmation.
+#
+# Since TT-768 (model fa8f6d17, deployed) every HR Remind — Pending btnRemind
+# (Main.ACT_Email_RemindConsultant), btnManagerRemind (…RemindManager) and
+# btnClientRemind (…RemindCustomer) — ends in a BLOCKING Information message:
+#
+#     "Reminder sent to {name} ({email})."
+#
+# A blocking message puts a modal underlay over the page, so the NEXT real
+# playwright-cli click in the same session (a tab, a card, a login link) times
+# out against it. Every Remind therefore has to be followed by this.
+#
+# Polls up to ~30 s for the topmost visible dialog (the remind flow queues mail and,
+# for a customer, mints a token before the message reaches the client). Then:
+#   0  the dialog read "Reminder sent to <name> (<x@y>)." and its OK was clicked
+#      and the dialog is gone;
+#   2  no dialog came, or a dialog with OTHER text came (it is still dismissed with
+#      OK/Close so the session is usable, and its text is printed). Distinct from 1,
+#      which tt_hr_remind_e2e_entry keeps for "no card to remind", so a caller can
+#      tell "the Remind was refused or silent" from "there was nothing to remind".
+#
+# The text read is printed to STDERR (STDOUT of tt_hr_remind_e2e_entry is its week
+# label), and left in TT_REMIND_CONFIRM_TEXT for a caller that calls this directly.
+TT_REMIND_CONFIRM_RE='Reminder sent to .+ \(.+@.+\)\.'
+TT_REMIND_CONFIRM_TEXT=""
+tt_hr_remind_confirm() {
+  local d i t
+  d="$(_tt_dialog_js)"
+  TT_REMIND_CONFIRM_TEXT=""
+  for i in $(seq 1 30); do
+    t="$(playwright-cli eval "() => { const d=$d; if(!d) return ''; return (d.innerText||'').replace(/\\s+/g,' ').trim(); }" 2>/dev/null | _tt_eval_str)"
+    [ -n "$t" ] && break
+    sleep 1
+  done
+  TT_REMIND_CONFIRM_TEXT="$t"
+  if [ -z "$t" ]; then
+    echo "  [remind] TT-768: no confirmation dialog within 30 s of the Remind click - expected 'Reminder sent to {name} ({email}).'" >&2
+    return 2
+  fi
+  # OK on a match; on anything else take the dialog's own way out (OK or Close)
+  # so the session is not left behind a modal, and report what it said.
+  playwright-cli eval "() => { const d=$d; if(!d) return 'none'; const b=[...d.querySelectorAll('button')].filter(x=>x.offsetParent!==null).find(x=>/^(ok|close)\$/i.test((x.innerText||'').trim())); if(b){ b.click(); return 'clicked'; } return 'nobutton'; }" >/dev/null 2>&1
+  for i in $(seq 1 10); do
+    [ "$(playwright-cli eval "() => String(!$d)" 2>/dev/null | _tt_eval_str)" = "true" ] && break
+    sleep 1
+  done
+  if ! printf '%s' "$t" | grep -Eq "$TT_REMIND_CONFIRM_RE"; then
+    echo "  [remind] TT-768: the Remind raised a dialog that is not the confirmation: '$t'" >&2
+    return 2
+  fi
+  if [ "$(playwright-cli eval "() => String(!$d)" 2>/dev/null | _tt_eval_str)" != "true" ]; then
+    echo "  [remind] TT-768: confirmation read '$t' but it was still up after OK" >&2
+    return 2
+  fi
+  echo "  [remind] confirmed and dismissed: $t" >&2
+  return 0
+}
+
 # tt_hr_remind_e2e_entry <consultantName> [projectName]
+#
+# Returns 0 (week label on STDOUT) once the Remind was clicked AND its TT-768
+# confirmation was read and dismissed; 1 when no remindable card matched; 2 when
+# the card was reminded but the confirmation did not come (see tt_hr_remind_confirm
+# — the week label is still printed).
 #
 # Clicks Remind on a pending card for <consultantName>, walking the week list until
 # one matches. Pass <projectName> to require the card to be for that project too.
@@ -109,7 +172,10 @@ tt_hr_remind_e2e_entry() {
     for i in $(seq 1 8); do
       if playwright-cli eval "() => { const rs=[...document.querySelectorAll('$TT_HR_BTN_REMIND')]; const proj='$proj'; for(const r of rs){ let el=r; for(let i=0;i<9;i++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('$TT_HR_BTN_REMIND').length!==1) break; const t=el.innerText||''; if(t.indexOf('$who')>=0 && (proj==='' || t.indexOf(proj)>=0)){ r.click(); return 'true'; } } } return 'false'; }" 2>/dev/null | sed -n '2p' | grep -qiw true; then
         echo "$lbl"
-        return 0
+        # TT-768: the Remind ends in a BLOCKING "Reminder sent to …" message. Clear
+        # it here, so the caller's next click is not swallowed by the modal underlay.
+        tt_hr_remind_confirm
+        return $?
       fi
       sleep 1
     done
@@ -283,7 +349,12 @@ tt_customer_link() {
     tt_login "e2e_hr" "$TT_HR_READY"
     tt_hr_click_tab "Client approval"
     sleep 2
-    if ! TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")"; then
+    local _rc=0
+    TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")" || _rc=$?
+    # 2 = reminded, but no TT-768 confirmation: the mail may not have gone, so do
+    # not go and submit another week on top of it - say what happened.
+    [ "$_rc" -eq 2 ] && tt_fail "Remind on '$who' / '$proj' (week '$TT_CL_WEEK') did not end in TT-768's 'Reminder sent to {name} ({email}).' message - see the [remind] line above"
+    if [ "$_rc" -ne 0 ]; then
       [ -z "$want" ] || tt_fail "no live link lists week '$want' for '$who' / '$proj', and HR has nothing to remind for it"
       echo "  [customer-link] HR has nothing to remind - submitting one as the consultant" >&2
       tt_login "e2e_consultant" "My Timesheets"
@@ -291,7 +362,10 @@ tt_customer_link() {
       tt_login "e2e_hr" "$TT_HR_READY"
       tt_hr_click_tab "Client approval"
       sleep 2
-      TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")"         || tt_fail "still no pending '$who' entry on '$proj' after creating one"
+      _rc=0
+      TT_CL_WEEK="$(tt_hr_remind_e2e_entry "$who" "$proj")" || _rc=$?
+      [ "$_rc" -eq 2 ] && tt_fail "Remind on '$who' / '$proj' (week '$TT_CL_WEEK') did not end in TT-768's 'Reminder sent to {name} ({email}).' message - see the [remind] line above"
+      [ "$_rc" -eq 0 ] || tt_fail "still no pending '$who' entry on '$proj' after creating one"
     fi
     TT_CL_WEEK="$(tt_week_key "$TT_CL_WEEK")"
     # A caller that named its week gets that week: the link lists everything the

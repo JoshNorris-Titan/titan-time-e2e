@@ -24,7 +24,10 @@
 #   B. after a remind, the card for that entry is GATED - btnClientRemindBlocked
 #      is present where btnClientRemind was;
 #   C. the gate is specific, not global: the number of gated cards did not jump to
-#      every card on the tab for an unrelated reason.
+#      every card on the tab for an unrelated reason;
+#   D. (only when this spec does the reminding) TT-768: the Remind ends in the
+#      blocking "Reminder sent to {name} ({email})." message, which is read and
+#      dismissed (tt_hr_remind_confirm) before the tab is clicked again.
 #
 # IF IT IS ALREADY GATED WHEN THIS STARTS that is not a failure. An earlier spec in
 # the same run reminding the same approver is exactly the documented behaviour, and
@@ -67,11 +70,13 @@ if [ "${OPEN_BEFORE:-0}" -eq 0 ]; then
   note "A: every card is ALREADY gated - an earlier spec in this run reminded this approver, which lib/_login_core.sh documents. Asserting the gate holds."
 else
   note "A ok: $OPEN_BEFORE card(s) can still be reminded"
-  if WEEK="$(tt_hr_remind_e2e_entry "$CONSULTANT" "$PROJECT")"; then
-    note "reminded '$CONSULTANT' / '$PROJECT' for week $WEEK"
-  else
-    note "note: no remindable card matched '$CONSULTANT' / '$PROJECT'; asserting on whatever the tab shows"
-  fi
+  RC=0
+  WEEK="$(tt_hr_remind_e2e_entry "$CONSULTANT" "$PROJECT")" || RC=$?
+  case "$RC" in
+    0) note "reminded '$CONSULTANT' / '$PROJECT' for week $WEEK; D ok: TT-768's 'Reminder sent to {name} ({email}).' message showed and was dismissed" ;;
+    2) bad "D: the Remind for '$CONSULTANT' / '$PROJECT' week $WEEK did not end in TT-768's 'Reminder sent to {name} ({email}).' message (see the [remind] line above)" ;;
+    *) note "note: no remindable card matched '$CONSULTANT' / '$PROJECT'; asserting on whatever the tab shows" ;;
+  esac
   sleep 3
   tt_hr_click_tab "Client approval"
   sleep 3
