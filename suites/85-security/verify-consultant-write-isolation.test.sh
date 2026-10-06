@@ -4,7 +4,7 @@
 # Status, not the hours of a week they already submitted, not their week's Status,
 # and they may not create entries from the browser.
 #
-# tt-timeout: 12m
+# tt-timeout: 8m
 #
 # RED UNTIL THE CONSULTANT ACCESS FIX DEPLOYS (2026-10-06). Today Main.AssignmentEntry
 # rule 1 lists Consultant with no XPath and Status/Monday ReadWrite, and create
