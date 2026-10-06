@@ -49,8 +49,6 @@ PROJECT="E2E Customer Approval"
 APPROVER="$FX_APPROVER_EMAIL"   # the fixture sets this as $PROJECT's approver
 NOTE="E2E client rejection $(date +%H%M%S)"
 
-tt_mail_prepare
-
 # --------------------------------------- 0. baseline, as the consultant who owns it
 # Counting is safe here only because it is scoped to one e2e consultant's own
 # rejected list — never assert on a count you do not own.
@@ -59,57 +57,24 @@ BEFORE="$(tt_rejected_count)"
 case "$BEFORE" in ''|*[!0-9]*) tt_fail "could not read the consultant's rejected-entry count (got '$BEFORE')" ;; esac
 echo "rejected entries before: $BEFORE"
 
-# --------------------------------------------------------- 1. get a pending entry
-tt_login "e2e_hr" "$TT_HR_READY"
-tt_hr_click_tab "Client approval"
-sleep 2
-
-TS=$(date +%s%3N)
-if WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT"); then
-  echo "reminded existing pending entry (week: $WEEK)"
-else
-  echo "no pending '$CONSULTANT_NAME' entry — creating one via the consultant"
-  tt_login "$CONSULTANT_USER" "My Timesheets"
-  # Must be an entry on THIS project: a generic submit can land on any assignment,
-  # and only $PROJECT produces a token for $CUSTOMER.
-  tt_consultant_submit_project_row "$PROJECT"
-  # ORDER IS LOAD-BEARING. Submitting may itself have sent mail, so the high-water
-  # mark has to be reset — but tt_mail_prepare reads the Emails Sent page, which is
-  # Administrator-only, so it LOGS IN AS THE ADMINISTRATOR and leaves the browser
-  # there. Doing that after opening the HR dashboard navigates away from it, and the
-  # remind below then hunts for the week picker on the admin's page and reports "no
-  # pending entry" — with every HR widget reading ABSENT — for a queue it never
-  # looked at. Reset the inbox FIRST, open the HR dashboard LAST. The primary path
-  # above already has this order.
-  tt_mail_prepare
-  TS=$(date +%s%3N)
-  tt_login "e2e_hr" "$TT_HR_READY"
-  tt_hr_click_tab "Client approval"
-  sleep 2
-  WEEK=$(tt_hr_remind_e2e_entry "$CONSULTANT_NAME" "$PROJECT") \
-    || tt_fail "still no pending '$CONSULTANT_NAME' entry after creating one"
-  echo "reminded newly-created entry (week: $WEEK)"
-fi
+# ------------------------------------ 1-2. a pending entry, and a live link to it
+# tt_customer_link (lib/_login_tokens.sh) reuses an approval email already in Emails
+# Sent when its link lists a pending '$PROJECT' entry for the consultant, submits one
+# week as the consultant when nothing is pending, and presses HR's Remind only when
+# no email in the mailbox can serve. Remind is allowed once per entry per day, so
+# depending on it sent every spec after the day's first down a fresh-submit plus
+# mail-queue path that ran 300-450 s and timed out. The link still comes from a real
+# approval email to $APPROVER, and everything below asserts on what it opens.
+tt_customer_link "$CONSULTANT_NAME" "$PROJECT" "$APPROVER"   || tt_fail "no pending '$CONSULTANT_NAME' entry on '$PROJECT' with a live approval link, even after submitting one"
+LINK="$TT_CL_LINK"
+WEEK="$TT_CL_WEEK"          # a tt_week_key, e.g. "Sep 27 - Oct 03"
+WEEKFRAG="$TT_CL_WEEKFRAG"  # its leading "Mon DD", which every rendering of the week contains
 [ -n "$WEEK" ] || tt_fail "could not determine the week under test"
-
-# ------------------------------------------------------------- 2. the token link
-# The recipient is named, not guessed: tt_mail_token with no recipient takes the
-# first approval link in ANY fresh mail, and on 2026-09-28 that was another
-# approver's (Manual TT744's) - see the Remind note in lib/_login_tokens.sh.
-LINK=$(tt_mail_token "$TS" customer-approval "$APPROVER") || tt_fail "token email not received within timeout"
+[ -n "$WEEKFRAG" ] || tt_fail "could not read a leading 'Mon DD' out of the week '$WEEK'"
 case "$LINK" in
   *"/p/customer-approval/"*) ;;
-  *) tt_fail "email link is not a customer-approval link: $LINK" ;;
+  *) tt_fail "the approval email's link is not a customer-approval link: $LINK" ;;
 esac
-
-# The HR tab and the anonymous token page do not render a week the same way: HR gave
-# "Sep 27 - Oct 03, 2026" while the token page lists the same entry under a different
-# form, so an exact match found nothing and the step failed claiming the entry was
-# absent. Match on the leading "Mon DD" instead, which every rendering of that week
-# contains. The token page is already scoped to one customer, so the fragment is not
-# doing the identifying on its own.
-WEEKFRAG="$(printf '%s' "$WEEK" | grep -oE '^[A-Za-z]{3} [0-9]{1,2}' || true)"
-[ -n "$WEEKFRAG" ] || WEEKFRAG="$WEEK"
 echo "matching the token page on '$WEEKFRAG'"
 
 # ------------------------------------------------ 3. anonymous: open the entry

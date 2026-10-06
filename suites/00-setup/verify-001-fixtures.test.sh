@@ -27,6 +27,15 @@
 # well under 20m, and a step that creeps toward it is failing repeatedly and
 # recovering, not working harder.
 #
+# 2026-09-29: it had crept to 1021s on dev (698s in CI) with nothing retrying -
+# the cost was per object, ~50-65 playwright-cli calls each at ~2.5s of node
+# startup, plus fixed sleeps. lib/_fixtures.sh now checks existence and reads
+# every save back through ONE data-layer retrieve instead of UI searches and the
+# consultant popup, and fills each form in ONE `playwright-cli run-code` that
+# waits for each field to be enabled and reads every field back before Save.
+# Every [fixtures] line now carries +<seconds> since the step began, so the next
+# time it creeps the log says where. Timings: see the PR that made this change.
+#
 # Sorts immediately after verify-000-testdata-clear-before, so the order is:
 # clear everything -> rebuild structure -> seed transactional rows -> run the
 # tests. Nothing else in the suite ever creates the structure, so if this step is

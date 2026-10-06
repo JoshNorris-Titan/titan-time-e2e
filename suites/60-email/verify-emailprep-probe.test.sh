@@ -30,9 +30,9 @@ admin_login() {
     sleep 6
   done
   [ -n "$seen" ] || tt_fail "no Sign In form after 5 logout attempts"
-  playwright-cli fill "input.form-control[type=text]" "$ADMIN_U" >/dev/null 2>&1
+  playwright-cli fill "$TT_LOGIN_USER_SEL" "$ADMIN_U" >/dev/null 2>&1
   playwright-cli fill "input.form-control[type=password]" "$ADMIN_P" >/dev/null 2>&1
-  playwright-cli click ".mx-name-actionButton1" >/dev/null 2>&1
+  playwright-cli click "$TT_LOGIN_SUBMIT_SEL" >/dev/null 2>&1
   for i in $(seq 1 30); do
     if playwright-cli eval "() => String(/Admin Hub/i.test(document.body.innerText))" 2>/dev/null \
          | sed -n '2p' | grep -qi true; then ok=1; break; fi

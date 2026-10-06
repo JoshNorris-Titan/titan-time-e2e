@@ -131,7 +131,7 @@ fp_open
 # fill does not commit a Mendix input - only blur does - so use the committing
 # helper. Without it the microflow reads an empty Username and this test would
 # silently re-run case 2.
-tt_fill_commit "input.form-control[type=text]" "$UNKNOWN"
+tt_fill_commit "$TT_LOGIN_USER_SEL" "$UNKNOWN"
 
 fp_click_forgot
 

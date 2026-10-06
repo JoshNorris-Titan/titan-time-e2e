@@ -27,6 +27,16 @@
 #   D. neither btnSubmit nor btnClear is offered - there is nothing to submit, and
 #      offering it is how a consultant submits an empty week by accident.
 #
+# RED UNTIL MODEL FIX (2026-09-29). D fails on dev, and it is the app that is
+# wrong, not this assertion. btnSubmit and btnClear are shown on the week's
+# Timesheet.Status alone (Draft / Rejected / empty), with no regard for whether
+# the consultant has anything on the grid. Proven on dev as E2E Consultant Three
+# (no assignments): Submit opens "Submit timesheet? ... 0.00 hours - No projects",
+# Submit on that lands on the "Timesheet submitted" receipt promising "an email as
+# each project is signed off" - there are no projects - and the week is left
+# Awaiting_Approval for good, since no entry exists for anyone to approve. Keep D
+# as it is; it goes green when the model hides the week actions on an empty grid.
+#
 # Consumes: reads only.
 # Env: TT_BASE_URL, TT_ROLE_PASS
 set -uo pipefail
