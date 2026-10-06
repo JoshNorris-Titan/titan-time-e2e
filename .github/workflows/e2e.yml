@@ -19,6 +19,11 @@ name: E2E
 # The minute is :17, not :00, because the top of the hour is when GitHub's
 # scheduler is most loaded and drops or delays the most runs (GitHub's own advice).
 #
+# The gate also skips TONIGHT'S cron when GitHub delivers it more than 4 h after
+# its due instant (MAX_LATE_MIN), because by then the run's clear and teardown would
+# wipe dev's e2e data in the middle of the working day. Manual dispatches are never
+# skipped. See the comment at that check.
+#
 # A skipped run still ends green - the skip is not a failure - so the gate writes
 # a job summary line and a notice saying SKIPPED on every skip. Read the summary,
 # not the colour: a green run whose `e2e` job is "skipped" tested nothing.
@@ -68,6 +73,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           SCHEDULE: ${{ github.event.schedule }}
+          # A scheduled run delivered later than this after its due instant is
+          # skipped - see the comment at the check below.
+          MAX_LATE_MIN: "240"
         run: |
           # If tzdata were missing, TZ would be ignored and `date` would hand back
           # UTC hours - which never equal 02, so the nightly would skip every
@@ -118,6 +126,27 @@ jobs:
           # happens across that jump. On fall-back Sunday 07:17 UTC is already
           # 01:17 CST and 08:17 UTC is 02:17 CST: still exactly one.
           if [ "$hour" = "02" ] || { [ "$hour" = "03" ] && [ "$prev" = "01" ]; }; then
+            # TONIGHT'S NIGHTLY, BUT IS IT STILL NIGHT? A nightly exists to run while
+            # nobody is using dev: its 00-setup clear and 99-teardown DELETE every e2e
+            # consultant's timesheets, assignments and projects. Delivered late, it
+            # lands in the working day instead. From 2026-09-25 every cron arrived
+            # 5-9 h late (07:30-11:07 CT), and on 2026-10-06 one delivered 416 min
+            # late wiped dev under a session that was testing against it.
+            #
+            # MAX_LATE_MIN is 240: due 02:17 CT plus 4 h is 06:17 CT, and a typical
+            # ~90-minute run started then is finished before ~08:00. Any later and
+            # it is still clearing and re-seeding dev when people start work; any
+            # earlier and ordinary scheduler jitter (tens of minutes) would start
+            # costing nightlies. Lateness is measured from the cron's DUE instant,
+            # like the DST verdict above, so the two checks agree on what "late" is.
+            if [ "$late" -gt "$MAX_LATE_MIN" ]; then
+              start_ct=$(TZ=America/Chicago date -d "@$now" '+%H:%M %Z')
+              echo "Tonight's nightly, but delivered ${late} min late (limit ${MAX_LATE_MIN}): it would start at $start_ct, inside the working day. Skipping."
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=Nightly skipped (delivered late)::cron '$SCHEDULE' was due at $due_ct but GitHub delivered it ${late} min late ($start_ct). Over the ${MAX_LATE_MIN}-min limit, so it was not run: its clear and teardown would wipe dev's e2e data during the working day. No tests ran in this run."
+              echo "**SKIPPED - no tests ran.** Tonight's nightly (cron \`$SCHEDULE\`, due $due_ct) was delivered ${late} min late, at $start_ct - over the ${MAX_LATE_MIN}-min limit, so it would have cleared and re-seeded dev during the working day. Dispatch the workflow by hand to run it now. This run's green is not a test result." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             echo "This is the 2am CT nightly."
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Ran: the 2am CT nightly (cron \`$SCHEDULE\`, due $due_ct, delivered ${late} min late)." >> "$GITHUB_STEP_SUMMARY"

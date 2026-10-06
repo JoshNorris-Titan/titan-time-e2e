@@ -308,10 +308,16 @@ fi
 command -v playwright-cli >/dev/null 2>&1 || {
   echo "FATAL: playwright-cli not found — run 'npm ci' in $HERE" >&2; exit 2; }
 
-cleanup() { playwright-cli close >/dev/null 2>&1 || true; }
+cleanup() {
+  playwright-cli close >/dev/null 2>&1 || true
+  rm -f "${STEP_OUT:-}" "${STEP_TIMED_OUT:-}"
+}
 on_signal() {
   echo >&2
   echo "interrupted — closing the shared browser session and stopping." >&2
+  # A step still running would otherwise be orphaned, and keep writing to the
+  # target environment after the run has reported itself stopped.
+  [ -n "${STEP_PID:-}" ] && kill_step_tree "$STEP_PID"
   cleanup
   trap - EXIT
   exit 130
@@ -384,12 +390,104 @@ check_timeout_directive() {
   echo "      so it is being run at $(script_timeout "$1") instead. Move it above the first line of code." >&2
 }
 
-run_one() {   # run_one <script> ; echoes output, returns exit code
-  if [ -n "$TIMEOUT_BIN" ]; then
-    $TIMEOUT_BIN "$(script_timeout "$1")" bash "$1" 2>&1
-  else
-    bash "$1" 2>&1
+# --- running one step, and really stopping it ------------------------------
+#
+# A STEP'S BUDGET IS WALL-CLOCK, AND WHEN IT IS SPENT THE WHOLE STEP DIES.
+#
+# This used to be `out="$(timeout <budget> bash <script> 2>&1)"`, which has three
+# ways to outlive its budget, and on 2026-10-06 one of them let a step with an 8m
+# budget run for 26125 s (7h15m) and then report an ordinary FAIL (exit 1, not 124
+# -- so coreutils `timeout` never fired at all):
+#
+#   1. coreutils `timeout` arms a relative timer, and on Windows a sleeping or
+#      Modern-Standby machine does not advance it. The kernel-power log shows that
+#      run's laptop entering standby at 01:16 and resuming at 08:26; the step's own
+#      `date`-based 240 s mail window expired across the gap and the step ended at
+#      08:29 with a verdict about a mailbox nobody had been watching. Fixed by a
+#      watchdog that compares `date +%s` -- real time, which keeps moving through
+#      a sleep -- and kills the step the first time it looks after the deadline.
+#   2. `timeout` sends ONE SIGTERM. A step (or a child) that traps or ignores it --
+#      several specs `trap ... EXIT INT TERM` to restore state -- can run on for
+#      ever. Fixed by `--kill-after`, and by the watchdog's own SIGKILL.
+#   3. `$( ... )` waits for EOF on its pipe, not for the process it started. Any
+#      grandchild still holding stdout -- a backgrounded helper, a node process
+#      that outlived the bash that spawned it -- keeps the runner blocked after the
+#      step itself is dead. Fixed by writing the step's output to a file and
+#      `wait`ing on the step's pid instead.
+#
+# The kill goes to the step's PROCESS GROUP (coreutils `timeout` makes itself a
+# group leader unless --foreground), so playwright-cli calls the step made die with
+# it. Under Git Bash the node.exe behind playwright-cli is a native Windows process
+# that POSIX signals reach only indirectly, so `taskkill /T` takes the Windows
+# process tree as well. The shared browser session's own daemon was started by THIS
+# runner, outside any step's group, and is never touched.
+KILL_GRACE=30          # seconds between SIGTERM and SIGKILL
+WATCHDOG_POLL=5        # seconds; how late after the deadline the watchdog may notice
+STEP_PID=""            # the running step's pid, so on_signal can take it down too
+STEP_OUT="$(mktemp)"
+STEP_TIMED_OUT="$(mktemp -u)"
+
+# to_seconds <4m|90s|1h|90> — a budget in the `timeout` syntax, as seconds.
+to_seconds() {
+  case "$1" in
+    *h) echo $(( ${1%h} * 3600 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;;
+    *s) echo "${1%s}" ;;
+    *)  echo "$1" ;;
+  esac
+}
+
+# kill_step_tree <pid> — end a step and everything it started.
+kill_step_tree() {
+  local pid="$1" wp=""
+  [ -r "/proc/$pid/winpid" ] && wp="$(cat "/proc/$pid/winpid" 2>/dev/null)"
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  # Guarded hard: taskkill /T on a bad pid (0, 4) walks the whole system tree.
+  if [ "${wp:-0}" -gt 4 ] 2>/dev/null && command -v taskkill >/dev/null 2>&1; then
+    taskkill //F //T //PID "$wp" >/dev/null 2>&1
   fi
+  sleep 2
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
+  return 0
+}
+
+# run_one <script> — run one step under its budget. Output lands in $STEP_OUT;
+# returns the step's exit code, or 124 when the budget ran out.
+run_one() {
+  local budget secs deadline watchdog rc
+  budget="$(script_timeout "$1")"
+  secs="$(to_seconds "$budget")"
+  rm -f "$STEP_TIMED_OUT"
+  : > "$STEP_OUT"
+
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" --kill-after="${KILL_GRACE}s" "$budget" bash "$1" >"$STEP_OUT" 2>&1 &
+  else
+    bash "$1" >"$STEP_OUT" 2>&1 &
+  fi
+  STEP_PID=$!
+
+  # The watchdog fires a few seconds after `timeout` would, so on a machine that
+  # stayed awake `timeout`'s orderly TERM-then-KILL always gets there first.
+  deadline=$(( $(date +%s) + secs + 5 ))
+  (
+    while [ "$(date +%s)" -lt "$deadline" ]; do sleep "$WATCHDOG_POLL"; done
+    : > "$STEP_TIMED_OUT"
+    kill_step_tree "$STEP_PID"
+  ) </dev/null >/dev/null 2>&1 &
+  watchdog=$!
+
+  wait "$STEP_PID"; rc=$?
+  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
+  STEP_PID=""
+
+  # 124: `timeout` fired. 137 from `timeout` itself: it had to escalate to KILL.
+  # The marker: the wall-clock watchdog fired.
+  if [ -e "$STEP_TIMED_OUT" ] || { [ -n "$TIMEOUT_BIN" ] && [ "$rc" -eq 137 ]; }; then
+    rc=124
+  fi
+  rm -f "$STEP_TIMED_OUT"
+  return "$rc"
 }
 
 # --- run -------------------------------------------------------------------
@@ -477,7 +575,8 @@ for script in "${SCRIPTS[@]}"; do
   export TT_PW_SPEC="$name"
 
   t0=$(date +%s)
-  out="$(run_one "$script")"; rc=$?
+  run_one "$script"; rc=$?
+  out="$(cat "$STEP_OUT")"
   t1=$(date +%s); dur=$((t1-t0))
 
   if [ "$rc" -eq 0 ]; then
