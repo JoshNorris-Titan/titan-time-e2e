@@ -573,7 +573,7 @@ fx_await_saved() {
   FX_AWAITED=""
   for i in 1 2 3 4 5 6; do
     tt_clear_dialogs 4 >/dev/null 2>&1
-    snap="$(fx_config_snapshot)"
+    snap="$(fx_config_snapshot "$prefix")"
     line="$(fx_snap_line "$snap" "$prefix")"
     if [ "$(fx_snap_state "$line")" = "present" ]; then
       FX_AWAITED="$line"
@@ -937,8 +937,17 @@ fx_ensure_assignments() {
 #   PROJECT|<name>|<mgr>|<cust>|<lineItems>|<archived>|<managerName>|<customerName>
 #   ASSIGN|<consultant>|<project>|<start>|<end>|<archived>|<weeklyHours>
 # or <...>|ABSENT, or <...>|ERROR|<message> when the retrieve itself failed.
+#
+# Extra arguments, each "PROJECT|<name>" or "ASSIGN|<consultant>|<project>", add
+# rows that are NOT in the declared tables. fx_await_saved passes the row it is
+# waiting for: a spec that builds its own throwaway project (fx_create_project
+# "E2E TT780 Zero <epoch>" ...) is not in FX_PROJECTS, so a snapshot of the
+# declared rows alone never contained it, and every such save was reported as
+# "saved project ... but it cannot be read back - the save was rejected" while the
+# project sat committed on dev (cleanup found and archived it). That arrived with
+# the snapshot-based read-back in #140 and broke every ad-hoc caller.
 fx_config_snapshot() {
-  local row name mgr cust li email consultant project hours names_js="" pairs_js=""
+  local row name mgr cust li email consultant project hours extra names_js="" pairs_js=""
 
   for row in "${FX_PROJECTS[@]}"; do
     IFS='|' read -r name mgr cust li email <<< "$row"
@@ -947,6 +956,14 @@ fx_config_snapshot() {
   for row in "${FX_ASSIGNMENTS[@]}"; do
     IFS='|' read -r consultant project hours <<< "$row"
     pairs_js="$pairs_js['$consultant','$project'],"
+  done
+  for extra in "$@"; do
+    case "$extra" in
+      PROJECT\|*) names_js="$names_js'${extra#PROJECT|}'," ;;
+      ASSIGN\|*\|*)
+        IFS='|' read -r _ consultant project <<< "$extra"
+        pairs_js="$pairs_js['$consultant','$project']," ;;
+    esac
   done
 
   playwright-cli eval "() => { const P=[${names_js}]; const A=[${pairs_js}]; const d=v=>v?new Date(v).toISOString().slice(0,10):''; const proj=n=>new Promise(r=>mx.data.get({xpath:\"//Main.Project[Name='\"+n+\"']\",filter:{amount:1},callback:o=>r(o.length?['PROJECT',n,o[0].get('ApprovalFromManager'),o[0].get('ApprovalFromCustomer'),o[0].get('NeedsLineItems'),o[0].get('Archived'),o[0].get('ManagerName')||'',o[0].get('CustomerName')||'',o[0].get('ContactEmail')||''].join('|'):['PROJECT',n,'ABSENT'].join('|')),error:e=>r(['PROJECT',n,'ERROR',e.message].join('|'))})); const asg=q=>new Promise(r=>mx.data.get({xpath:\"//Main.Assignment[ConsultantName='\"+q[0]+\"'][Main.Assignment_Project/Main.Project/Name='\"+q[1]+\"']\",filter:{amount:5},callback:o=>r(o.length?['ASSIGN',q[0],q[1],d(o[0].get('StartDate')),d(o[0].get('EndDate')),o[0].get('Archived'),o[0].get('WeeklyHours')].join('|'):['ASSIGN',q[0],q[1],'ABSENT'].join('|')),error:e=>r(['ASSIGN',q[0],q[1],'ERROR',e.message].join('|'))})); return Promise.all([...P.map(proj),...A.map(asg)]).then(x=>x.join('\n')); }" 2>/dev/null | _tt_eval_str
