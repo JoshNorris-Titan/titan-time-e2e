@@ -932,6 +932,16 @@ data on the target environment.
 > is watching, and nothing in GitHub *gates* on it — there is no `pull_request` trigger and no
 > branch protection, so a red nightly blocks nothing and only stops mattering when someone looks.
 
+> [!NOTE]
+> **When the nightly runs.** The cron is *due* at **20:17 Chicago time** the evening before, not at
+> 2am. That is deliberate: since 2026-09-25 GitHub has started every scheduled run 4.5-9 hours late
+> (271-532 min over 24 runs, median 392), so a 20:17 cron typically *starts* around **02:00-03:30**
+> and finishes before 07:00. A run GitHub delivers more than 10 hours late — one that would start
+> after 06:17 and still be wiping test data when people start work — is skipped, with a yellow
+> warning and a **SKIPPED** line in the run summary. Run the workflow by hand to test on demand; a
+> manual run is never skipped. If GitHub goes back to starting runs on time, the nightly will run at
+> about 20:17 — move the cron back toward 02:17 then.
+
 ---
 
 ## 6. Known traps

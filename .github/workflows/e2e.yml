@@ -1,28 +1,42 @@
 name: E2E
 
-# Runs nightly at ~02:00 America/Chicago, and on demand.
+# Runs nightly, and on demand. The cron is DUE at 20:17 America/Chicago, but
+# GitHub has been delivering it hours late, so it actually STARTS overnight -
+# typically 02:00-03:30 CT. Read "WHY 20:17" below before moving it.
 #
-# GitHub cron is UTC-only and knows nothing about DST, so "2am Central" takes two
-# entries - 07:17 UTC is 02:17 CDT, 08:17 UTC is 02:17 CST - and the `gate` job
-# below lets exactly one of them through each night.
+# GitHub cron is UTC-only and knows nothing about DST, so "20:17 Central" takes
+# two entries - 01:17 UTC is 20:17 CDT, 02:17 UTC is 20:17 CST (both the evening
+# of the PREVIOUS Chicago day) - and the `gate` job below lets exactly one of them
+# through each night.
 #
 # The gate decides from WHICH cron fired (github.event.schedule) and what the
 # Chicago clock read at that cron's SCHEDULED instant - never from the wall clock
 # when the job happens to start. GitHub delivers scheduled runs late, sometimes by
-# hours: from 2026-09-25 every cron landed between 12:04 and 16:07 UTC (07:00-11:00
-# CT), the old wall-clock test ("is it 02:00 in Chicago now?") said no to both, and
-# every nightly skipped itself while showing green. Anchoring on the scheduled
-# instant makes the verdict independent of the delay: the 07:17 cron is the nightly
-# exactly when Chicago is on CDT, the 08:17 one exactly when it is on CST, so one
-# runs and one skips on every night of the year, however late either arrives.
+# hours, so a wall-clock test ("is it 20:xx in Chicago now?") would say no to both
+# and skip every nightly while showing green - which is exactly what happened from
+# 2026-09-25 with the old 02:00 wall-clock test. Anchoring on the scheduled instant
+# makes the verdict independent of the delay: the 01:17 UTC cron is the nightly
+# exactly when Chicago is on CDT, the 02:17 UTC one exactly when it is on CST, so
+# one runs and one skips on every night of the year, however late either arrives.
+#
+# WHY 20:17 (moved from 02:17 on 2026-10-06). Until 2026-09-24 GitHub delivered
+# the crons 0-15 min late. From 2026-09-25 it delivered every one of them
+# 271-532 min late (24 runs through 2026-10-06: median 392, middle half 336-430),
+# so a 02:17 CT cron started at 06:48-11:09 CT - in the working day, where the
+# lateness check below skipped nearly all of them. Due at 20:17 CT, the same delays
+# start the run at 00:48-05:09 CT (median 02:49), and a ~90-130 min run is done
+# before ~07:00. If GitHub goes back to delivering on time, the run starts at
+# 20:17 CT instead: still outside the working day, but move the cron back toward
+# 02:17 then. The delays were measured for crons due at 07-08 UTC; the lateness
+# check is what protects dev if crons due at 01-02 UTC are delayed differently.
 #
 # The minute is :17, not :00, because the top of the hour is when GitHub's
 # scheduler is most loaded and drops or delays the most runs (GitHub's own advice).
 #
-# The gate also skips TONIGHT'S cron when GitHub delivers it more than 4 h after
-# its due instant (MAX_LATE_MIN), because by then the run's clear and teardown would
-# wipe dev's e2e data in the middle of the working day. Manual dispatches are never
-# skipped. See the comment at that check.
+# The gate also skips TONIGHT'S cron when GitHub delivers it more than 10 h after
+# its due instant (MAX_LATE_MIN), i.e. later than 06:17 CT, because by then the
+# run's clear and teardown would wipe dev's e2e data in the middle of the working
+# day. Manual dispatches are never skipped. See the comment at that check.
 #
 # A skipped run still ends green - the skip is not a failure - so the gate writes
 # a job summary line and a notice saying SKIPPED on every skip. Read the summary,
@@ -50,8 +64,8 @@ on:
         type: boolean
   schedule:
     # The gate parses these two strings; keep the minute and hour fields literal.
-    - cron: "17 7 * * *"   # 02:17 CDT (roughly Mar-Nov)
-    - cron: "17 8 * * *"   # 02:17 CST (roughly Nov-Mar)
+    - cron: "17 1 * * *"   # 20:17 CDT the evening before (roughly Mar-Nov)
+    - cron: "17 2 * * *"   # 20:17 CST the evening before (roughly Nov-Mar)
 
 concurrency:
   # One run at a time: the suite mutates shared test data on the target environment.
@@ -75,15 +89,16 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
           # A scheduled run delivered later than this after its due instant is
           # skipped - see the comment at the check below.
-          MAX_LATE_MIN: "240"
+          MAX_LATE_MIN: "600"
         run: |
           # If tzdata were missing, TZ would be ignored and `date` would hand back
-          # UTC hours - which never equal 02, so the nightly would skip every
-          # night and never go red. Fail loudly instead of disappearing quietly.
+          # UTC hours - which never equal 20 for these crons, so the nightly would
+          # skip every night and never go red. Fail loudly instead of disappearing
+          # quietly.
           zone=$(TZ=America/Chicago date +%Z)
           case "$zone" in
             CST|CDT) ;;
-            *) echo "::error::America/Chicago is unavailable on this runner (date reported '$zone'). Cannot tell whether it is 2am CT."; exit 1 ;;
+            *) echo "::error::America/Chicago is unavailable on this runner (date reported '$zone'). Cannot tell which cron is tonight's."; exit 1 ;;
           esac
 
           # Resolved on every trigger, not just the cron, so a manual run also
@@ -98,7 +113,7 @@ jobs:
           fi
 
           # WHICH cron fired. github.event.schedule is the cron string exactly as
-          # written under `schedule:` above, e.g. "17 7 * * *".
+          # written under `schedule:` above, e.g. "17 1 * * *".
           read -r cmin chour _ <<< "$SCHEDULE"
           case "$cmin$chour" in
             ''|*[!0-9]*) echo "::error::Cannot parse the cron that fired ('$SCHEDULE')."; exit 1 ;;
@@ -115,30 +130,30 @@ jobs:
           # What Chicago's clock read AT THE DUE INSTANT, not now. That is what
           # makes the verdict independent of the delay.
           hour=$(TZ=America/Chicago date -d "@$due" +%H)
-          prev=$(TZ=America/Chicago date -d "@$(( due - 3600 ))" +%H)
           due_ct=$(TZ=America/Chicago date -d "@$due" '+%F %H:%M %Z')
           echo "Cron '$SCHEDULE' was due at $(date -u -d "@$due" '+%F %H:%M') UTC = $due_ct; delivered ${late} min late."
 
-          # Normally exactly one of the two crons reads 02 in Chicago. On
-          # spring-forward Sunday neither does - the clock goes 01:59 CST straight
-          # to 03:00 CDT, so 07:17 UTC reads 01:17 CST and 08:17 UTC reads 03:17
-          # CDT - so also accept 03 when the hour before it read 01, which only
-          # happens across that jump. On fall-back Sunday 07:17 UTC is already
-          # 01:17 CST and 08:17 UTC is 02:17 CST: still exactly one.
-          if [ "$hour" = "02" ] || { [ "$hour" = "03" ] && [ "$prev" = "01" ]; }; then
+          # Exactly one of the two crons reads 20 in Chicago, every day of the
+          # year: 01:17 UTC is 20:17 CDT or 19:17 CST, 02:17 UTC is 21:17 CDT or
+          # 20:17 CST. The DST switches happen at 02:00 local (07:00-08:00 UTC),
+          # nowhere near either due instant, so neither transition Sunday needs a
+          # special case - the 02:17 schedule needed one for spring-forward, when
+          # neither of its crons read 02.
+          if [ "$hour" = "20" ]; then
             # TONIGHT'S NIGHTLY, BUT IS IT STILL NIGHT? A nightly exists to run while
             # nobody is using dev: its 00-setup clear and 99-teardown DELETE every e2e
-            # consultant's timesheets, assignments and projects. Delivered late, it
-            # lands in the working day instead. From 2026-09-25 every cron arrived
-            # 5-9 h late (07:30-11:07 CT), and on 2026-10-06 one delivered 416 min
-            # late wiped dev under a session that was testing against it.
+            # consultant's timesheets, assignments and projects. Delivered late
+            # enough, it lands in the working day instead: on 2026-10-06 a 02:17 cron
+            # delivered 416 min late wiped dev under a session testing against it.
             #
-            # MAX_LATE_MIN is 240: due 02:17 CT plus 4 h is 06:17 CT, and a typical
-            # ~90-minute run started then is finished before ~08:00. Any later and
-            # it is still clearing and re-seeding dev when people start work; any
-            # earlier and ordinary scheduler jitter (tens of minutes) would start
-            # costing nightlies. Lateness is measured from the cron's DUE instant,
-            # like the DST verdict above, so the two checks agree on what "late" is.
+            # MAX_LATE_MIN is 600: due 20:17 CT plus 10 h is 06:17 CT, the same latest
+            # start the 02:17 schedule allowed, and a ~90-130 min run started then is
+            # finished by ~08:00-08:30. Any later and it is still clearing and
+            # re-seeding dev when people start work. It is not smaller because the
+            # delays this schedule exists to absorb are 271-532 min (2026-09-25 to
+            # 10-06) - a limit under ~540 would start skipping ordinary nights again.
+            # Lateness is measured from the cron's DUE instant, like the DST verdict
+            # above, so the two checks agree on what "late" is.
             if [ "$late" -gt "$MAX_LATE_MIN" ]; then
               start_ct=$(TZ=America/Chicago date -d "@$now" '+%H:%M %Z')
               echo "Tonight's nightly, but delivered ${late} min late (limit ${MAX_LATE_MIN}): it would start at $start_ct, inside the working day. Skipping."
@@ -147,14 +162,14 @@ jobs:
               echo "**SKIPPED - no tests ran.** Tonight's nightly (cron \`$SCHEDULE\`, due $due_ct) was delivered ${late} min late, at $start_ct - over the ${MAX_LATE_MIN}-min limit, so it would have cleared and re-seeded dev during the working day. Dispatch the workflow by hand to run it now. This run's green is not a test result." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            echo "This is the 2am CT nightly."
+            echo "This is tonight's nightly (due 20:17 CT)."
             echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Ran: the 2am CT nightly (cron \`$SCHEDULE\`, due $due_ct, delivered ${late} min late)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Ran: tonight's nightly (cron \`$SCHEDULE\`, due $due_ct, delivered ${late} min late)." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Not tonight's 2am CT slot - this is the other DST cron. Skipping."
+            echo "Not tonight's 20:17 CT slot - this is the other DST cron. Skipping."
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Nightly skipped::cron '$SCHEDULE' was due at $due_ct, which is not 02:xx in Chicago - the other DST cron is tonight's nightly. No tests ran in this run."
-            echo "**SKIPPED - no tests ran.** Cron \`$SCHEDULE\` was due at $due_ct, not 02:xx in Chicago; the other DST cron is tonight's nightly. This run's green is not a test result." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Nightly skipped::cron '$SCHEDULE' was due at $due_ct, which is not 20:xx in Chicago - the other DST cron is tonight's nightly. No tests ran in this run."
+            echo "**SKIPPED - no tests ran.** Cron \`$SCHEDULE\` was due at $due_ct, not 20:xx in Chicago; the other DST cron is tonight's nightly. This run's green is not a test result." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   e2e:
