@@ -435,11 +435,23 @@ tt_refetch_week() {
 # ---------------------------------------------------------------------------
 # Can this week still be acted on?
 #
-# btnClear, btnSaveDraft and btnSubmit share ONE conditional visibility rule, on
+# btnClear, btnSaveDraft and btnSubmit all carry a conditional visibility rule on
 # Main.Timesheet.Status: shown for Draft, Rejected and (empty); HIDDEN for
 # Awaiting_Approval, Approved and Awaiting_Export. A conditionally hidden Mendix
 # widget is not in the DOM at all, so `playwright-cli click` on it FAILS - and a
 # caller that discards the exit code cannot tell that from a successful press.
+#
+# THE RULES ARE NO LONGER ONE RULE (empty-week submit fix, model change of
+# 2026-10-06, live once deployed). btnClear and btnSubmit ALSO need
+# Main.Timesheet.Projects > 0 - the week's stored row count, which
+# Main.DS_Timesheet_Get now recounts every time a week is shown - so a Draft week
+# with no project rows offers Save Draft and nothing else. btnSaveDraft is
+# unchanged. This helper reads btnClear, so it answers "has action buttons AND
+# rows": a Draft week with zero rows reads 'false'. Every caller wants a week it
+# can fill, clear or submit, which means a week WITH rows, so that is the right
+# answer for them - but do not use it to ask "is this week still Draft" about an
+# empty week; read the status (tt_week_statuses) for that. Before the deploy an
+# empty Draft week still reads 'true'.
 #
 # That is how verify-timesheet-clear came to report "Clear did not empty the
 # week" about a Clear button that was never on the page. The week it had been
@@ -450,7 +462,8 @@ tt_refetch_week() {
 # ASSIGNMENT ENTRY - so a week can show editable day cells and no action buttons
 # at the same time. Never infer one from the other.
 
-# tt_week_actionable - 'true' when the week on screen still has its action buttons.
+# tt_week_actionable - 'true' when the week on screen still has its action buttons
+# (Clear/Submit: a Draft, Rejected or unset week that has project rows).
 tt_week_actionable() {
   playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnClear'))" 2>/dev/null | _tt_eval_str
 }
