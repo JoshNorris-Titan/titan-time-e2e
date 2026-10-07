@@ -154,6 +154,17 @@ tt_authz_write() {
   playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t = setTimeout(() => res('ERR:timeout'), 15000); mx.data.get({ xpath: \"$1\", filter: { amount: 1 }, callback: function(objs){ if (!objs || !objs.length) { clearTimeout(t); return res('ERR:notfound'); } try { objs[0].set(\"$2\", \"$3\"); } catch (e) { clearTimeout(t); return res('ERR:set-' + (e.message || 'refused')); } mx.data.commit({ mxobj: objs[0], callback: function(){ clearTimeout(t); res('ok'); }, error: function(e){ clearTimeout(t); res('ERR:commit-' + ((e && e.message) || 'refused')); } }); }, error: function(e){ clearTimeout(t); res('ERR:retrieve-' + ((e && e.message) || 'refused')); } }); } catch (e) { res('ERR:' + e.message); } })" 2>/dev/null | _tt_eval_str
 }
 
+# tt_authz_delete <xpath> -- try to delete the first object <xpath> matches.
+#
+# Echoes 'ok' when the server accepted the removal, ERR:notfound when the xpath
+# matched nothing (NOT a denial - the fixture is missing), or ERR:retrieve-/
+# ERR:remove-<why>. mx.data.remove is the client's delete; entity access applies to
+# it exactly as to a commit. Like tt_authz_write, a reported refusal proves nothing
+# on its own: read back as an entitled session that the object still exists.
+tt_authz_delete() {
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t = setTimeout(() => res('ERR:timeout'), 15000); mx.data.get({ xpath: \"$1\", filter: { amount: 1 }, callback: function(objs){ if (!objs || !objs.length) { clearTimeout(t); return res('ERR:notfound'); } mx.data.remove({ guid: objs[0].getGuid(), callback: function(){ clearTimeout(t); res('ok'); }, error: function(e){ clearTimeout(t); res('ERR:remove-' + ((e && e.message) || 'refused')); } }); }, error: function(e){ clearTimeout(t); res('ERR:retrieve-' + ((e && e.message) || 'refused')); } }); } catch (e) { res('ERR:' + e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
 # tt_authz_action <microflow> [guid] -- try to invoke a microflow from the client.
 #
 # Echoes 'ok' or 'ok:<result>' when the server ran it, or ERR:action-<why>. With a
