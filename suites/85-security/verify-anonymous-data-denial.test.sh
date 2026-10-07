@@ -4,7 +4,7 @@
 # tt-timeout: 6m
 #
 # An unauthenticated visitor holds the anonymous role and nothing else, and
-# cannot read the two entities no anonymous rule covers.
+# cannot read the three entities no anonymous rule covers.
 #
 # WHY THE APP HAS AN ANONYMOUS SURFACE AT ALL. Customers approve timesheets from
 # an emailed token link without ever logging in, so Main.Anonymous is a real,
@@ -15,26 +15,25 @@
 # that a bad token is refused, which is a different question from what a plain
 # anonymous session can retrieve when it asks the data layer nicely.
 #
-# WHAT IS ASSERTED, AND WHY ONLY THESE TWO ENTITIES. Most of the business
-# entities DO carry an anonymous access rule, constrained to the customer
-# approval flow:
-#
-#   Main.AssignmentEntry  [Status = 'AwaitingCustomerApproval']
-#   Main.Timesheet        [.../Main.AssignmentEntry/Status = 'AwaitingCustomerApproval']
-#   Main.Project          [.../Main.AssignmentEntry/Status = 'AwaitingCustomerApproval']
-#   Main.Customer         [.../Main.AssignmentEntry/Status = 'AwaitingCustomerApproval']
-#
-# So an anonymous count of zero on any of those is CIRCUMSTANTIAL -- it means no
-# entry happens to be awaiting a customer right now, and it would legitimately
-# become non-zero while suites/30-approval is mid-flight. Asserting zero on them
-# would be asserting the absence of test data, and would go red for a correct
-# app. They are named here so the next person does not add them.
-#
-# The two below are different. Neither has an anonymous rule of any kind, so
-# their zero is unconditional and holds whatever state the database is in:
+# WHAT IS ASSERTED, AND WHY ONLY THESE THREE ENTITIES. Most of the business
+# entities DO carry an anonymous access rule. Since the customer-link security
+# change (2026-09-29) every one of them - AssignmentEntry, Timesheet, Assignment,
+# Project, Customer, LineItem, AssignmentAttachment, AttachmentDocument,
+# ExpenseReport, ExpenseReportDocuments - admits only rows on a project covered by
+# a live Main.ApprovalVisit OF THE CURRENT SESSION: one recorded when this session
+# opened an approval link whose token is still Active and unexpired (and, for
+# entries, only AwaitingCustomerApproval). A session that never opened a link, like
+# this one, should therefore see none of them either - but that is asserted, with
+# a control per entity, by verify-anon-entity-read-scope, and the with-a-visit half
+# by verify-anon-visit-read-scope. This step keeps to the entities whose zero is
+# unconditional because NO anonymous rule exists on them at all:
 #
 #   Main.ChangeLog     - rules for Administrator and for HR + TitanManager only.
 #   Main.ApprovalToken - NO access rules at all, for any role.
+#   Main.ApprovalVisit - NO access rules at all, for any role. The visit is what
+#                        every anonymous rule above keys on, so a session able to
+#                        read (or, with a rule, write) visits could see which
+#                        projects other sessions' links cover.
 #
 # Main.ApprovalToken is the one that matters most. Its rows are the tokens that
 # let a customer approve a timesheet with no login, so an anonymous session able
@@ -51,16 +50,16 @@
 # number back. That rules out the realistic false-pass -- a probe that silently
 # stopped asking.
 #
-# It does NOT prove that an approval token exists at the moment it runs, so a
-# zero on Main.ApprovalToken is "was not given any" rather than "was refused
-# some". That is a real limit and is stated rather than papered over: minting a
-# token means driving the customer-approval mail flow, which is a far heavier
+# It does NOT prove that an approval token or visit exists at the moment it runs,
+# so a zero on Main.ApprovalToken or Main.ApprovalVisit is "was not given any"
+# rather than "was refused some". That is a real limit and is stated rather than
+# papered over: minting a token means driving the customer-approval mail flow, which is a far heavier
 # step than this one and already has coverage in suites/30-approval. What this
 # catches is the change that matters -- an access rule appearing on an entity
 # that must not have one.
 #
-# IF IT FAILS. An unauthenticated visitor can read either the audit trail or the
-# approval tokens. Both are fixed on the entity access rules, not on any screen.
+# IF IT FAILS. An unauthenticated visitor can read the audit trail, the approval
+# tokens or the approval visits. Both are fixed on the entity access rules, not on any screen.
 #
 # Reads only. Creates nothing, changes nothing. It DOES clear the browser's
 # cookies, so it must not run between a login and an assertion that depends on
@@ -77,7 +76,7 @@ source "$TT_ROOT/lib/_authz.sh"
 
 # The entities with no anonymous access rule. Anything added here must be
 # checked against the domain model first - see the header.
-UNREACHABLE="//Main.ChangeLog //Main.ApprovalToken"
+UNREACHABLE="//Main.ChangeLog //Main.ApprovalToken //Main.ApprovalVisit"
 
 # --------------------------------------- 1. control: the retrieve machinery works
 # Asked as HR, who is entitled to Main.ChangeLog. A number here proves the call
@@ -127,6 +126,11 @@ for xpath in $UNREACHABLE; do
       echo "FAIL: an anonymous, unauthenticated session retrieved $n row(s) of $xpath."
       echo "      That entity has no anonymous access rule, so this is reachable by"
       echo "      anyone who knows the app's URL, with no login and no token."
+      if [ "$xpath" = "//Main.ApprovalVisit" ]; then
+        echo "      Main.ApprovalVisit rows record which projects each visitor's link"
+        echo "      covers; they carry the approver's email and scope every anonymous"
+        echo "      read in the app."
+      fi
       if [ "$xpath" = "//Main.ApprovalToken" ]; then
         echo "      Main.ApprovalToken rows are the tokens that let a customer approve a"
         echo "      timesheet without signing in - listing them is enough to approve"
@@ -138,4 +142,4 @@ for xpath in $UNREACHABLE; do
 done
 
 [ "$fails" -eq 0 ] || exit 1
-echo "PASS: verify-anonymous-data-denial - an anonymous session holds only Anonymous and retrieved nothing from Main.ChangeLog or Main.ApprovalToken (control: HR saw $control change-log row(s))"
+echo "PASS: verify-anonymous-data-denial - an anonymous session holds only Anonymous and retrieved nothing from Main.ChangeLog, Main.ApprovalToken or Main.ApprovalVisit (control: HR saw $control change-log row(s))"
