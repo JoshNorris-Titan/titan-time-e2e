@@ -161,7 +161,7 @@ tt_wait_for ".mx-name-txtNewPassword input" "the new-password box on the reset p
 tt_fill_commit ".mx-name-txtNewPassword input" "$NEWPASS"
 tt_fill_commit ".mx-name-txtConfirmPassword input" "$NEWPASS"
 playwright-cli click ".mx-name-btnSetPassword" >/dev/null 2>&1
-wait_body "password has been updated" 20 || tt_fail "B: the new password was not accepted (no 'Your password has been updated')"
+wait_body "password has been updated" 20   || tt_fail "B: the new password was not accepted (no 'Your password has been updated'). The page says: $(ev "() => (document.body ? document.body.innerText : '').replace(/\s+/g,' ').slice(0,400)")"
 tt_clear_dialogs 4 >/dev/null 2>&1
 note "B: reset to a new password through the mailed link"
 
