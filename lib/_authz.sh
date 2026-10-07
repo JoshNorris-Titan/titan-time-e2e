@@ -111,9 +111,10 @@ tt_authz_anonymous() {
 # to succeed for somebody. An ERR: from a denied role proves nothing on its own --
 # a typo'd entity name, a validation rule, a stale session and a genuine access
 # denial all arrive looking identical. Run the positive control first, with
-# tt_authz_expect_ok, and only then assert the denial. This is the inverse of
-# verify-tt737-null-startdate-heals, which treats ERR: as a SETUP failure for the
-# same reason seen from the other side.
+# tt_authz_expect_ok, and only then assert the denial. This was the inverse of
+# verify-tt737-null-startdate-heals (retired 2026-10-07, when consultants lost
+# Create on Main.Timesheet), which treated ERR: as a SETUP failure for the same
+# reason seen from the other side.
 #
 # AND THE REASON THAT IS NOT OPTIONAL: THE ERROR STRING TELLS YOU NOTHING. Measured
 # against dev on 2026-09-17, a refused create and a call to a microflow that does
