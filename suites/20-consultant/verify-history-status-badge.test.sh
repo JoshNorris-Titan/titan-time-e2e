@@ -31,8 +31,8 @@
 # ROW SCOPING. A gallery repeats every .mx-name-* once per row, so an unscoped
 # querySelector always reads row 0 and an unscoped count conflates rows. Rows are
 # scoped on `.widget-gallery-item`, which is what the rest of the suite already uses
-# for THIS gallery -- lib/_seed.sh, lib/_rejection.sh and
-# suites/70-tickets/tt737/verify-tt737-null-startdate-heals.test.sh. Do NOT scope on
+# for THIS gallery -- lib/_seed.sh and lib/_rejection.sh (and, until it was
+# retired on 2026-10-07, verify-tt737-null-startdate-heals). Do NOT scope on
 # `.gallery-item`: that comes from the gallery's itemClass expression and did not
 # appear in the rendered DOM at all when this was probed.
 #

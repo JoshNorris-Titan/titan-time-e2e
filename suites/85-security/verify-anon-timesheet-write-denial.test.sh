@@ -10,11 +10,12 @@
 # ever tried any of it. verify-anonymous-data-denial covers reads, and covers the
 # two entities Anonymous is genuinely denied; the write surface is untested.
 #
-# The one existing create in the whole suite is
-# suites/70-tickets/tt737/verify-tt737-null-startdate-heals.test.sh, which creates
-# a Main.Timesheet as a signed-in consultant and treats a refusal as a SETUP
-# failure. This is the same call with the polarity inverted: here a success is the
-# finding.
+# The suite's one other create of a Main.Timesheet was
+# verify-tt737-null-startdate-heals, which created one as a signed-in consultant
+# and treated a refusal as a SETUP failure. It was retired on 2026-10-07, when the
+# consultant access fix took Create on Main.Timesheet away from consultants (its
+# behaviour is covered by UT_DS_TimesheetGet_EmptyStartDateHealsToCurrentWeek).
+# This is the same call with the polarity inverted: here a success is the finding.
 #
 # WHAT IT ASSERTS
 #   A. the session really is anonymous;
