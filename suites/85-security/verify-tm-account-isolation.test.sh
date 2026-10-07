@@ -16,17 +16,24 @@
 # remaps TitanManager to Administration.User. Nothing in the suite has ever tried
 # any of this: every other e2e_tm step uses the screens, and no screen offers it.
 #
-# NEVER A REAL ACCOUNT. The administrator session first ensures four disposable
-# targets exist, holding no data, and every probe acts on them only:
+# NEVER A REAL ACCOUNT. Every probe acts on one of four disposable targets that hold
+# no data:
 #   e2e_target_admin (Administrator)    e2e_target_tm (TitanManager)
 #   e2e_target_hr    (HR)               e2e_target_pm (ProjectManager only)
-# Their addresses are @example.invalid, so nothing can be delivered to them, and
-# they are created with mx.data (not Core.SaveNewAccount), so no welcome mail goes
-# out either. They stay INACTIVE between runs; e2e_target_admin is activated with
-# a password made up for this run only for H, and deactivated again on the way
-# out (EXIT trap). This step NEVER calls Forgot password. Before the fix ships the
-# deletes below SUCCEED, which is exactly why they only ever aim at these targets;
-# a deleted target is recreated by the next run's setup.
+# PROVISIONED ONCE BY HAND, like e2e_pwreset: Admin Hub -> Accounts Overview -> New
+# local user, that login, full name 'E2E Target Admin' / 'E2E Target TM' / ...,
+# email <login with - for _>@example.invalid (so nothing is ever delivered), the one
+# role named above, any employment status. The client cannot create them: an
+# administrator's mx.data commit of a new Administration.Account is refused
+# ("Internal server error", measured on dev 2026-10-07), while writes to an EXISTING
+# account work - so setup only RESETS them: Email back to its canonical value, Active
+# false, and for e2e_target_admin Active true with a password made up for this run
+# (set through the Accounts Overview, lib/_accounts.sh), deactivated again on the way
+# out (EXIT trap). A missing target is a setup failure naming this paragraph.
+#
+# DO NOT RUN THIS BEFORE THE FIX IS DEPLOYED. Before it, the TM's deletes SUCCEED, so
+# one run deletes three of the hand-provisioned targets. Provision them after the
+# deploy. This step NEVER calls Forgot password.
 #
 # WHAT IT ASSERTS (as e2e_tm, read back as the administrator)
 #   A. the session holds the TitanManager role and not Administrator;
@@ -50,13 +57,15 @@
 # to Administration.Administrator, C-K all fail (A too, if the session lists the
 # module role). That is the finding, not a defect of this step.
 #
-# Consumes: nothing a person uses. Leaves the four targets inactive. Clears cookies.
+# Consumes: nothing a person uses. Leaves the four targets inactive (after the fix;
+# before it, see DO NOT RUN THIS BEFORE THE FIX IS DEPLOYED). Clears cookies.
 # Env: TT_BASE_URL, TT_ROLE_PASS, TT_ADMIN_USER, TT_ADMIN_PASS
 set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_authz.sh"
 source "$TT_ROOT/lib/_testdata.sh"   # TT_ADMIN_U / TT_ADMIN_P
+source "$TT_ROOT/lib/_accounts.sh"   # acct_set_password
 
 fails=0
 note() { echo "  $*"; }
@@ -76,22 +85,14 @@ ADMIN_PW="Tmiso-$(date +%s)-Aa9!"
 as_admin() { TT_AUTH_CACHE=0 tt_login "$TT_ADMIN_U" "Welcome to your homepage" "$TT_ADMIN_P"; }
 as_tm()    { TT_AUTH_CACHE=0 tt_login "$TM_USER" "Add Customer"; }
 
-# ensure_target <login> <full name> <user role> [active] [password] - as the
-# administrator: create the account when it is missing, then (re)set Email, Active
-# and, when given, the password. Echoes the guid, or ERR:<why>.
+# ensure_target <login> <active> - as the administrator: the target must exist; reset
+# its Email to the canonical value and set Active. Echoes the guid, ABSENT, or ERR:<why>.
 ensure_target() {
-  local active="${4:-false}" pw="${5:-}"
   ev "() => new Promise(res => { try { const t=setTimeout(()=>res('ERR:timeout'),20000);
-    const fin = (a) => { a.set('Email', '$(email_of "$1")'); a.set('Active', $active); if ('$pw') a.set('Password', '$pw');
-      mx.data.commit({ mxobj: a, callback: () => { clearTimeout(t); res(a.getGuid()); }, error: e => { clearTimeout(t); res('ERR:commit-'+e.message); } }); };
     mx.data.get({ xpath: \"$(acc_xp "$1")\", filter:{amount:1}, callback: o => {
-      if (o && o.length) return fin(o[0]);
-      mx.data.get({ xpath: \"//System.UserRole[Name = '$3']\", filter:{amount:1}, callback: r => {
-        if (!r || !r.length) { clearTimeout(t); return res('ERR:no-role-$3'); }
-        mx.data.create({ entity: 'Administration.Account', callback: a => {
-          try { a.set('Name', '$1'); a.set('FullName', '$2'); a.set('Password', '$pw' || ('Init-' + Date.now() + '-Aa9!')); a.addReferences('System.UserRoles', [r[0].getGuid()]); } catch (e) { clearTimeout(t); return res('ERR:set-'+e.message); }
-          fin(a); }, error: e => { clearTimeout(t); res('ERR:create-'+e.message); } });
-      }, error: e => { clearTimeout(t); res('ERR:role-'+e.message); } });
+      if (!o || !o.length) { clearTimeout(t); return res('ABSENT'); }
+      const a=o[0]; a.set('Email', '$(email_of "$1")'); a.set('Active', $2);
+      mx.data.commit({ mxobj: a, callback: () => { clearTimeout(t); res(a.getGuid()); }, error: e => { clearTimeout(t); res('ERR:commit-'+e.message); } });
     }, error: e => { clearTimeout(t); res('ERR:get-'+e.message); } }); } catch(e) { res('ERR:'+e.message); } })"
 }
 
@@ -126,8 +127,8 @@ cleanup() {
   local line login full role g
   while IFS='|' read -r login full role; do
     [ "$(exists "$login")" = "yes" ] || continue
-    g="$(ensure_target "$login" "$full" "$role" false)"
-    case "$g" in ERR:*) echo "  WARNING: could not reset $login ($g) - deactivate it by hand." >&2 ;; esac
+    g="$(ensure_target "$login" false)"
+    case "$g" in ABSENT|ERR:*) echo "  WARNING: could not reset $login ($g) - deactivate it by hand." >&2 ;; esac
   done <<< "$TARGETS"
   return 0
 }
@@ -136,11 +137,15 @@ trap cleanup EXIT
 # ------------------------------------------------------------------ setup, as admin
 as_admin
 while IFS='|' read -r login full role; do
-  if [ "$login" = "e2e_target_admin" ]; then g="$(ensure_target "$login" "$full" "$role" true "$ADMIN_PW")"
-  else g="$(ensure_target "$login" "$full" "$role" false)"; fi
-  case "$g" in ERR:*) tt_fail "setup: could not create or reset $login as the administrator ($g)" ;; esac
+  g="$(ensure_target "$login" "$([ "$login" = e2e_target_admin ] && echo true || echo false)")"
+  case "$g" in
+    ABSENT) tt_fail "setup: there is no account '$login' on $TT_BASE. Provision the four targets once by hand, after the fix is deployed - see NEVER A REAL ACCOUNT in this file's header ('$full', role $role, email $(email_of "$login"))." ;;
+    ERR:*)  tt_fail "setup: could not reset $login as the administrator ($g)" ;;
+  esac
   note "target $login ($role) = $g"
 done <<< "$TARGETS"
+acct_set_password e2e_target_admin "$ADMIN_PW" || tt_fail "setup: could not set e2e_target_admin's password for this run ($ACCT_LAST_ERROR)"
+as_admin
 
 # B, control half: the administrator's own client write lands, and is put back.
 PM_EMAIL="$(email_of e2e_target_pm)"
