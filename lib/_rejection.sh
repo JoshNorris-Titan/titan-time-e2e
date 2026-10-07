@@ -120,7 +120,10 @@ tt_goto_week_with_project() {
 #
 # tt_week_actionable asks the app instead: Clear, Save and Submit are all hidden
 # once Main.Timesheet.Status leaves Draft/Rejected/(empty), and a hidden Mendix
-# widget is absent from the DOM. A week that has moved on is therefore one no
+# widget is absent from the DOM. (Once the empty-week submit fix deploys, Clear
+# and Submit also need the week to have project rows; this loop only ever asks
+# about a week where the project row is already on screen, so that changes
+# nothing here - see tt_week_actionable.) A week that has moved on is therefore one no
 # caller of this helper can do anything with - they all fill, save, submit or
 # clear - so it is skipped here rather than handed over to fail obscurely later.
 # verify-timesheet-clear took such a week and reported "Clear did not empty the
