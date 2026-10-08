@@ -30,7 +30,8 @@
 #   F. clearing the date restores every week and the empty state is gone.
 #
 # If the consultant's weeks all share one status (B would then filter nothing),
-# it first submits one week on 'E2E Manager Approval' so there are two statuses.
+# it seeds: a submit on 'E2E Manager Approval' when no week is past Draft, then a
+# saved Draft week when none is Draft - see the note at the seeding code.
 #
 # Leaves every filter cleared, so the next spec reading this list sees all of it.
 # Env: TT_BASE_URL, TT_ROLE_PASS
@@ -143,21 +144,38 @@ seed_draft_week() {
   tt_fail "seed: no editable 'E2E Manager Approval' week with Save Draft within ${TT_SUBMIT_WEEK_HORIZON:-30} weeks"
 }
 
-if [ "$DISTINCT" -lt 2 ]; then
-  if [ "$ONLY" = "Draft" ]; then
-    note "every one of $CUSER's weeks is Draft - submitting one on E2E Manager Approval so B has something to exclude"
-    tt_consultant_submit_project_row "E2E Manager Approval"
-  else
-    note "every one of $CUSER's weeks is ${ONLY:-unset} - saving one Draft week so B has something to exclude"
-    seed_draft_week
-  fi
+# Seed until the history holds a Draft week AND a week of some other status - the
+# two B needs to tell apart. Weeks with NO status (rows the app created just by
+# showing a week, never saved) are listed but are not a status B can filter on, so
+# they count as neither.
+#
+# The order matters. Submitting and saving a draft both act on the FIRST actionable
+# week with the project's row, so "submit one when everything is Draft" can submit
+# the only Draft week and leave the history at one status again (CI runs
+# 37524334459 and 37586419168: one Awaiting_Approval week, every other week unset).
+# So: when there is no non-Draft week, submit one first; then, if no Draft week is
+# left, save one - the submitted week is no longer actionable, so that lands on the
+# NEXT week and cannot undo the submit.
+statuses()  { printf '%s' "$DATA" | tr '~' '\n' | cut -d'|' -f1 | grep . | sort -u; }
+reread() {
   tt_clear_dialogs 4 >/dev/null 2>&1
   tt_login "$CUSER" "My Timesheets"
   tt_wait_for "$GAL" "the timesheet history gallery"
   DATA="$(data_weeks)"
-  DISTINCT="$(printf '%s' "$DATA" | tr '~' '\n' | cut -d'|' -f1 | grep . | sort -u | wc -l | tr -d ' ')"
-  [ "$DISTINCT" -ge 2 ] || tt_fail "seed: $CUSER's weeks still share one status after seeding (data: $DATA)"
+  case "$DATA" in ERR:*|''|NONE) tt_fail "seed: could not re-read $CUSER's timesheets ($DATA)" ;; esac
+}
+if ! statuses | grep -qvx Draft; then
+  note "seed: $CUSER has no week past Draft ($(statuses | tr '\n' ' ')) - submitting one on E2E Manager Approval"
+  tt_consultant_submit_project_row "E2E Manager Approval"
+  reread
 fi
+if ! statuses | grep -qx Draft; then
+  note "seed: $CUSER has no Draft week ($(statuses | tr '\n' ' ')) - saving one"
+  seed_draft_week
+  reread
+fi
+DISTINCT="$(statuses | wc -l | tr -d ' ')"
+[ "$DISTINCT" -ge 2 ] || tt_fail "seed: $CUSER's weeks still share one status after seeding (data: $DATA)"
 N_ALL="$(count_of "$DATA")"
 
 # ------------------------------------------------------------------ A. unfiltered
