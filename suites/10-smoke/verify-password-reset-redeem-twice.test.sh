@@ -22,9 +22,26 @@
 #   R2. a SECOND full reset, straight after, works the same way: the page says the
 #       password was updated (not "Only named users can complete user task") and
 #       the account signs in with the second new password;
-#   W.  read as the administrator, of the "Password Reset" workflows started since
-#       this step began, the EARLIEST (R1's) is Aborted - not InProgress (left
-#       running, which is what breaks the next reset) and not Incompatible.
+#   W.  read as the administrator, of THIS ACCOUNT'S "Password Reset" workflows
+#       started since this step began, the EARLIEST (R1's) is Aborted - not
+#       InProgress (left running, which is what breaks the next reset) and not
+#       Incompatible.
+#
+# WHICH WORKFLOWS ARE THIS ACCOUNT'S. Anyone on dev may reset a password while
+# this runs, so W must not read every "Password Reset" workflow. The workflow's
+# context is a Core.ForceReset (Core.ForceReset_Account -> the account), but the
+# client cannot navigate from a System.Workflow to its context object: the model
+# has no such association, and the runtime exposes the context only to
+# microflows. What the client CAN read is the workflow's user task and the users
+# it targets: System.WorkflowUserTask (or, once the workflow has ended,
+# System.WorkflowEndedUserTask) -> _TargetUsers, -> _Workflow. Measured on dev
+# 2026-10-07, e2e_pwreset's reset task targets e2e_pwreset itself plus two other
+# users (presumably administrators); that another account's reset task never
+# targets e2e_pwreset is assumed, not measured. So W keeps only the workflows
+# whose task, live or ended, targets $PU's own System.User, and fails if it
+# cannot resolve that user rather than falling back to every workflow. If the
+# model ever gives the workflow a client-readable link to its Core.ForceReset,
+# filter on Core.ForceReset_Account instead.
 # On the way out (EXIT trap) the administrator sets the password back to
 # TT_PWRESET_PASS.
 #
@@ -122,11 +139,21 @@ reset_once "R2" "Tw2-$(date +%s)-Aa9!"
 
 # ------------------------------------------------------------------ W. the first workflow
 acct_admin_login "$TT_ADMIN_U" "$TT_ADMIN_P"
-WF="$(ev "() => new Promise(res => { try { const t=setTimeout(()=>res('ERR:timeout'),20000); mx.data.get({ xpath: \"//System.Workflow[Name = 'Password Reset']\", filter:{amount:500}, callback: o => { clearTimeout(t); const r=(o||[]).filter(x=>Number(x.get('StartTime'))>=$T0_MS).sort((a,b)=>Number(a.get('StartTime'))-Number(b.get('StartTime'))).map(x=>new Date(Number(x.get('StartTime'))).toISOString()+'='+x.get('State')); res(r.join(';') || 'NONE'); }, error: e => { clearTimeout(t); res('ERR:'+e.message); } }); } catch(e){ res('ERR:'+e.message); } })")"
-note "Password Reset workflows started during this step: $WF"
+WF="$(ev "() => new Promise(res => { try { const t=setTimeout(()=>res('ERR:timeout'),30000); const get=(xp)=>new Promise((ok,ko)=>mx.data.get({ xpath: xp, filter:{amount:500}, callback: ok, error: ko }));
+  (async () => {
+    const u = await get(\"//System.User[Name = '$PU']\"); if (!u.length) { clearTimeout(t); return res('ERR:no System.User named $PU'); }
+    const ug = u[0].getGuid();
+    const live = await get(\"//System.WorkflowUserTask[System.WorkflowUserTask_TargetUsers = '\"+ug+\"']\");
+    const ended = await get(\"//System.WorkflowEndedUserTask[System.WorkflowEndedUserTask_TargetUsers = '\"+ug+\"']\");
+    const ids = new Set([...live.map(x=>x.get('System.WorkflowUserTask_Workflow')), ...ended.map(x=>x.get('System.WorkflowEndedUserTask_Workflow'))].filter(Boolean));
+    const wf = await get(\"//System.Workflow[Name = 'Password Reset']\");
+    const r = wf.filter(x=>ids.has(x.getGuid()) && Number(x.get('StartTime'))>=$T0_MS).sort((a,b)=>Number(a.get('StartTime'))-Number(b.get('StartTime'))).map(x=>new Date(Number(x.get('StartTime'))).toISOString()+'='+x.get('State'));
+    clearTimeout(t); res(r.join(';') || 'NONE');
+  })().catch(e => { clearTimeout(t); res('ERR:'+((e&&e.message)||e)); }); } catch(e){ res('ERR:'+e.message); } })")"
+note "$PU's Password Reset workflows started during this step: $WF"
 case "$WF" in
   ERR:*) bad "W: the administrator could not read System.Workflow ($WF)" ;;
-  NONE)  bad "W: no 'Password Reset' workflow was started during this step, so the first reset's workflow cannot be checked" ;;
+  NONE)  bad "W: no 'Password Reset' workflow of $PU's was started during this step, so the first reset's workflow cannot be checked" ;;
   *)
     FIRST="${WF%%;*}"
     case "${FIRST#*=}" in
