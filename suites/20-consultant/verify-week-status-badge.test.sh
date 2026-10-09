@@ -36,7 +36,7 @@
 # runs after it.
 #
 # NOTE: the same widget tree is mirrored onto Main.CreateTimesheet (HR's rewrite
-# tool) -- see docs/reference/mirrored-regions.json, region "timesheetGrid". This
+# tool) -- see tools/mirrored-regions.json, region "timesheetGrid". This
 # spec covers the consultant copy only; the HR copy has thinner coverage by design.
 
 set -uo pipefail
