@@ -6,7 +6,8 @@
 #
 # WHY THIS EXISTS. verify-anonymous-data-denial asks about the entities Anonymous
 # has no rule on at all - Main.ChangeLog, Main.ApprovalToken, Main.ApprovalVisit.
-# docs/reference/SECURITY-FINDING-anonymous-grants.md recorded unconstrained
+# The anonymous-grants security finding (resolved 2026-09-30; its doc was deleted
+# 2026-10-08 and lives in the model repo's git history) recorded unconstrained
 # anonymous READ on Main.Timesheet, Customer, Project, Assignment, LineItem and
 # AttachmentDocument as well, and this step asks each of those.
 #

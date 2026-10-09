@@ -10,7 +10,7 @@
 # cost: the snippet is inlined into each calling page, and the copies are then meant to
 # stay identical forever. "Meant to" is the weak part. This is the part that checks.
 #
-# The register lives in the model repo at docs/reference/mirrored-regions.json. It
+# The register lives in the model repo at tools/mirrored-regions.json. It
 # began with one region: the weekly timesheet grid, on Main.ConsultantDashboard (what a
 # consultant fills in) and Main.CreateTimesheet (HR's rewrite tool). It holds more now;
 # the register, not this comment, is the list.
@@ -26,7 +26,7 @@
 # grid invalidates every consultant and HR scenario that runs after it.
 #
 # THE COMPARATOR LIVES IN A MODEL CHECKOUT, not here: tools/check_mirrors.py, which
-# reads the register docs/reference/mirrored-regions.json from that same checkout.
+# reads the register tools/mirrored-regions.json from that same checkout.
 # Until 2026-09-08 this repository was nested inside the Mendix working copy, so the
 # comparator was simply ../tools/check_mirrors.py. It now sits BESIDE the model
 # checkouts (main, main2, main3), and more than one of them can hold the comparator,
@@ -111,7 +111,7 @@ case "$status" in
     echo "FAIL: verify-mirrored-regions — the copies of a mirrored region have DRIFTED."
     echo "      The diff above names the widget. A change was made to one page and not the"
     echo "      other; reconcile them rather than adjusting this test. See"
-    echo "      docs/reference/MIRRORED-REGIONS.md in the model repo."
+    echo "      tools/MIRRORED-REGIONS.md in the model repo."
     exit 1
     ;;
   2)

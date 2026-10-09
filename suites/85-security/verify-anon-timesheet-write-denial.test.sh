@@ -4,7 +4,8 @@
 #
 # tt-timeout: 8m
 #
-# WHY THIS EXISTS. docs/reference/SECURITY-FINDING-anonymous-grants.md records
+# WHY THIS EXISTS. The anonymous-grants security finding (resolved 2026-09-30; its
+# doc was deleted 2026-10-08 and lives in the model repo's git history) recorded
 # that Anonymous holds Create and Delete on Main.Timesheet, with Status and
 # Timesheet_Account writable and no XPath constraint. Nothing in this suite has
 # ever tried any of it. verify-anonymous-data-denial covers reads, and covers the

@@ -14,7 +14,7 @@
 #   * ped_check_errors sees a valid page either way -- weights are legal numbers.
 #   * The unit suite cannot see layout at all; it never renders a page.
 #   * check_mirrors.py compares compiled pages and explicitly "never stylesheets"
-#     (docs/reference/MIRRORED-REGIONS.md), so a CSS-only break is invisible to it.
+#     (tools/MIRRORED-REGIONS.md), so a CSS-only break is invisible to it.
 #   * This suite had ZERO geometry assertions before this file -- no boundingBox,
 #     offsetWidth, clientWidth or getBoundingClientRect anywhere in suites/ or lib/.
 #
