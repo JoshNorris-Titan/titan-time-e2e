@@ -301,13 +301,32 @@ fx_view() {
 
 # fx_search <searchWidget> <gallery> <text> — type into the list's search box and
 # return the filtered gallery text. Search-as-you-type, so no Enter (see TT-682).
+#
+# POLLS, rather than sleeping a fixed 3s and reading once. On cloud dev the filter
+# routinely lands later than that, and a single read then returns the PREVIOUS
+# search's list. Proven 2026-10-12 against dev: searching 'E2E ProjectManger'
+# straight after 'E2E Consultant' read back the 7 "E2E Consultant" matches, and the
+# nightly reported that account missing four nights running (runs 37899109234 ..
+# 38217703077) - 'E2E Consultant Three' only ever passed because the stale list for
+# 'E2E Consultant Two' happens to contain it.
+#
+# Waiting longer is not enough on its own: the same probe showed a search that never
+# applied at all - the list was still the previous one 29s later. So each attempt
+# re-types the term, and polls ~8s for it. A name that is genuinely absent still
+# comes back absent, after three attempts.
 fx_search() {
-  local box="$1" gal="$2" text="$3"
-  playwright-cli fill ".mx-name-$box input" "" >/dev/null 2>&1
-  playwright-cli click ".mx-name-$box input" >/dev/null 2>&1
-  playwright-cli type "$text" >/dev/null 2>&1
-  sleep 3
-  playwright-cli eval "() => ((document.querySelector('.mx-name-$gal')||{}).innerText||'').replace(/\\s+/g,' ')" 2>/dev/null | _tt_eval_str
+  local box="$1" gal="$2" text="$3" a i out=""
+  for a in 1 2 3; do
+    playwright-cli fill ".mx-name-$box input" "" >/dev/null 2>&1
+    playwright-cli click ".mx-name-$box input" >/dev/null 2>&1
+    playwright-cli type "$text" >/dev/null 2>&1
+    for i in 1 2 3 4; do
+      sleep 2
+      out="$(playwright-cli eval "() => ((document.querySelector('.mx-name-$gal')||{}).innerText||'').replace(/\\s+/g,' ')" 2>/dev/null | _tt_eval_str)"
+      case "$out" in *"$text"*) printf '%s' "$out"; return 0 ;; esac
+    done
+  done
+  printf '%s' "$out"
 }
 
 # fx_exists <searchWidget> <gallery> <exactName>
