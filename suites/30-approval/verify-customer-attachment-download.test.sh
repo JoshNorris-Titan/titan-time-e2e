@@ -23,6 +23,10 @@
 #          file as an expense receipt (with an amount) on the Expense Report tab,
 #          then submits; HR reminds the client. HR then reads both documents back by
 #          the entry's guid - the CONTROL that says there is something to refuse.
+#   N. (TT-790) on opening the review popup, before any tab is clicked: the
+#      "Check these before you approve" notice reads "$12.34 in expenses, …" and
+#      "1 attachment, …", and the Expense Report / Timesheet Attachments tabs carry
+#      the badges "$12.34" and "1";
 #   A. through the link: the attachment is listed; btnAttachmentDownload delivers
 #      the fixture's exact bytes - saved as a download, or opened in a new tab whose
 #      body is that size (a "Download file" with show-in-browser does the latter);
@@ -297,6 +301,26 @@ case "$POPUP" in
   *"$PROJECT"*) ;;
   *) tt_fail "the opened entry is not on '$PROJECT': $POPUP" ;;
 esac
+
+# ------------------------------- N. TT-790: the popup says the extras are there
+# Before any tab is clicked, the "Check these before you approve" box names the
+# 12.34 expense and the one attachment, and the two tabs carry them as badges.
+extras_text() {
+  playwright-cli eval "() => { const e=[...document.querySelectorAll('.mx-name-$1')].find(x=>x.offsetParent!==null); return e ? (e.innerText||'').trim() : ''; }" 2>/dev/null | _tt_eval_str
+}
+tab_badge() {
+  playwright-cli eval "() => { const t=[...document.querySelectorAll('.mx-name-$1')].find(x=>x.offsetParent!==null); const host=t && (t.closest('li')||t); const b=host && host.querySelector('.mx-tabcontainer-badge'); return b && b.offsetParent!==null ? (b.innerText||'').trim() : ''; }" 2>/dev/null | _tt_eval_str
+}
+case "$(extras_text txtReviewExtrasExpenses)" in
+  '$12.34 in expenses'*) note "N: the notice names the \$12.34 expense" ;;
+  *) bad "N: .mx-name-txtReviewExtrasExpenses does not read '\$12.34 in expenses…': [$(extras_text txtReviewExtrasExpenses)]" ;;
+esac
+case "$(extras_text txtReviewExtrasAttachments)" in
+  '1 attachment,'*) note "N: the notice names the one attachment" ;;
+  *) bad "N: .mx-name-txtReviewExtrasAttachments does not read '1 attachment, …': [$(extras_text txtReviewExtrasAttachments)]" ;;
+esac
+[ "$(tab_badge tabExpenseReport)" = '$12.34' ] || bad "N: the Expense Report tab's badge is [$(tab_badge tabExpenseReport)], not \$12.34"
+[ "$(tab_badge tabAttachments)" = "1" ] || bad "N: the Timesheet Attachments tab's badge is [$(tab_badge tabAttachments)], not 1"
 
 [ "$(cl_click_tab tabAttachments)" = "ok" ] || tt_fail "no .mx-name-tabAttachments on the review popup"
 listed=""
