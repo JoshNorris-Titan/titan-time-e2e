@@ -4,12 +4,17 @@
 # tt-timeout: 10m
 #
 # WHY THIS EXISTS. Main.SUB_AssignmentValidation refuses a save that is missing
-# any of Company, Project, Consultant, StartDate, EndDate, TotalBudgetHours or
-# WeeklyHours - "Company is required!", "Project is required!" and "Consultant is
-# required!", and "This is required!" on each of the four date and number members.
+# any of Company, Project, Consultant, StartDate or EndDate - "Company is
+# required!", "Project is required!" and "Consultant is required!", and "This is
+# required!" on each of the two dates.
+#
+# TotalBudgetHours and WeeklyHours are NOT required (TT-792 and its follow-up): a
+# 0 in either means "no limit", so the empty form's 0s must raise nothing. That is
+# why B counts exactly two field messages - a third or fourth means a zero-limit
+# check has come back.
 #
 # TWO CHANNELS, READ BOTH. The three association checks are Show message
-# activities (one "Warning" popup each, stacked over the form), while the four
+# activities (one "Warning" popup each, stacked over the form), while the two
 # member checks are validation feedback rendered under the fields. This spec used
 # to read .mx-validation-message only, so it could never see the popups and
 # reported "does not include 'Company is required'" while the app was showing it
@@ -31,7 +36,7 @@
 # WHAT IT ASSERTS
 #   A. saving an empty form is refused;
 #   B. the complaint names the fields rather than merely existing - at least
-#      Company and Consultant by name, plus the four "This is required!" members,
+#      Company and Consultant by name, plus the two "This is required!" dates,
 #      so a single unrelated validation cannot satisfy this test;
 #   C. the form does NOT close - a refused save that closes the form has lost the
 #      user's input, and is a different bug worth catching here;
@@ -112,10 +117,10 @@ for want in "Company is required" "Project is required" "Consultant is required"
 done
 
 REQ_COUNT="$(printf '%s' "$FIELD_MSG" | grep -o "This is required!" | grep -c . )"
-if [ "${REQ_COUNT:-0}" -ge 4 ]; then
-  note "B ok: $REQ_COUNT 'This is required!' message(s) for the date and number members"
+if [ "${REQ_COUNT:-0}" -eq 2 ]; then
+  note "B ok: $REQ_COUNT 'This is required!' messages, one per date"
 else
-  bad "B: only ${REQ_COUNT:-0} 'This is required!' message(s); StartDate, EndDate, TotalBudgetHours and WeeklyHours should each raise one"
+  bad "B: ${REQ_COUNT:-0} 'This is required!' message(s); StartDate and EndDate should each raise one, and a 0 in TotalBudgetHours or WeeklyHours (no limit) none"
 fi
 
 # --------------------------------------------------------------- C. the form stayed up
