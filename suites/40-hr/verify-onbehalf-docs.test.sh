@@ -466,7 +466,7 @@ if [ -z "$ok" ]; then
 else
   [ "$(od_click_visible btnConfirmSubmit)" = "ok" ] || bad "5 could not press btnConfirmSubmit"
   sleep 4
-  tt_clear_dialogs 6 >/dev/null 2>&1 || true
+  tt_clear_dialogs 6 >/dev/null 2>&1
   sleep 2
   L=""
   for _ in 1 2 3; do
