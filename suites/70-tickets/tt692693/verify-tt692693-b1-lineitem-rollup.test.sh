@@ -18,6 +18,7 @@ set -uo pipefail
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
 source "$TT_ROOT/lib/_rejection.sh"
+source "$TT_ROOT/lib/_tasks.sh"
 
 USER_="${TT_B1_USER:-e2e_consultant}"
 PROJECT="${TT_B1_PROJECT:-E2E Line Items}"
@@ -37,35 +38,25 @@ line_total() { playwright-cli eval "() => String((document.querySelectorAll('$RO
 # on dev 2026-09-01 after entering 7h: the four row totals were 0.00 / 0.00 / 7.00 /
 # 0.00, so the rollup was correct and instant while the test read index 0.
 #
-# Scope it by ANCHOR, not by index or project text. Only the line-items row carries
-# btnAddTask / btnLineItemsCollapse, so walk up from that control to the first
-# ancestor holding EXACTLY ONE row total - that ancestor is the row. Requiring
-# exactly one is what makes this self-checking: the gallery-wide container holds
-# four, so overshooting is detected rather than silently returning row 0. Matching
-# on the project NAME instead does not work - every row total has an ancestor
-# containing 'E2E Line Items' once you walk far enough up (depth 5 on dev).
+# Scope it by the ROW CONTAINER, not by index. Each assignment row is one
+# .mx-name-cntAssignmentRow, and lib/_tasks.sh picks the one whose cntRowCells
+# name the project (matching the project text from an arbitrary ancestor did not
+# work - every row total has an ancestor containing 'E2E Line Items' once you walk
+# far enough up, depth 5 on dev). This used to anchor on the first btnAddTask /
+# chevron in the gallery and walk up; since TT-788 btnAddTask is rendered on every
+# editable task row whether its panel is open or not, so the anchor stopped meaning
+# "the row under test". Requiring exactly one total keeps it self-checking.
 #
 # Returns '' when the row cannot be identified; probe_fresh_entry reports that as
 # its own failure rather than comparing against a number it did not read.
 row_total() {
-  playwright-cli eval "() => { const g=document.querySelector('$ROW'); if(!g) return ''; const a=g.querySelector('.mx-name-btnAddTask')||g.querySelector('.mx-name-btnLineItemsCollapse')||g.querySelector('.mx-name-btnLineItemsExpand'); if(!a) return ''; let el=a; for(let k=0;k<14;k++){ el=el.parentElement; if(!el||el===g) break; const n=el.querySelectorAll('[class*=mx-name-txtRowTotal] input'); if(n.length===1) return String(n[0].value||''); if(n.length>1) return ''; } return ''; }" 2>/dev/null | sed -n '2p' | tr -d '"'
+  playwright-cli eval "() => { const row=$(_tt_task_row_js "$PROJECT"); if(!row) return ''; const n=row.querySelectorAll('.mx-name-cntRowCells [class*=mx-name-txtRowTotal] input'); return n.length===1 ? String(n[0].value||'') : ''; }" 2>/dev/null | _tt_eval_str
 }
 
 task_count() { playwright-cli eval "() => String(document.querySelectorAll('$ROW .mx-name-txtLineItemName input').length)" 2>/dev/null | sed -n '2p' | tr -d '"'; }
 
 had_error_dialog() {
   playwright-cli eval "() => { const d=document.querySelector('[role=dialog],.modal-dialog,.mx-window'); return String(!!d && /error occurred|internal server error/i.test(d.innerText||'')); }" 2>/dev/null | sed -n '2p' | tr -d '"'
-}
-
-expand_tasks() {
-  local i tgl
-  for i in 1 2 3; do
-    playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }" 2>/dev/null | grep -qiw true && return 0
-    tgl=$(playwright-cli eval "() => { for (const s of ['btnLineItemsCollapse','btnLineItemsExpand']){ const t=document.querySelector('.mx-name-'+s); if (t && t.offsetParent!==null) return s; } return ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
-    [ -n "$tgl" ] && playwright-cli click ".mx-name-$tgl" >/dev/null 2>&1
-    sleep 2
-  done
-  playwright-cli eval "() => String(!!document.querySelector('.mx-name-btnAddTask'))" 2>/dev/null | grep -qiw true
 }
 
 # One full fresh-entry probe. $1 = label. Echoes RESULT lines; sets FAILED on hard fail.
@@ -75,11 +66,18 @@ probe_fresh_entry() {
   local label="$1"
   local wk; wk="$(tt_goto_fresh_week "$PROJECT")" || { echo "  [$label] no further FRESH week with '$PROJECT' — skipping"; return 2; }
   echo "  [$label] fresh week: $wk"
-  expand_tasks || { echo "  [$label] could not reveal Add Task"; FAILED="$FAILED $label(no-add-task)"; return 1; }
-
   local n0; n0="$(task_count)"
-  playwright-cli click ".mx-name-btnAddTask" >/dev/null 2>&1
-  sleep 2
+  # A fresh week's task row has no tasks, so since TT-788 it shows the "Add your
+  # first task" prompt and btnAddTask is hidden; tt_task_add presses whichever
+  # control the row offers and waits for the panel to open. (The old expand step
+  # decided "open" from btnAddTask's offsetParent, which a collapsed TT-788 panel
+  # also has.)
+  if ! tt_task_add "$PROJECT" >/dev/null; then
+    if [ "$(had_error_dialog)" = "true" ]; then
+      echo "  [$label] ERROR DIALOG on Add Task"; FAILED="$FAILED $label(add-task-error)"; tt_dismiss_dialogs; return 1
+    fi
+    echo "  [$label] could not add a task (panel: $(tt_task_panel_state "$PROJECT"))"; FAILED="$FAILED $label(no-add-task)"; return 1
+  fi
   if [ "$(had_error_dialog)" = "true" ]; then
     echo "  [$label] ERROR DIALOG on Add Task"; FAILED="$FAILED $label(add-task-error)"; tt_dismiss_dialogs; return 1
   fi

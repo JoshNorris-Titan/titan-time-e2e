@@ -136,8 +136,11 @@ probe() {
       let x = el.getBoundingClientRect().left + px(cs.borderLeftWidth) + px(cs.paddingLeft);
       return w.map(t => { const l = x; x += t + gap; return [l, t]; });
     };
+    // Cells taken out of the grid do not count: since TT-788 a task row with no
+    // tasks hides its day cells (display:none) and lays the first-task prompt
+    // (galFirstTask) across those tracks on purpose, after Docs in DOM order.
     const inc = r => {
-      const l = [...r.children].map(k => k.getBoundingClientRect().left);
+      const l = [...r.children].filter(k => getComputedStyle(k).display !== 'none' && !k.classList.contains('mx-name-galFirstTask')).map(k => k.getBoundingClientRect().left);
       for (let i = 1; i < l.length; i++) if (l[i] <= l[i - 1]) return false;
       return true;
     };
@@ -146,7 +149,9 @@ probe() {
     const hdr = gal.querySelector('.mx-name-cntWeekHeader');
     const tot = document.querySelector('.mx-name-cntWeekTotals');
     const rows = [...gal.querySelectorAll('.mx-name-cntRowCells')];
-    const li = [...gal.querySelectorAll('.mx-name-cntLineItemRow')].filter(r => r.offsetParent !== null && r.getBoundingClientRect().width > 0);
+    // Visible task rows only. Since TT-788 a collapsed panel keeps its task rows in
+    // the DOM with an offsetParent and full width; only visibility says it is shut.
+    const li = [...gal.querySelectorAll('.mx-name-cntLineItemRow')].filter(r => r.offsetParent !== null && r.getBoundingClientRect().width > 0 && getComputedStyle(r).visibility === 'visible');
     if (!hdr) out.push('header grid not found (.mx-name-cntWeekHeader)');
     if (!tot) out.push('Daily Totals grid not found (.mx-name-cntWeekTotals)');
     if (hdr) grids.push(['header', hdr]);

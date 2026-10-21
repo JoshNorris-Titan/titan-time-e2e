@@ -37,6 +37,7 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
+source "$TT_ROOT/lib/_tasks.sh"
 
 CUSER="${TT_CLEARTASK_USER:-e2e_consultant}"
 PROJECT="${TT_CLEARTASK_PROJECT:-E2E Line Items}"
@@ -81,16 +82,17 @@ is_zero() {
   esac
 }
 
-# Expand the tasks section — click whichever toggle is visible until Add Task shows.
+# expand_tasks — make the project row's task list readable. Succeeds when the panel
+# is open, AND when the row shows TT-788's "Add your first task" prompt: that state
+# means the row has no tasks, the panel is shut by design, and a task count of 0
+# read from it is the truth (which is exactly what A must be able to see if Clear
+# deleted the task). It used to decide "open" from btnAddTask having an
+# offsetParent; since TT-788 a collapsed panel keeps btnAddTask in the DOM with an
+# offsetParent (visibility:hidden), so that test passed with the panel shut.
 expand_tasks() {
-  local i tgl
-  for i in 1 2 3; do
-    playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }" 2>/dev/null | grep -qiw true && return 0
-    tgl="$(playwright-cli eval "() => { for (const s of ['btnLineItemsCollapse','btnLineItemsExpand']){ const t=document.querySelector('.mx-name-'+s); if (t && t.offsetParent!==null) return s; } return ''; }" 2>/dev/null | _tt_eval_str)"
-    [ -n "$tgl" ] && playwright-cli click ".mx-name-$tgl" >/dev/null 2>&1
-    sleep 2
-  done
-  playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }" 2>/dev/null | grep -qiw true
+  local rc
+  tt_task_panel_open "$PROJECT"; rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
 }
 
 # ------------------------------------------------------------------- setup
@@ -112,7 +114,7 @@ done
 WEEK="$(tt_current_week)"
 echo "clear-keeps-tasks on week '$WEEK'"
 
-expand_tasks || tt_fail "the tasks section would not expand on week '$WEEK' (no Add Task button) — Clear could not be exercised against a task"
+expand_tasks || tt_fail "the tasks section would not expand on week '$WEEK' (panel: $(tt_task_panel_state "$PROJECT")) — Clear could not be exercised against a task"
 
 # Debris from an interrupted run makes the whole week unsaveable, and this test
 # has to save. Refuse rather than fail later at the save with a confusing message.
@@ -123,8 +125,10 @@ echo "existing tasks: $N0"
 
 # ------------------------------------------------- add a task, fill it, save it
 
-playwright-cli click ".mx-name-btnAddTask" >/dev/null 2>&1
-sleep 2; tt_clear_dialogs 6 >/dev/null 2>&1 || true
+# tt_task_add presses btnAddFirstTask when the row has no tasks (TT-788 prompt;
+# btnAddTask is hidden there) and btnAddTask in the open panel otherwise.
+tt_task_add "$PROJECT" >/dev/null || tt_fail "could not add a task to the '$PROJECT' row on week '$WEEK' (panel: $(tt_task_panel_state "$PROJECT"))"
+tt_clear_dialogs 6 >/dev/null 2>&1
 [ "$(task_count)" = "$((N0 + 1))" ] || tt_fail "Add Task did not add a row on week '$WEEK' (before=$N0, after=$(task_count))"
 IDX=$((N0 + 1))
 

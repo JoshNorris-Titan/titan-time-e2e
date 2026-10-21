@@ -2,7 +2,9 @@
 # Consultant line-items ("tasks") UI on a NeedsLineItems project (E2E Line Items).
 #
 # Verifies the client-side line-item behaviour that IS reliable:
-#   - expand the tasks section, Add Task adds a row
+#   - the first task is added from whichever control the row offers (the
+#     "Add your first task" prompt on a row with no tasks, since TT-788, or Add
+#     Task in the opened panel), and adds a row
 #   - filling a task's Mon-Fri recalculates that task's own total (txtLineTotal)
 #   - editing a cell updates the line total
 #   - a second Add Task adds independently
@@ -21,8 +23,10 @@ set -uo pipefail
 # works at any nesting depth and still runs directly, not only via run-tests.sh.
 TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"
 source "$TT_ROOT/lib/_login.sh"
+source "$TT_ROOT/lib/_tasks.sh"
 
 ROW=".mx-name-galAssignmentRows"
+PROJECT="E2E Line Items"
 
 # Dismiss a stray dialog (TT-692 rollup error) so it doesn't block the next step.
 #
@@ -58,31 +62,27 @@ tt_login "e2e_consultant" "My Timesheets"
 # Find a week that has the E2E Line Items row.
 found=""
 for _ in $(seq 1 12); do
-  if playwright-cli eval "() => String((((document.querySelector('$ROW')||{}).innerText)||'').indexOf('E2E Line Items') >= 0)" 2>/dev/null | grep -qiw true; then
+  if playwright-cli eval "() => String((((document.querySelector('$ROW')||{}).innerText)||'').indexOf('$PROJECT') >= 0)" 2>/dev/null | grep -qiw true; then
     found=1; break
   fi
   playwright-cli click ".mx-name-btnWeekNext" >/dev/null 2>&1
   sleep 2
 done
-[ -n "$found" ] || tt_fail "no week with an 'E2E Line Items' row found"
+[ -n "$found" ] || tt_fail "no week with an '$PROJECT' row found"
 WEEK=$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'')" 2>/dev/null | sed -n '2p')
 echo "week: $WEEK"
 
-# Expand the tasks section — click whichever toggle is visible until Add Task shows.
-for _ in 1 2 3; do
-  playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }" 2>/dev/null | grep -qiw true && break
-  TGL=$(playwright-cli eval "() => { for (const s of ['btnLineItemsCollapse','btnLineItemsExpand']){ const t=document.querySelector('.mx-name-'+s); if (t && t.offsetParent!==null) return s; } return ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
-  [ -n "$TGL" ] && playwright-cli click ".mx-name-$TGL" >/dev/null 2>&1
-  sleep 2
-done
-tt_wait_for ".mx-name-btnAddTask" "Add Task button"
-
+# Since TT-788 the panel is always rendered and only collapses by class, so
+# "Add Task is in the DOM / has an offsetParent" no longer means "open". The row is
+# in one of three states and tt_task_add (lib/_tasks.sh) handles each: the
+# first-task prompt (no tasks: btnAddTask is hidden, btnAddFirstTask adds and
+# opens), a collapsed panel (opened first), an open one.
 N0="$(task_count)"
-echo "existing tasks: $N0"
+echo "existing tasks: $N0 (panel: $(tt_task_panel_state "$PROJECT"))"
 
 # 1) Add a task.
-playwright-cli click ".mx-name-btnAddTask" >/dev/null 2>&1
-sleep 2; dismiss_dialog
+tt_task_add "$PROJECT" >/dev/null || tt_fail "could not add a task to the '$PROJECT' row on week $WEEK"
+dismiss_dialog
 [ "$(task_count)" = "$((N0 + 1))" ] || tt_fail "Add Task did not add a row (before=$N0, after=$(task_count))"
 IDX=$((N0 + 1))
 
@@ -107,9 +107,9 @@ sleep 2; dismiss_dialog
 LT2="$(line_total "$IDX")"
 case "$LT2" in *32*) echo "line total (updated): $LT2" ;; *) tt_fail "line total wrong after update (expected 32, got '$LT2')" ;; esac
 
-# 4) Add a second task -> count N0+2.
-playwright-cli click ".mx-name-btnAddTask" >/dev/null 2>&1
-sleep 2; dismiss_dialog
+# 4) Add a second task -> count N0+2. The panel is open now, so this is Add Task.
+tt_task_add "$PROJECT" >/dev/null || tt_fail "could not add a second task to the '$PROJECT' row on week $WEEK"
+dismiss_dialog
 [ "$(task_count)" = "$((N0 + 2))" ] || tt_fail "second Add Task did not add (got $(task_count))"
 
 # This step only asserts the COUNT, so the second task used to be left unnamed.

@@ -33,6 +33,10 @@ TT654_HOURS="${TT654_HOURS:-8}"
 
 TT654_ROWS=".mx-name-galAssignmentRows"
 
+# The task panel helpers (open test, add-a-task, first-task prompt) — TT-788.
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_tasks.sh"
+
 # Set by tt654_find_editable_row.
 TT654_ORD=""
 TT654_WEEK=""
@@ -60,10 +64,20 @@ tt654_dismiss_dialog() {
 # rows and rolled up — so the plain "is Monday editable?" check below can never
 # match, and verify-tt654-a0/a3/a7 all failed with "no editable week ... found
 # within 12 weeks" against a project the consultant is very much assigned to
-# (verify-consultant-line-items passes on it). Worse, the task section is
-# normally COLLAPSED, so it renders no inputs and no Add Task button at all
-# until expanded. Hence: fast path first, then expand and look for Add Task,
-# which the snippet gates on $galAssignmentRows/_IsEditable.
+# (verify-consultant-line-items passes on it).
+#
+# The slow path decides on btnAddTask, whose own visibility rule is
+# $currentObject/_IsEditable. Its PRESENCE is the editability test, never its
+# visibility:
+#   * since TT-788 the task panel (cntRowTasks) is always rendered on a task row
+#     and only collapses by class, so btnAddTask is in the DOM on every editable
+#     task row, open or closed, and also while the row shows the "Add your first
+#     task" prompt. Nothing needs toggling, so nothing is toggled.
+#   * before TT-788 the panel was not rendered at all while collapsed, so the row
+#     had to be expanded before btnAddTask could be looked for. That branch is
+#     kept for a build without cntRowTasksBody.
+# This answers "is the row editable", NOT "is the panel open" — use
+# tt_task_panel_open / tt_task_add (lib/_tasks.sh) for that.
 tt654_row_ordinal() {
   local proj="$1" ord
 
@@ -73,16 +87,22 @@ tt654_row_ordinal() {
   if [ -n "$ord" ] && [ "$ord" != "0" ]; then echo "$ord"; return 0; fi
 
   # Slow path — a line-items row. Locate it whether or not it is editable.
-  ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon')]; for(let n=0;n<mons.length;n++){ let el=mons[n], row=null; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) break; row=el; } if(!row) continue; if((row.innerText||'').indexOf('$proj')<0) continue; if(row.querySelector('.mx-name-btnLineItemsExpand, .mx-name-btnLineItemsCollapse, .mx-name-btnAddTask')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p')
+  # (txtDayMon is still in the DOM while the first-task prompt hides the day
+  # cells — the prompt hides them with CSS, not with a visibility rule.)
+  ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon')]; for(let n=0;n<mons.length;n++){ let el=mons[n], row=null; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) break; row=el; } if(!row) continue; if((row.innerText||'').indexOf('$proj')<0) continue; if(row.querySelector('.mx-name-btnLineItemsExpand, .mx-name-btnLineItemsCollapse, .mx-name-btnAddTask, .mx-name-cntRowTasks, .mx-name-galFirstTask')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p')
   ord="${ord%\"}"; ord="${ord#\"}"
   if [ -z "$ord" ] || [ "$ord" = "0" ]; then echo "0"; return 0; fi
 
-  # Expand the task section if it is collapsed, then decide on Add Task.
-  local i
+  # Decide on btnAddTask's presence. 'yes'/'no' are final; 'closed' means a
+  # pre-TT-788 build whose panel is collapsed and so renders nothing yet.
+  local i r
   for i in 1 2 3; do
-    if playwright-cli eval "() => { const mons=[...document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon')]; const mon=mons[$ord - 1]; if(!mon) return 'nf'; let el=mon, row=null; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) break; row=el; } if(!row) return 'nf'; return String(!!row.querySelector('.mx-name-btnAddTask')); }" 2>/dev/null | grep -qiw true; then
-      echo "$ord"; return 0
-    fi
+    r=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon')]; const mon=mons[$ord - 1]; if(!mon) return 'nf'; let el=mon, row=null; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) break; row=el; } if(!row) return 'nf'; if(row.querySelector('.mx-name-btnAddTask')) return 'yes'; if(row.querySelector('.mx-name-cntRowTasksBody')) return 'no'; return row.querySelector('.mx-name-cntRowTasks') ? 'no' : 'closed'; }" 2>/dev/null | _tt_eval_str)
+    case "$r" in
+      yes) echo "$ord"; return 0 ;;
+      no|nf) echo "0"; return 0 ;;
+    esac
+    # Pre-TT-788 only: expand so the panel renders, then look again.
     playwright-cli eval "() => { const mons=[...document.querySelectorAll('$TT654_ROWS .mx-name-txtDayMon')]; const mon=mons[$ord - 1]; if(!mon) return 'nf'; let el=mon, row=null; for(let k=0;k<12;k++){ el=el.parentElement; if(!el) break; if(el.querySelectorAll('.mx-name-txtDayMon').length!==1) break; row=el; } if(!row) return 'nf'; const t=row.querySelector('.mx-name-btnLineItemsCollapse, .mx-name-btnLineItemsExpand'); if(t){ t.click(); return 'toggled'; } return 'notoggle'; }" >/dev/null 2>&1
     sleep 2
   done
@@ -252,21 +272,21 @@ tt654_seed_draft() {
 }
 
 # tt654_add_task <row-ordinal> <task-name> [hours]
-# Expands the tasks section and adds one line item with Mon-Fri hours. Only
+# Adds one line item with Mon-Fri hours to the $TT654_PROJECT_LINEITEMS row. Only
 # meaningful on a NeedsLineItems project. Editing a cell commits the LineItem.
+#
+# The add goes through tt_task_add (lib/_tasks.sh), which handles all three
+# states the row can be in since TT-788: the "Add your first task" prompt (no
+# tasks yet — btnAddTask is hidden, btnAddFirstTask adds the task and opens the
+# panel), a collapsed panel (opened first), and an open one. It used to decide
+# "open" from btnAddTask having an offsetParent, which a collapsed TT-788 panel
+# also satisfies (visibility:hidden keeps offsetParent), and then click a hidden
+# button.
 tt654_add_task() {
-  local ord="$1" name="$2" hrs="${3:-$TT654_HOURS}" i d idx
-  for i in 1 2 3; do
-    playwright-cli eval "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }" 2>/dev/null | grep -qiw true && break
-    local tgl
-    tgl=$(playwright-cli eval "() => { for (const s of ['btnLineItemsCollapse','btnLineItemsExpand']){ const t=document.querySelector('.mx-name-'+s); if (t && t.offsetParent!==null) return s; } return ''; }" 2>/dev/null | sed -n '2p' | tr -d '"')
-    [ -n "$tgl" ] && playwright-cli click ".mx-name-$tgl" >/dev/null 2>&1
-    sleep 2
-  done
-  tt_wait_for ".mx-name-btnAddTask" "Add Task button (is '$TT654_PROJECT_LINEITEMS' really a NeedsLineItems project?)"
-
-  playwright-cli click ".mx-name-btnAddTask" >/dev/null 2>&1
-  sleep 2; tt654_dismiss_dialog
+  local ord="$1" name="$2" hrs="${3:-$TT654_HOURS}" d idx
+  tt_task_add "$TT654_PROJECT_LINEITEMS" >/dev/null \
+    || tt_fail "could not add a task to the '$TT654_PROJECT_LINEITEMS' row (is it really a NeedsLineItems project, and is the week editable?)"
+  tt654_dismiss_dialog
 
   idx=$(playwright-cli eval "() => String(document.querySelectorAll('$TT654_ROWS .mx-name-txtLineItemName input').length)" 2>/dev/null | sed -n '2p' | tr -d '"')
   [ -n "$idx" ] && [ "$idx" != "0" ] || tt_fail "Add Task did not create a task row"
