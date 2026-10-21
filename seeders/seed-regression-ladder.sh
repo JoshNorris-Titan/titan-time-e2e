@@ -65,6 +65,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."   # seeders/ -> tests/ -> project root
 source tests/lib/_login.sh
 source tests/lib/_seed.sh
+source tests/lib/_tasks.sh
 
 if [ -z "${TT_BASE_URL:-}" ]; then
   echo "FAIL: TT_BASE_URL must be set explicitly. This seeder submits, approves and" >&2
@@ -109,20 +110,18 @@ fill_row() {
   sleep 1
 }
 
-# expand_line_items — open the line-item panel and wait until Add Task is actually usable.
+# expand_line_items — open the line-item panel (lib/_tasks.sh does the work).
 #
-# Testing for the mere EXISTENCE of .mx-name-galLineItems is not enough: the gallery stays
-# in the DOM while collapsed, so an existence check returns early with the panel shut and
-# btnAddTask unclickable — which is exactly why "Add Task produced no line-item row".
-# Gate on the button being VISIBLE (offsetParent), not on the gallery existing.
+# Neither the gallery existing NOR Add Task having an offsetParent proves the panel
+# is open. Since TT-788 the panel (cntRowTasks) is always rendered and collapses by
+# a class (tt-tasks-collapsed): galLineItems and btnAddTask stay in the DOM while
+# it is shut, and visibility:hidden keeps their offsetParent. tt_task_panel_open
+# reads the class. Returns 0 when open, and also when the row shows the "Add your
+# first task" prompt — no tasks yet, which add_line_item handles via tt_task_add.
 expand_line_items() {
-  local i
-  for i in 1 2 3; do
-    [ "$(pw "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }")" = "true" ] && return 0
-    pw "() => { const b=document.querySelector('.mx-name-btnLineItemsCollapse')||document.querySelector('.mx-name-btnLineItemsExpand'); if(b){b.click(); return 'Y';} return 'N'; }" >/dev/null
-    sleep 4
-  done
-  [ "$(pw "() => { const b=document.querySelector('.mx-name-btnAddTask'); return String(!!b && b.offsetParent!==null); }")" = "true" ]
+  local rc
+  tt_task_panel_open; rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
 }
 
 # drop_blank_line_items — delete any line item whose Name is empty.
@@ -147,17 +146,13 @@ drop_blank_line_items() {
 # add_line_item <name> <sun..sat>
 add_line_item() {
   local name="$1"; shift
-  local j n before
+  local n
   expand_line_items
   drop_blank_line_items || true
-  before="$(pw "() => String(document.querySelectorAll('.mx-name-galLineItems .mx-name-txtLineItemName').length)")"
-  pw "() => { const b=document.querySelector('.mx-name-btnAddTask'); if(b){b.click(); return 'Y';} return 'N'; }" >/dev/null
-  for j in $(seq 1 6); do
-    sleep 2
-    n="$(pw "() => String(document.querySelectorAll('.mx-name-galLineItems .mx-name-txtLineItemName').length)")"
-    case "$n" in ''|*[!0-9]*) continue ;; esac
-    [ "$n" -gt "${before:-0}" ] && break
-  done
+  # tt_task_add presses btnAddFirstTask on a row with no tasks (TT-788: btnAddTask is
+  # hidden there) and btnAddTask in the open panel otherwise, then waits for the
+  # count to grow. It echoes the row's new task count, which is this task's ordinal.
+  n="$(tt_task_add 2>/dev/null)"
   case "${n:-0}" in ''|*[!0-9]*|0) log "    !! Add Task produced no line-item row"; return 1 ;; esac
 
   playwright-cli fill ":nth-match(.mx-name-galLineItems .mx-name-txtLineItemName input, ${n})" "$name" >/dev/null 2>&1
