@@ -221,3 +221,23 @@ tt_authz_expect_refused() {
   esac
   tt_fail "$label: the call SUCCEEDED (answer: [$answer]) - this session was allowed to do something it should not have been"
 }
+
+# tt_authz_guid <xpath> -- the guid of the first object the CURRENT session can see.
+#
+# Echoes the guid, ERR:notfound, or ERR:<why>. Exists so a denial test can find its
+# target as an ENTITLED user and then attack it BY GUID as the denied one
+# (`//Main.X[id='<guid>']`). Finding it as the denied user instead asks a READ
+# question first, and a read denial then hides whether the write would have landed:
+# verify-consultant-write-isolation's cross-consultant write was never attempted for
+# exactly that reason (the consultant's lookup came back notfound).
+tt_authz_guid() {
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t = setTimeout(() => res('ERR:timeout'), 15000); mx.data.get({ xpath: \"$1\", filter: { amount: 1 }, callback: function(objs){ clearTimeout(t); if (!objs || !objs.length) return res('ERR:notfound'); res(String(objs[0].getGuid())); }, error: function(e){ clearTimeout(t); res('ERR:' + ((e && e.message) || 'retrieve-refused')); } }); } catch (e) { res('ERR:' + e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
+# tt_authz_remove <guid> -- delete one object as the CURRENT session.
+#
+# Echoes 'ok' or ERR:<why>. For cleaning up after a create that should have been
+# refused and was not; a caller asserting a denial never needs it otherwise.
+tt_authz_remove() {
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t = setTimeout(() => res('ERR:timeout'), 15000); mx.data.remove({ guid: \"$1\", callback: function(){ clearTimeout(t); res('ok'); }, error: function(e){ clearTimeout(t); res('ERR:' + ((e && e.message) || 'refused')); } }); } catch (e) { res('ERR:' + e.message); } })" 2>/dev/null | _tt_eval_str
+}
