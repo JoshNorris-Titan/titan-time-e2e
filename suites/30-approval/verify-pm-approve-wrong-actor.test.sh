@@ -24,11 +24,21 @@
 #   A. Control: PM A genuinely has entries awaiting manager approval. Without
 #      that, everything below passes for the wrong reason and the run aborts.
 #   B. PM B's pending gallery does not show them.
-#   C. PM B cannot retrieve them from the data layer either, asked directly
-#      through the app's own client API.
+#   C. (reported, not asserted since TT-800) how many of them PM B can retrieve
+#      from the data layer.
 #
-# C is the one that would catch a real hole. B can pass on an empty database; C
-# only passes when the platform actually refuses.
+# WHY C NO LONGER FAILS THE STEP (TT-800, 2026-10-23). C used to be the step that
+# "would catch a real hole": it asserted PM B retrieves 0 of PM A's entries. That
+# zero was never the boundary. Main.AssignmentEntry's ProjectManager rule has no
+# XPath at all; what kept the count at 0 was this XPath walking through
+# Main.Assignment, which PMs could only read on their own projects, and the
+# Account/Name member at its end (see verify-pm-approve-foreign-entry-refused's
+# control_login note). TT-800 gave ProjectManager a read-only, unconstrained rule on
+# Main.Assignment so the reports show every project - reading another PM's work is
+# now intended. The invoice boundary is the ACTION, not the read: a PM cannot
+# approve or reject another PM's entry, asserted (and proven able to fail, on dev
+# 2026-09-29) by suites/85-security/verify-pm-approve-foreign-entry-refused.
+# So A and B are this step's assertions; C prints what the data layer says.
 #
 # WHAT IT DOES NOT DO. Attempt the approval itself. The per-entry action takes an
 # ApprovalHelper that Main.DS_ApprovalHelper_PM builds per session, so PM B has no
@@ -94,29 +104,14 @@ else
   echo "  note: '$PM_B' sees $rows approvable row(s) of its own - that is allowed; C is what matters"
 fi
 
-# ----------------------------------------- C. and neither is the data underneath
+# ------------------------- C. what the data underneath says (reported only)
+# Not an assertion since TT-800 - see the header. Reading another PM's entries is
+# allowed; approving them is not, and 85-security asserts that.
 mine="$(wa_count "$XPATH")"
-
 case "$mine" in
-  ERR:no-mx-client)
-    tt_fail "the Mendix client API was not available on '$PM_B' page, so the data layer could not be asked. This step will not report a pass without having asked." ;;
-  ERR:*)
-    echo "  the data layer refused the request outright ($mine)"
-    echo "PASS: verify-pm-approve-wrong-actor - '$PM_B' cannot reach '$PM_A' approvals (retrieve refused)"
-    exit 0 ;;
-  ''|*[!0-9]*)
-    tt_fail "the '$PM_B' retrieve returned something that is not a count: [$mine]" ;;
+  ''|*[!0-9]*) echo "  note: as '$PM_B' the data layer answered [$mine]" ;;
+  *)           echo "  note: as '$PM_B' $mine of those $admin entries are readable (allowed since TT-800)" ;;
 esac
 
-echo "  as '$PM_B': $mine of those $admin entries came back"
-
-if [ "$mine" -eq 0 ]; then
-  echo "PASS: verify-pm-approve-wrong-actor - '$PM_B' retrieved 0 of the $admin entries awaiting '$PM_A' approval"
-  exit 0
-fi
-
-echo "FAIL: verify-pm-approve-wrong-actor - '$PM_B' retrieved $mine of $admin entries awaiting '$PM_A' approval."
-echo "      The dashboard filters by the logged-in manager, so this does not show on screen -"
-echo "      but the entity access rule behind it does not, and approval is the boundary the"
-echo "      customer is invoiced on. The fix belongs on the access rule, not on the dashboard."
-exit 1
+echo "PASS: verify-pm-approve-wrong-actor - '$PM_B' is shown none of the $admin entries awaiting '$PM_A' approval"
+exit 0
