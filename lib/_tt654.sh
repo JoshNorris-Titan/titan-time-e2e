@@ -454,6 +454,7 @@ async () => {
   const post=(body,sid)=>fetch(url,{method:'POST',headers:hdr(sid),body:JSON.stringify(body)});
   const init=await post({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'tt654-e2e',version:'1.0'}}});
   const sid=init.headers.get('Mcp-Session-Id');
+  if(!sid && init.status===401) return 'AUTHFAIL';
   if(!sid) return 'NOSESSION:'+init.status;
   await post({jsonrpc:'2.0',method:'notifications/initialized'},sid);
   const r=await post({jsonrpc:'2.0',id:2,method:'$method',params:$params},sid);
@@ -471,7 +472,8 @@ JS
 
 # tt654_mcp_call <token> <tool-name> <js-object-literal-args>
 # Calls one MCP tool and echoes its text result. Special values:
-#   AUTHFAIL     the token was rejected
+#   AUTHFAIL     the token was rejected — at initialize (401, since the MCP server
+#                refuses a session it cannot sign in) or on the call itself
 #   NOSESSION:n  the endpoint did not return a session (wrong TT654_MCP_PATH?)
 #   RPCERROR:..  the tool threw
 tt654_mcp_call() {
