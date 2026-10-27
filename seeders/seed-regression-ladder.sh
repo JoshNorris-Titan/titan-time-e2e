@@ -524,8 +524,9 @@ wait_entries() {
 # select_week <label> — select a week on the open tab: click it in the picker
 # (Manager/Client), or make it the one expanded week group (To Process, Sent - model
 # b2202878 / 771be886, 2026-09-28). Remembered in SEED_CUR_WEEK so owned_with can put
-# it back: acting on a row refreshes a grouped tab, which re-expands only the NEWEST
-# week, and a count read after that would be about a different week.
+# it back: acting on a row refreshes a grouped tab, which re-expands only one week
+# (the newest; on To Process since TT-807 the oldest, or the week just processed
+# from), and a count read after that would be about a different week.
 SEED_CUR_WEEK=""
 select_week() {
   local i

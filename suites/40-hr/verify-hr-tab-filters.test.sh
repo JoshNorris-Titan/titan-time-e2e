@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# HR's Weekly to process tab groups its queue by week correctly, opens on the newest
-# week, lets a week be folded and unfolded, and its consultant filter actually
+# HR's Weekly to process tab groups its queue by week correctly, opens on the oldest
+# week (TT-807), lets a week be folded and unfolded, and its consultant filter actually
 # narrows the queue - and clearing it restores what was there.
 #
 # tt-timeout: 10m
@@ -15,14 +15,16 @@
 # b2202878 / 771be886 rebuilt To Process: the week picker (galProcessAvailableWeeks)
 # and the one-week card gallery (galProcessEntries) are gone. The queue is now a list
 # of week GROUPS (lstProcessWeeks), each a band - "Week of Sep 07 – Sep 13, 2026",
-# "3 timesheets", "24 h" - over that week's rows, and only the newest week starts
-# expanded. So "pick a week, then filter it" is no longer a thing HR can do; the
+# "3 timesheets", "24 h" - over that week's rows, and only one week starts expanded
+# (the newest until TT-807, 2026-10-26; now the OLDEST, which is listed first, because
+# HR works a week from the oldest outstanding one forward). So "pick a week, then filter it" is no longer a thing HR can do; the
 # week grouping and its expand/collapse are what replaced the picker, and they are
 # what this now asserts (E-G), alongside the consultant filter, which survived the
 # rebuild unchanged (A-D) but now narrows EVERY week at once.
 #
 # WHAT IT ASSERTS
-#   E. the tab opens with exactly ONE week expanded, and it is the newest week;
+#   E. the tab opens with exactly ONE week expanded, it is the oldest week, and it is
+#      listed first (TT-807);
 #   F. every week's band count ("N timesheets") equals the rows under it once
 #      expanded - the grouping neither drops rows nor double-lists them;
 #   G. folding the open week hides its rows, and unfolding it brings the same rows
@@ -56,7 +58,7 @@ CB='.mx-name-cbProcessConsultant'
 # groups_state — one line per week group:
 #   <label>~~<open 1/0>~~<band count>~~<rows rendered>~~<start date, epoch ms>
 # The band count is parsed from txtProcessGroupCount ("3 timesheets"); the start date
-# from the label's first date and its year, so "newest" is decided on dates rather
+# from the label's first date and its year, so "oldest" is decided on dates rather
 # than on list position.
 groups_state() {
   playwright-cli eval "() => { $(_tt_hr_grp_js) if (HG.kind !== 'Process') return 'NOTPROCESS'; return HG.groups().map(x => { const cnt = ((x.g.querySelector('.mx-name-txtProcessGroupCount') || {}).innerText || '').match(/(\d+)/); const L = x.label.replace(/[–—]/g, '-'); const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; let y = +((L.match(/(\d{4})/) || [])[1] || 0); const m = L.match(/([A-Z][a-z]{2})\s+(\d{1,2})\s*-\s*([A-Z][a-z]{2})?/); if (m && m[3] && M.indexOf(m[1]) > M.indexOf(m[3])) y--; const t = m && y ? Date.parse(m[1] + ' ' + m[2] + ', ' + y) : NaN; return [x.label, x.open ? 1 : 0, cnt ? cnt[1] : '?', HG.rows(x.g).length, isNaN(t) ? '?' : t].join('~~'); }).join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$'
@@ -75,7 +77,7 @@ tt_hr_wait_pane "the Weekly to process week groups (lstProcessWeeks)"
 [ "$(tt_hr_pane_kind)" = "Process" ] \
   || tt_fail "the Weekly to process tab did not render its week groups (.mx-name-lstProcessWeeks) - kind '$(tt_hr_pane_kind)'. If it shows a week picker again, the rebuild was reverted and this spec's grouping half no longer applies."
 
-# ------------------------------------------------------ E. newest week, alone, open
+# ------------------------------------------------- E. oldest week, first, alone, open
 STATE="$(groups_state)"
 NGROUPS="$(printf '%s\n' "$STATE" | grep -c .)"
 [ "$NGROUPS" -ge 1 ] \
@@ -84,13 +86,14 @@ note "the tab lists $NGROUPS week group(s):"
 printf '%s\n' "$STATE" | awk -F'~~' '{printf "    %-44s open=%s band=%s rows=%s\n", $1, $2, $3, $4}'
 
 OPEN_N="$(printf '%s\n' "$STATE" | awk -F'~~' '$2==1' | grep -c .)"
-NEWEST="$(printf '%s\n' "$STATE" | awk -F'~~' '$5!="?" {print $5 "~~" $1}' | sort -t'~' -k1,1nr | head -1 | sed 's/^[0-9]*~~//')"
+OLDEST="$(printf '%s\n' "$STATE" | awk -F'~~' '$5!="?" {print $5 "~~" $1}' | sort -t'~' -k1,1n | head -1 | sed 's/^[0-9]*~~//')"
+FIRST_L="$(printf '%s\n' "$STATE" | head -1 | awk -F'~~' '{print $1}')"
 OPEN_L="$(printf '%s\n' "$STATE" | awk -F'~~' '$2==1 {print $1}' | head -1)"
-[ -n "$NEWEST" ] || bad "E: could not read a start date from any week label, so 'newest' cannot be decided"
-if [ "$OPEN_N" -eq 1 ] && [ "$OPEN_L" = "$NEWEST" ]; then
-  note "E ok: exactly one week starts expanded, and it is the newest ('$OPEN_L')"
+[ -n "$OLDEST" ] || bad "E: could not read a start date from any week label, so 'oldest' cannot be decided"
+if [ "$OPEN_N" -eq 1 ] && [ "$OPEN_L" = "$OLDEST" ] && [ "$FIRST_L" = "$OLDEST" ]; then
+  note "E ok: exactly one week starts expanded, and it is the oldest, listed first ('$OPEN_L')"
 else
-  bad "E: expected exactly the newest week ('$NEWEST') expanded on arrival; $OPEN_N week(s) are expanded (first: '${OPEN_L:-none}')"
+  bad "E: expected exactly the oldest week ('$OLDEST') listed first and expanded on arrival; first listed '${FIRST_L:-none}', $OPEN_N week(s) expanded (first: '${OPEN_L:-none}')"
 fi
 
 # ------------------------------------------- F. band counts agree with their rows
@@ -181,4 +184,4 @@ if [ "$fails" -ne 0 ]; then
   echo "FAIL: verify-hr-tab-filters — $fails problem(s) with the Weekly to process grouping or its consultant filter."
   exit 1
 fi
-echo "PASS: verify-hr-tab-filters — $NGROUPS week group(s), newest open on arrival, band counts match their rows, a week folds and unfolds; filtering to '$TARGET' narrowed $BEFORE_N to $AFTER_N rows and clearing restored $RESTORED_N."
+echo "PASS: verify-hr-tab-filters — $NGROUPS week group(s), oldest first and open on arrival, band counts match their rows, a week folds and unfolds; filtering to '$TARGET' narrowed $BEFORE_N to $AFTER_N rows and clearing restored $RESTORED_N."
