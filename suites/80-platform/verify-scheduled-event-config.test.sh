@@ -121,7 +121,9 @@ else:
 
 GUARDED = {
     "ToConsultant_SubmissionReminder": "Main.SCE_ToConsultant_SubmissionReminder_Guarded",
-    "ToCustomer_ApprovalRequest":      "Main.SCE_ToCustomer_ApprovalRequest_Guarded",
+    # TT-741 replaced the per-project sender with a per-approver digest; the event kept its
+    # name, the wrapper did not.
+    "ToCustomer_ApprovalRequest":      "Main.SCE_ToCustomer_ApprovalDigest_Guarded",
     "ToManager_ApprovalRequest":       "Main.SCE_ToManager_ApprovalRequest_Guarded",
     "Assignment_VerifyHours":          "Main.SCE_Assignment_VerifyHours_Guarded",
     "Timesheet_CleanupEmptyDrafts":    "Core.SCE_Timesheet_CleanupEmptyDrafts_Guarded",
