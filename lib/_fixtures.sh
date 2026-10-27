@@ -164,7 +164,11 @@ FX_ASSIGNMENTS=(
   "E2E Consultant Two|E2E Manager Approval|40"
 )
 
-# Matches the window every existing E2E assignment uses (07/01/2026 - 12/31/2027).
+# Matches the window every E2E assignment uses (06/28/2026 - 01/01/2028): a Sunday to a
+# Saturday, because since TT-789 the assignment form snaps a start date back to its
+# week's Sunday and an end date forward to its Saturday. A date already on that day is
+# left alone, so these read back exactly as typed. Any other day is moved, and the
+# form driver's readback (fx_run_form) then fails on the difference.
 # The window must cover the weeks the tests drive, or the assignment exists but
 # renders zero rows — the failure mode seed-shakedown.sh was written to catch.
 #
@@ -173,8 +177,8 @@ FX_ASSIGNMENTS=(
 # the wrong shape is accepted into the DOM and then rejected by the widget with
 # "Invalid date", so the save fails while the field looks correctly filled. If
 # dpStartDate/dpEndDate are ever reformatted again, these two must follow.
-FX_START_DATE="${FX_START_DATE:-07/01/2026}"
-FX_END_DATE="${FX_END_DATE:-12/31/2027}"
+FX_START_DATE="${FX_START_DATE:-06/28/2026}"
+FX_END_DATE="${FX_END_DATE:-01/01/2028}"
 FX_BUDGET_HOURS="${FX_BUDGET_HOURS:-400}"
 
 # Matches the sibling E2E projects already on dev, so a created project is
@@ -1113,7 +1117,7 @@ fx_reconcile_collect() {
 # consultantName|loginUser|project|weeksBack
 #
 # weeksBack must keep the target week inside the assignment window
-# (FX_START_DATE, 07/01/2026). Main.SUB_Assignment_FilterActive only creates
+# (FX_START_DATE, 06/28/2026). Main.SUB_Assignment_FilterActive only creates
 # entries for assignments whose window spans the week, so a week before the
 # start renders zero rows and seeds nothing.
 FX_ENTRIES=(

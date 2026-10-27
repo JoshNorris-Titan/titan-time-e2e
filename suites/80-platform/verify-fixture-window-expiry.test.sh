@@ -6,7 +6,7 @@
 # breaks.
 #
 # WHY THIS EXISTS. The window is a pair of hardcoded dates, currently
-# 07/01/2026 - 12/31/2027, and lib/_fixtures.sh says what happens when the tests
+# 06/28/2026 - 01/01/2028, and lib/_fixtures.sh says what happens when the tests
 # drive a week outside it: "the assignment exists but renders zero rows". That is
 # not one red test. Every consultant, approval, HR and export step works through an
 # assignment, so the whole suite goes red at once, on a date nobody has in mind,
