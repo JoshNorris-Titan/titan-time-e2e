@@ -50,11 +50,21 @@ source "$TT_ROOT/lib/_tt647.sh"
 source "$TT_ROOT/lib/_tt683.sh"
 
 CONSULTANT="${TT683_CONSULTANT:-e2e_consultant}"
-# One weekly Submit submits EVERY assignment row on the week, so E2E Dual Approval
-# is submitted here whether or not it is listed. Listing it means it gets approved
-# on both tabs and becomes a usable pairing, instead of arriving at To Process
-# half-approved and being skipped as unprocessable.
-SEED_PROJECTS="${TT683_SEED_PROJECTS:-E2E Customer Approval|E2E Manager Approval|E2E Dual Approval}"
+# The seed rows: "<project>:<approval tab>[,<tab>]". Each project listed gets
+# 40 hours on ONE week and one Submit, then is approved on the tab(s) named.
+#
+# HOURS ON EVERY LISTED ROW. One weekly Submit closes every assignment row on the
+# week, but it used to fill hours on the FIRST project only. The rest went in at
+# zero hours, and a zero-hour entry skips approval and goes straight to To
+# Process (the status rule is "if TotalHours = 0 then ToProcess"). So the loop
+# below sat polling approval tabs for cards that could never appear: on dev on
+# 2026-10-26 the only approval it made was the first project's, and the step
+# overran its 14 minutes. Read off dev afterwards: one 40h entry, three 0h.
+#
+# THE TAB IS NAMED, NOT SEARCHED. Trying both tabs for every project costs a
+# failed wait per project. A dual-approval project (manager then client) can still
+# be seeded as "E2E Dual Approval:manager,client".
+SEED_ROWS="${TT683_SEED_ROWS:-E2E Customer Approval:client|E2E Manager Approval:manager}"
 
 # best_week <lines> — "<n>|<week>": the week holding the most distinct
 # consultant/project pairings among the drain's "<consultant>|<project>|<week>"
@@ -87,35 +97,48 @@ if [ "$N" -lt 2 ]; then
   # submit seeds several consultant/project pairings in the same month. That is
   # precisely the shape TT-683 splits on.
   tt_login "$CONSULTANT" "My Timesheets"
-  FIRST="${SEED_PROJECTS%%|*}"
-  tt_consultant_submit_project_row "$FIRST"
-
-  # Approve everything that landed in an approval queue. HR can stand in on both
-  # stages, which keeps this independent of the PM dashboard.
+  SEED_PROJECTS=()
   OLDIFS="$IFS"; IFS='|'
-  for PROJ in $SEED_PROJECTS; do
+  for ROW in $SEED_ROWS; do [ -n "$ROW" ] && SEED_PROJECTS+=("${ROW%%:*}"); done
+  IFS="$OLDIFS"
+  tt_consultant_submit_project_row "${SEED_PROJECTS[@]}"
+
+  # Approve each seeded row on the tab(s) its spec names. HR can stand in on both
+  # stages, which keeps this independent of the PM dashboard.
+  #
+  # THE SUBMITTED WEEK ONLY. This used to walk every week the tab offers until
+  # one mentioned the project (tt647_select_week_with). On dev each tab offers
+  # 17+ weeks, and each walked week is a select plus a full card load. The submit
+  # recorded the week in TT_SUBMITTED_WEEK; pin it, and give the asynchronous
+  # routing a few polls to land the card.
+  IFS='|'
+  for ROW in $SEED_ROWS; do
     IFS="$OLDIFS"
-    [ -n "$PROJ" ] || continue
-    # TRY BOTH TABS, DO NOT STOP AT THE FIRST. A dual-approval project needs a
-    # manager AND a client sign-off; breaking after one leaves the entry half
-    # approved, and it then turns up on To Process with no Process action on it.
-    # That is what took the whole drain down before tt683_process_one learned to
-    # skip such a card. For a single-approval project the second tab simply finds
-    # nothing to approve, which costs one tab check.
-    for TAB in "$TT647_TAB_MANAGER" "$TT647_TAB_CLIENT"; do
+    [ -n "$ROW" ] || continue
+    PROJ="${ROW%%:*}"; TABS="${ROW#*:}"
+    IFS=','
+    for T in $TABS; do
+      IFS="$OLDIFS"
+      case "$T" in
+        manager) TAB="$TT647_TAB_MANAGER" ;;
+        client)  TAB="$TT647_TAB_CLIENT" ;;
+        *) tt_fail "TT683_SEED_ROWS: '$ROW' names tab '$T'; use manager and/or client" ;;
+      esac
       tt647_hr_open_tab "$TAB"
-      if tt647_select_week_with "$PROJ" >/dev/null 2>&1; then
-        if tt647_hr_approve_card "$PROJ"; then
-          echo "  approved '$PROJ' on the $TAB tab"
-        fi
+      if tt647_wait_for_card "$TT_SUBMITTED_WEEK" "$PROJ" "" 5 && tt647_hr_approve_card "$PROJ"; then
+        echo "  approved '$PROJ' on the $TAB tab"
+      else
+        echo "  could not approve '$PROJ' on the $TAB tab: ${TT647_WAIT_ERR:-${TT647_APPROVE_ERR:-unknown}}"
       fi
+      IFS=','
     done
     IFS='|'
   done
   IFS="$OLDIFS"
 
   echo "processing the newly approved entries…"
-  MORE="$(tt683_process_all_toprocess 12 week)"
+  # Only the week just seeded: every other week was already walked in step 1.
+  MORE="$(tt683_process_all_toprocess 12 week "$TT_SUBMITTED_WEEK")"
   PROCESSED="$(printf '%s\n%s\n' "${PROCESSED:-}" "${MORE:-}" | grep . || true)"
   BEST="$(best_week "${PROCESSED:-}")"; N="${BEST%%|*}"; WEEK="${BEST#*|}"
   echo "now $(printf '%s\n' "${PROCESSED:-}" | grep -c .) entr(y/ies) in AwaitingExport:"
@@ -124,9 +147,9 @@ fi
 
 # ------------------------------------------------------------------ 3) assert
 [ "$N" -ge 1 ] \
-  || tt_fail "nothing reached AwaitingExport — the export tests have no data to work on. Check that '$CONSULTANT' has assignments on ${SEED_PROJECTS}, that HR can approve them, and that the To Process cards expose a 'View & Process' button (Main.HRDashboard btnProcessEntry)."
+  || tt_fail "nothing reached AwaitingExport — the export tests have no data to work on. Check that '$CONSULTANT' has assignments on the projects in TT683_SEED_ROWS (${SEED_ROWS}), that HR can approve them, and that the To Process cards expose a 'View & Process' button (Main.HRDashboard btnProcessEntry)."
 
 [ "$N" -ge 2 ] \
-  || tt_fail "no single week put 2 consultant/project pairings into AwaitingExport (best: $N, week '${WEEK:-none}'). Export All exports one month, so verify-tt683-a1 cannot prove the SPLIT with pairings spread over weeks - it would pass having only shown that an export produces a ZIP. Assign '$CONSULTANT' to at least two projects (an Assignment IS the consultant+project pairing), or set TT683_SEED_PROJECTS to two projects they are on; the week lines above say where each processed entry came from."
+  || tt_fail "no single week put 2 consultant/project pairings into AwaitingExport (best: $N, week '${WEEK:-none}'). Export All exports one month, so verify-tt683-a1 cannot prove the SPLIT with pairings spread over weeks - it would pass having only shown that an export produces a ZIP. Assign '$CONSULTANT' to at least two projects (an Assignment IS the consultant+project pairing), or set TT683_SEED_ROWS to two projects they are on; the week lines above say where each processed entry came from."
 
 echo "PASS: verify-tt683-a0-seed-awaiting-export — $N consultant/project pairing(s) awaiting export from week '$WEEK'"
