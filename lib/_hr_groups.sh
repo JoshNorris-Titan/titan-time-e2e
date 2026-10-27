@@ -14,8 +14,9 @@
 #
 # A group is a band (label, count, hours) over a hand-built table of rows. There is no
 # picker any more and nothing is "selected": every group is listed at once, and a
-# group's rows are rendered only while the group is EXPANDED. Only the newest group
-# starts expanded. The widgets, per tab (<T> = Process | Sent | Invoice):
+# group's rows are rendered only while the group is EXPANDED. One group starts
+# expanded: the newest on Sent and Monthly; on Weekly to process (TT-807) the oldest,
+# listed first, or the week HR last processed a timesheet from. The widgets, per tab (<T> = Process | Sent | Invoice):
 #
 #   lst<T>Weeks / lstInvoiceMonths     the ListView of groups
 #     cnt<T>GroupToggle                the band's clickable half (runs NACT_*Group_Toggle)
@@ -210,7 +211,7 @@ tt_hr_entries_load() {
 
 # tt_hr_find_group_with <needle> [needle2] [all]
 #
-# Walk the open grouped tab's groups, newest first, expanding each in turn, until one
+# Walk the open grouped tab's groups in list order, expanding each in turn, until one
 # holds a row whose text contains <needle> (and <needle2>). Prints that group's key
 # and leaves it the only one expanded. Returns 1 when no group holds one. Pass `all`
 # to press Sent's Load more first, so weeks outside the 8-week window are searched.
