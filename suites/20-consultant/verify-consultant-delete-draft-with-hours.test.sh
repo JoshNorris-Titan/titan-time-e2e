@@ -43,7 +43,7 @@
 #
 # OWNS ITS DATA. It works on ONE week, $AHEAD weeks after today's, as e2e_consultant.
 # 20 sits past every other spec's forward walk and inside the fixture assignment window
-# (FX_START_DATE..FX_END_DATE in lib/_fixtures.sh, 07/01/2026 - 12/31/2027).
+# (FX_START_DATE..FX_END_DATE in lib/_fixtures.sh, 06/28/2026 - 01/01/2028).
 #
 # THAT NUMBER WAS 14 WHEN THIS SPEC WAS WRITTEN (2026-09-10), justified as "past every
 # other spec's forward walk -- the longest are 12". That stopped being true: #101

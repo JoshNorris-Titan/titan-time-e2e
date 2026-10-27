@@ -620,7 +620,7 @@ tt_week_row_of() {
 # names, so "E2E Dual Approval" matched ZERO times, the condition was never true,
 # and verify-tt647-a5 failed every run with "no editable week with a
 # 'E2E Dual Approval' row found" - which read like a missing fixture and was not
-# (the assignment exists on dev, 2026-07-01..2027-12-31).
+# (the assignment exists on dev, 2026-06-28..2028-01-01).
 #
 # HORIZON (2026-10-06). This walked 12 weeks forward from today, the same number
 # lib/_tt654.sh found too small on 2026-09-1x: every weekly Submit closes that week
