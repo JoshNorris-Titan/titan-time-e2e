@@ -548,8 +548,14 @@ _tt683_week_pairings() {
 #
 # The other callers want *something* awaiting export and discard the output, so
 # they keep the tab-wide count.
+#
+# THE THIRD ARGUMENT, a week (any form tt_week_key reads), limits the walk to that
+# one week. verify-tt683-a0 passes it after seeding, when it knows exactly which
+# week it just submitted: cloud dev's To Process tab holds 20-odd weeks of other
+# people's data, each select-and-count costs several seconds, and walking all of
+# them a second time is what pushed a0 to 815s of its 840s budget on 2026-10-26.
 tt683_process_all_toprocess() {
-  local max="${1:-6}" scope="${2:-tab}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have
+  local max="${1:-6}" scope="${2:-tab}" only="${3:-}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have
   tt_login "e2e_hr" "$TT_HR_READY"
   tt_hr_click_tab "$TT683_TAB_TOPROCESS" "HR To Process tab"
   tt_hr_wait_pane "To Process week groups"
@@ -561,6 +567,9 @@ tt683_process_all_toprocess() {
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
+    if [ -n "$only" ] && [ "$(tt_week_key "$lbl")" != "$(tt_week_key "$only")" ]; then
+      IFS='|'; continue
+    fi
     tt683_select_week "$lbl" || { IFS='|'; continue; }
     if [ "$scope" = "week" ]; then
       have="$(_tt683_week_pairings | grep -c .)"
