@@ -84,7 +84,7 @@ restore_edit_login() {
   acct_fill_field "mx-name-txtUsername" "$EDIT_LOGIN"
   click_last "btnSave" >/dev/null
   sleep 5
-  tt_clear_dialogs 4 >/dev/null 2>&1 || true
+  tt_clear_dialogs 4 >/dev/null 2>&1
   [ "$(acct_state "$EDIT_LOGIN")" = "ABSENT" ] && bad "rename back to $EDIT_LOGIN did not take -- rename $EDIT_BAD by hand"
 }
 trap restore_edit_login EXIT
@@ -112,7 +112,7 @@ case "$M" in
 esac
 acct_click_caption "cancel" >/dev/null
 sleep 2
-tt_clear_dialogs 4 >/dev/null 2>&1 || true
+tt_clear_dialogs 4 >/dev/null 2>&1
 S="$(acct_state "$NEW_LOGIN")"
 [ "$S" = "ABSENT" ] || bad "A: an account '$NEW_LOGIN' exists after a refused save ($S) -- delete it by hand"
 
@@ -128,7 +128,7 @@ case "$M" in
 esac
 acct_click_caption "cancel" >/dev/null
 sleep 2
-tt_clear_dialogs 4 >/dev/null 2>&1 || true
+tt_clear_dialogs 4 >/dev/null 2>&1
 [ "$(acct_state "$EDIT_BAD")" = "ABSENT" ] || bad "B: $EDIT_LOGIN was renamed to $EDIT_BAD by a save that should have been refused"
 
 [ "$fails" -eq 0 ] || tt_fail "$fails check(s) failed"
