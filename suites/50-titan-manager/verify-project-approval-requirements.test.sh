@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A project cannot be saved asking for an approval nobody can give: manager
-# approval needs a project manager, and customer approval needs a contact NAME as
+# A project cannot be saved without a project manager (TT-814: every project,
+# whatever its approval settings), and customer approval needs a contact NAME as
 # well as an email.
 #
 # tt-timeout: 10m
@@ -10,9 +10,9 @@
 # assignment popup) gained two refusals beside the contact-email one that
 # verify-project-contact-email already covers:
 #
-#   manager approval, no project manager (feedback on ApprovalFromManager):
-#     "Enter a project manager before marking this project as manager approved.
-#      Without one there is nobody the approval belongs to."
+#   no project manager (feedback on ProjectManager_Account, the drop-down) - since
+#   TT-814 on every save, manager approval on or off:
+#     "Choose a project manager. Every project needs one."
 #   customer approval, no contact name (feedback on ContactName):
 #     "A contact name is required when this project needs customer approval.
 #      The approval request is addressed to that person."
@@ -23,9 +23,9 @@
 # ever reaches either refusal.
 #
 # WHAT IT ASSERTS (one Add Project form, kept open across the refusals)
-#   A. manager approval on, customer off, no project manager: Save is refused with
-#      the project-manager message, shown ON the manager-approval field - not merely
-#      "some validation appeared";
+#   A. manager approval OFF, customer off, no project manager: Save is refused with
+#      the project-manager message, shown ON the Project Manager drop-down - not
+#      merely "some validation appeared". Before TT-814 this project saved;
 #   B. nothing was created;
 #   C. customer approval on, email filled, contact name blank: refused with the
 #      contact-name message on the contact-name field; still nothing created;
@@ -47,7 +47,7 @@ source "$TT_ROOT/lib/_authz.sh"
 
 PROJ="E2E ApprovalReq $(date +%s)"
 CONTACT="Approver ApprovalReq"
-MSG_PM="Enter a project manager"
+MSG_PM="Choose a project manager"
 MSG_NAME="contact name is required"
 fails=0
 note() { echo "  $*"; }
@@ -86,24 +86,25 @@ tt_wait_for ".mx-name-txtProjectName input" "the Add Project form (Project_NewEd
 tt_fill ".mx-name-txtProjectName input" "$PROJ"
 tt_combobox_select_text ".mx-name-cbCustomer" "$FX_CUSTOMER" || tt_fail "customer '$FX_CUSTOMER' not selectable on the project form"
 
-# ------------------------------------------------------- A/B. manager approval, no manager
-fx_set_radio "rbApprovalManager"  "Yes"
+# ------------------------------------------------------- A/B. no manager, manager approval off
+fx_set_radio "rbApprovalManager"  "No"
 fx_set_radio "rbApprovalCustomer" "No"
 fx_set_radio "rbNeedsLineItems"   "No"
 PM_NOW="$(playwright-cli eval "() => ((document.querySelector('.mx-name-cbProjectManager')||{}).innerText||'').replace(/\\s+/g,' ').trim()" 2>/dev/null | _tt_eval_str)"
 case "$PM_NOW" in *"$FX_PROJECT_MANAGER"*) tt_fail "a new project already has '$PM_NOW' as its manager, so the no-manager case cannot be set up" ;; esac
 save
 
-ON_FIELD="$(field_validation rbApprovalManager)"
+ON_FIELD="$(field_validation cbProjectManager)"
 case "$ON_FIELD" in
-  *"$MSG_PM"*) note "A ok: refused on the manager-approval field: $ON_FIELD" ;;
-  NOWIDGET)    bad "A: rbApprovalManager is not on the form" ;;
-  *)           bad "A: manager approval with no project manager was not refused on that field. Field says [$ON_FIELD]; the form says [$(all_validations)]" ;;
+  *"$MSG_PM"*) note "A ok: refused on the Project Manager drop-down: $ON_FIELD" ;;
+  NOWIDGET)    bad "A: cbProjectManager is not on the form" ;;
+  *)           bad "A: a project with no project manager was not refused on that field. Field says [$ON_FIELD]; the form says [$(all_validations)]" ;;
 esac
 N="$(count_proj)"
 [ "$N" = "0" ] && note "B ok: nothing was created" || bad "B: after the refusal, $N project(s) named '$PROJ' exist"
 
 # ------------------------------------------------------- C. customer approval, no contact name
+# (still no manager: the contact rules run first, so the contact-name refusal shows)
 fx_set_radio "rbApprovalManager"  "No"
 fx_set_radio "rbApprovalCustomer" "Yes"
 tt_fill ".mx-name-txtApproverEmail input" "$FX_APPROVER_EMAIL"

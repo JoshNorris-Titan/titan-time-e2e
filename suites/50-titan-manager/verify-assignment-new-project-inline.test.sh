@@ -18,9 +18,10 @@
 #   A. Add Project is not offered until a customer is picked (its visibility rule);
 #   B. once it is, it opens the New Project form, and that form's Customer picker
 #      already reads the assignment's customer (the Create's Project_Customer);
-#   C. the form enforces SUB_Project_ValidateForSave: manager approval with no
-#      project manager is refused, the form stays open, and nothing is committed -
-#      the inline path is not a way round the dashboard's rules;
+#   C. the form enforces SUB_Project_ValidateForSave: a project with no project
+#      manager is refused (TT-814: whatever its approval settings), with the message
+#      on the Project Manager drop-down, the form stays open, and nothing is
+#      committed - the inline path is not a way round the dashboard's rules;
 #   D. with a manager picked it saves, the form closes, and the assignment's
 #      cbProject now reads the new project (the Change activity);
 #   E. the project really was committed, under the assignment's customer, with the
@@ -108,12 +109,12 @@ npf_radio rbNeedsLineItems No
 playwright-cli click "$NPF .mx-name-btnNewProjectSave" >/dev/null 2>&1
 sleep 3
 STILL="$(present "$NPF .mx-name-txtProjectName")"
-MSG="$(ev "() => { const w=document.querySelector('$NPF .mx-name-rbApprovalManager'); return w ? [...w.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).map(e=>(e.innerText||'').trim()).join(' ~ ') : 'NOWIDGET'; }")"
+MSG="$(ev "() => { const w=document.querySelector('$NPF .mx-name-cbProjectManager'); return w ? [...w.querySelectorAll('.mx-validation-message')].filter(e=>e.offsetParent!==null).map(e=>(e.innerText||'').trim()).join(' ~ ') : 'NOWIDGET'; }")"
 N="$(count_proj)"
-if [ "$STILL" = "true" ] && [ "${MSG#*Enter a project manager}" != "$MSG" ] && [ "$N" = "0" ]; then
+if [ "$STILL" = "true" ] && [ "${MSG#*Choose a project manager}" != "$MSG" ] && [ "$N" = "0" ]; then
   note "C ok: no-manager save refused ('$MSG'), form still open, nothing committed"
 else
-  bad "C: manager approval with no manager - form open=$STILL, message on the field=[$MSG], projects named '$PROJ'=$N (expected true / the project-manager message / 0)"
+  bad "C: no manager - form open=$STILL, message on the field=[$MSG], projects named '$PROJ'=$N (expected true / the project-manager message / 0)"
 fi
 
 # ------------------------------------------------------------------ D. save lands on the assignment
