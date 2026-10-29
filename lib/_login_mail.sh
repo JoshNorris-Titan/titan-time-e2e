@@ -610,6 +610,10 @@ tt_week_row_of() {
 # Mon-Fri, and submits — clicking through any confirm dialog. Targets the correct
 # row by computing its ordinal at runtime (row order is not assumed) and using
 # Playwright's :nth-match. Best-effort (exact hours may vary); returns 0.
+# Any further <also-project> arguments get the same Mon-Fri hours on the SAME week
+# before the one Submit, so several pairings reach approval with real hours. A
+# row left empty is still submitted - one Submit closes the whole week - but at
+# zero hours, which skips approval and lands straight on To Process.
 # Row identification: walk UP from a day input until we reach the container that
 # both mentions <proj> and holds exactly ONE day-row (one .mx-name-txtDayMon). The
 # single-row test is what stops us ascending into a wrapper that spans several
@@ -620,7 +624,7 @@ tt_week_row_of() {
 # names, so "E2E Dual Approval" matched ZERO times, the condition was never true,
 # and verify-tt647-a5 failed every run with "no editable week with a
 # 'E2E Dual Approval' row found" - which read like a missing fixture and was not
-# (the assignment exists on dev, 2026-07-01..2027-12-31).
+# (the assignment exists on dev, 2026-06-28..2028-01-01).
 #
 # HORIZON (2026-10-06). This walked 12 weeks forward from today, the same number
 # lib/_tt654.sh found too small on 2026-09-1x: every weekly Submit closes that week
@@ -639,7 +643,8 @@ tt_week_row_of() {
 #   S  the row is editable but the week offers no Submit
 TT_SUBMIT_WEEK_HORIZON="${TT_SUBMIT_WEEK_HORIZON:-30}"
 tt_consultant_submit_project_row() {
-  local proj="$1" ord="" i d census="" from="" to=""
+  local proj="$1" ord="" i d census="" from="" to="" also also_ord
+  shift
   from="$(playwright-cli eval "() => String((document.querySelector('.mx-name-txtWeekRange')||{}).innerText||'').trim()" 2>/dev/null | _tt_eval_str)"
   for i in $(seq 1 "$TT_SUBMIT_WEEK_HORIZON"); do
     ord=$(playwright-cli eval "() => { const mons=[...document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon')]; const isTarget=(mon)=>{let el=mon; for(let k=0;k<12;k++){el=el.parentElement; if(!el)break; const t=el.innerText||''; if(t.indexOf('$proj')>=0 && el.querySelectorAll('.mx-name-txtDayMon').length===1) return true;} return false;}; for(let n=0;n<mons.length;n++){ const inp=mons[n].querySelector('input'); if(isTarget(mons[n]) && inp && !inp.disabled && !inp.readOnly && document.querySelector('.mx-name-btnSubmit')) return String(n+1); } return '0'; }" 2>/dev/null | sed -n '2p')
@@ -667,6 +672,15 @@ tt_consultant_submit_project_row() {
   for d in Mon Tues Wed Thurs Fri; do
     tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${ord})" "8"
   done
+  for also in "$@"; do
+    also_ord="$(tt_week_row_of "$also" editable)"
+    case "$also_ord" in
+      ""|0) tt_fail "consultant: week $TT_SUBMITTED_WEEK has an editable '$proj' row but no editable '$also' row to fill alongside it" ;;
+    esac
+    for d in Mon Tues Wed Thurs Fri; do
+      tt_fill_cell ":nth-match(.mx-name-galAssignmentRows .mx-name-txtDay${d} input, ${also_ord})" "8"
+    done
+  done
   # commit the last cell - the four before it were committed by the next fill
   tt_commit_focused
   sleep 1
@@ -688,6 +702,14 @@ tt_consultant_submit_project_row() {
     ""|0|0.00|0.0)
       tt_fail "consultant: hours did not persist on the '$proj' row (Monday reads '$mon'). Submitting now would create a ZERO-hour entry, which skips approval entirely and renders 'No approval required' — any approval assertion downstream would be meaningless." ;;
   esac
+  for also in "$@"; do
+    also_ord="$(tt_week_row_of "$also" editable)"
+    mon=$(playwright-cli eval "() => String((document.querySelectorAll('.mx-name-galAssignmentRows .mx-name-txtDayMon input')[${also_ord:-0} - 1]||{}).value||'')" 2>/dev/null | sed -n '2p' | tr -d '"')
+    case "$mon" in
+      ""|0|0.00|0.0)
+        tt_fail "consultant: hours did not persist on the '$also' row (Monday reads '$mon'); it would submit at zero hours and skip approval." ;;
+    esac
+  done
 
   playwright-cli click ".mx-name-btnSubmit" >/dev/null 2>&1
   sleep 2

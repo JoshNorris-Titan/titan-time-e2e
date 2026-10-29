@@ -20,6 +20,13 @@
 # unit test UT_NAV_RecieveToken_LinkCoveringNoProjectRecordsNoVisit pins the flow;
 # this pins what a customer actually sees.
 #
+# TT-804 (2026-10-26) changed what "covers no project" means for an archived one:
+# archiving no longer hides a week still awaiting the customer, so an archived
+# project still counts while one of its weeks waits on them. This spec therefore
+# archives with the week still waiting and checks the link keeps working (B), then
+# has the customer approve that week and checks the SAME link is now dead (C) -
+# TT-778's case under its new precondition.
+#
 # ITS OWN DATA. A throwaway project with its own synthetic approver address
 # (tt_mail_address, so no real mail and no shared remind gate), assigned to
 # 'E2E Consultant Three' - in TT_E2E_CONSULTANTS and driven by no fixture spec - so
@@ -30,14 +37,18 @@
 # WHAT IT ASSERTS
 #   A. control (fatal): before the archive, the link opens the approval page and
 #      lists Three's pending row - so it is a working link, not a malformed one;
-#   B. after HR archives the project, the SAME link, opened cold, shows
-#      textLinkInvalidHeading, and neither the approval list (galPendingEntries) nor
-#      the "nothing to approve" state (containerNoPendingApprovals);
-#   C. the page reads "no longer valid" and does not carry the retired "replaced each
+#   B. (TT-804) after HR archives the project, the SAME link still opens the approval
+#      page and still lists Three's waiting row; the customer approves it there;
+#   C. once nothing on the archived project awaits the customer, the SAME link,
+#      opened cold, shows textLinkInvalidHeading, and neither the approval list
+#      (galPendingEntries) nor the "nothing to approve" state
+#      (containerNoPendingApprovals);
+#   D. the page reads "no longer valid" and does not carry the retired "replaced each
 #      time" copy.
 #
-# WHAT MAKES IT RED. The link check going back to "token valid = let them in" (B
-# sees the approval page, or its empty state), or the old copy coming back (C).
+# WHAT MAKES IT RED. Archiving hiding a waiting week again (B), the link check going
+# back to "token valid = let them in" (C sees the approval page, or its empty
+# state), or the old copy coming back (D).
 #
 # Clears cookies (the visitor opens the link signed out); the next step signs in
 # again through tt_login, as after every token spec.
@@ -151,15 +162,34 @@ tt_login "e2e_hr" "$TT_HR_READY"
 R="$(set_archived true)"
 [ "$R" = "ok" ] || tt_fail "HR could not archive '$PZ' ($R)"
 [ "$(tt_authz_readback "$PROJECT_XP" Archived)" = "true" ] || tt_fail "'$PZ' did not read back Archived=true"
-note "archived '$PZ' - its approver now covers no project"
+note "archived '$PZ' with $CNAME's week still awaiting the customer"
 
-# ------------------------------------------------------------------ B/C. the same link
+# ------------------------------------------------------------------ B. archived, week waiting (TT-804)
 S="$(open_cold "$LINK")"
 case "$S" in
-  INVALID) note "B ok: the link now lands on the invalid-link page" ;;
-  LIST:*)  bad "B: the dead link still opened the approval LIST [$S]" ;;
-  EMPTY)   bad "B: the dead link opened the approval page's 'nothing to approve' state instead of the invalid-link page" ;;
-  *)       bad "B: the dead link showed [$S]; expected the invalid-link page (textLinkInvalidHeading)" ;;
+  LIST:*"$CNAME"*) note "B ok: archiving left the waiting week on the link" ;;
+  *) tt_fail "B: after the archive the link shows [$S]; TT-804 keeps a week awaiting the customer on an archived project approvable" ;;
+esac
+R="$(ev "() => { const g=document.querySelector('.mx-name-galPendingEntries'); if(!g) return 'nogallery'; const row=[...g.querySelectorAll('.widget-gallery-item')].find(r=>(r.innerText||'').includes('$CNAME')); if(!row) return 'norow'; const b=row.querySelector('.mx-name-btnApprove'); if(!b||b.offsetParent===null) return 'nobutton'; b.click(); return 'ok'; }")"
+[ "$R" = "ok" ] || tt_fail "B: could not press Approve on $CNAME's row ($R)"
+sleep 4
+tt_clear_dialogs 6 "Approve" >/dev/null 2>&1
+for i in $(seq 1 15); do
+  S="$(page_state)"
+  case "$S" in *"$CNAME"*|WAIT|'') sleep 1 ;; *) break ;; esac
+done
+case "$S" in
+  *"$CNAME"*) tt_fail "B: $CNAME's row is still listed after Approve [$S]" ;;
+  *) note "B ok: the customer approved the archived project's week" ;;
+esac
+
+# ------------------------------------------------------------------ C/D. the same link, nothing waiting
+S="$(open_cold "$LINK")"
+case "$S" in
+  INVALID) note "C ok: with nothing awaiting the customer, the link lands on the invalid-link page" ;;
+  LIST:*)  bad "C: the dead link still opened the approval LIST [$S]" ;;
+  EMPTY)   bad "C: the dead link opened the approval page's 'nothing to approve' state instead of the invalid-link page" ;;
+  *)       bad "C: the dead link showed [$S]; expected the invalid-link page (textLinkInvalidHeading)" ;;
 esac
 # The retired copy is the in-place "replaced each time a new approval request is
 # sent" message. "The link in your most recent approval email should still work"
@@ -168,13 +198,13 @@ esac
 BODY="$(ev "() => (document.body ? document.body.innerText : '').replace(/\\s+/g,' ')")"
 case "$BODY" in
   *"replaced each time"*)
-    bad "C: the page carries the retired copy: [$(printf '%s' "$BODY" | cut -c1-300)]" ;;
-  *"no longer valid"*) note "C ok: the current invalid-link copy, no retired 'replaced each time' text" ;;
-  *) bad "C: the invalid-link page does not read 'no longer valid': [$(printf '%s' "$BODY" | cut -c1-300)]" ;;
+    bad "D: the page carries the retired copy: [$(printf '%s' "$BODY" | cut -c1-300)]" ;;
+  *"no longer valid"*) note "D ok: the current invalid-link copy, no retired 'replaced each time' text" ;;
+  *) bad "D: the invalid-link page does not read 'no longer valid': [$(printf '%s' "$BODY" | cut -c1-300)]" ;;
 esac
 
 if [ "$fails" -ne 0 ]; then
   echo "FAIL: verify-tt778-dead-link-invalid-page - $fails problem(s): a live-looking link that covers no project does not land on the invalid-link page."
   exit 1
 fi
-echo "PASS: verify-tt778-dead-link-invalid-page - a valid link whose only project is archived lands on the invalid-link page with the current copy."
+echo "PASS: verify-tt778-dead-link-invalid-page - archiving kept the waiting week approvable, and once nothing awaited the customer the link landed on the invalid-link page with the current copy."

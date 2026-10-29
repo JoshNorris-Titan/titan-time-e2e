@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assigning a consultant to a project they are already on is refused.
+# Assigning a consultant to a project they are already on, for overlapping dates, is refused.
 #
 # tt-timeout: 10m
 #
@@ -9,7 +9,13 @@
 # check - is not covered anywhere. Until now a change that deleted that validation
 # outright passed the entire suite.
 #
-# The validation refuses with "Consultant is already assigned to this project."
+# TT-803 (2026-10-27) changed the rule: a consultant MAY now have more than one
+# assignment on a project, as long as their dates do not overlap. The validation
+# refuses an overlapping one with "This consultant is already on this project from
+# <start> to <end>. Assignments on the same project can't overlap, ...". This spec
+# asks for the same window the existing assignment already covers, so it is still a
+# refusal by construction - now the overlap rule, where it used to be the blanket
+# "Consultant is already assigned to this project."
 #
 # THIS NEEDS NO NEW FIXTURE. The obvious way to test a duplicate is to seed two
 # consultants on one project, which is a change to FX_ASSIGNMENTS. It is also
@@ -21,7 +27,7 @@
 #   A. the pairing really does already exist - read first, and fatal if not,
 #      because attempting a "duplicate" that is not one would pass for the wrong
 #      reason;
-#   B. the form refuses the save and the message names the duplicate rule, not
+#   B. the form refuses the save and the message names the overlap rule, not
 #      just any validation - a required-field complaint would otherwise satisfy a
 #      looser assertion;
 #   C. no second assignment was created, counted through the data layer. B reads
@@ -97,12 +103,12 @@ COMPLAINT="$(validations)"
 [ -n "$COMPLAINT" ] || COMPLAINT="$(dialog_text)"
 
 case "$COMPLAINT" in
-  *"already assigned"*)
+  *"can't overlap"*)
     note "B ok: refused with: $COMPLAINT" ;;
   "")
     bad "B: the duplicate save drew no complaint at all" ;;
   *)
-    bad "B: something objected, but not with the duplicate-assignment message - a required-field complaint would read like this and would not prove the guard fired. Got: $COMPLAINT" ;;
+    bad "B: something objected, but not with the overlapping-assignment message - a required-field complaint would read like this and would not prove the guard fired. Got: $COMPLAINT" ;;
 esac
 
 # --------------------------------------------------------------- C. nothing was written
