@@ -129,7 +129,7 @@ pager_next() {
 
 # email_selector — the .mx-name-* wrapper of the visible input whose form-group
 # label matches <regex>, so fill() can target it. Auto-named widgets differ per
-# form (textBox10 on the account editor, txtApproverEmail on the project one),
+# form (txtEmail on the account editor since TT-815, txtApproverEmail on the project one),
 # so resolve it from the LABEL at runtime rather than hard-coding either.
 email_selector() {
   ev "() => {

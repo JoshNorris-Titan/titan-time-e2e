@@ -100,8 +100,8 @@ playwright-cli eval "() => {
   return b.join('\n') || '  NO SAVE/CANCEL FOUND';
 }" 2>/dev/null | _tt_eval_str
 playwright-cli eval "() => {
-  const i = document.querySelector('.mx-name-textBox10 input');
-  return '  textBox10 (Email) present=' + String(!!i) + ' value=\"' + (i ? i.value : '') + '\"';
+  const i = document.querySelector('.mx-name-txtEmail input');
+  return '  txtEmail (Email) present=' + String(!!i) + ' value=\"' + (i ? i.value : '') + '\"';
 }" 2>/dev/null | _tt_eval_str
 
 echo
