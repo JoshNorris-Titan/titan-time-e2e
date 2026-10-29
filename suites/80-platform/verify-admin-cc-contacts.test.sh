@@ -27,10 +27,11 @@
 #   F. Delete removes the contact from the list and from the data.
 #
 # WHAT IT DOES NOT COVER, AND WHY. Attaching a contact to a user through the UI
-# needs Core.Account_Edit's Save button, which is still the auto-generated
-# saveButton1 (and the row's Edit button is actionButton3), so E links the account
-# through the data API as setup instead - Josh must rename those two before the
-# picker path (cbCCContacts / btnAddCCContact) can be driven. And the CC on the
+# needs Core.Account_Edit's Save button (named btnSave since TT-815) and the row's
+# Edit button, which is still the auto-generated actionButton3 (lib/_accounts.sh opens
+# it by its aria-label instead). E links the account through the data API as setup
+# for now; the picker path (cbCCContacts / btnAddCCContact) can be driven once someone
+# writes it. And the CC on the
 # processed-timesheet email itself is not asserted: Emails Sent
 # (Main.EmailsSent_Overview) shows only To (txtRowTo), with no CC column.
 #

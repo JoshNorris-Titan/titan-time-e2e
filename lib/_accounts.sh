@@ -56,11 +56,12 @@
 # acct_filter commits the search and then clicks the Full name header, and every read
 # waits until each visible row actually matches the search before believing it.
 #
-# On the Edit Account form: .mx-name-microflowTrigger1 is "Change password", and the
-# dialog it opens has exactly two visible password boxes, labelled "New password" and
-# "Confirm password". Their widget names are textBox3 and textBox1 today -- and
-# textBox1 is ALSO the Username box on the Edit Account form behind it, which is why
-# every field below is resolved by its form-group LABEL and never by name.
+# On the Edit Account form: .mx-name-btnChangePassword is "Change password" and
+# .mx-name-btnSave is Save (both forms' fields were named in TT-815: txtFullName,
+# txtUsername, txtEmail, ...). The dialog Change password opens has exactly two visible
+# password boxes, labelled "New password" and "Confirm password", and THOSE are still
+# auto-named (textBox3 and textBox1 today) -- which is why every field below is
+# resolved by its form-group LABEL rather than by name.
 #
 # THE ADMIN NEVER NEEDS THE CURRENT PASSWORD. The dialog asks for a new one and a
 # confirmation, nothing else. That is what makes a password round-trip possible at all,
@@ -245,10 +246,10 @@ acct_click_caption() {
 # acct_form_field <label-regex> -- the .mx-name-* wrapper of the visible input whose
 # form-group label matches, or NONE.
 #
-# Resolved at runtime, by LABEL, because every box on both account forms is auto-named
-# and the two forms do not agree with each other: textBox1 is the Username box on Edit
-# Account and the "Confirm password" box in the dialog that opens over it. Takes the LAST
-# match, for the stale-copy reason above acct_overview_open.
+# Resolved at runtime, by LABEL, because the password dialog that opens over Edit Account
+# is still auto-named (its "Confirm password" box is textBox1), and the account forms'
+# own fields were auto-named too until TT-815. Takes the LAST match, for the stale-copy
+# reason above acct_overview_open.
 acct_form_field() {
   acct_ev "() => { const ins=[...document.querySelectorAll('input')].filter(i=>i.offsetParent!==null); let found=''; for (const i of ins) { const grp=i.closest('.form-group'); const lbl=grp?((grp.querySelector('label')||{}).innerText||'').trim():''; if(!/$1/i.test(lbl)) continue; let w=i; for(let k=0;k<6&&w;k++){ const m=(w.className||'').toString().match(/mx-name-[A-Za-z0-9_]+/); if(m){ found=m[0]; break; } w=w.parentElement; } } return found || 'NONE'; }"
 }
@@ -286,7 +287,7 @@ acct_open_edit() {
     *)      ACCT_LAST_ERROR="could not open Edit Account for '$user' ($r)"; return 1 ;;
   esac
   for i in $(seq 1 12); do
-    [ "$(acct_ev "() => String(!!document.querySelector('.mx-name-saveButton1'))")" = "true" ] && return 0
+    [ "$(acct_ev "() => String(!!document.querySelector('.mx-name-btnSave'))")" = "true" ] && return 0
     sleep 1
   done
   ACCT_LAST_ERROR="the Edit Account form for '$user' never rendered"
