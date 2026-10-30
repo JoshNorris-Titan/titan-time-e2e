@@ -24,8 +24,8 @@
 #      runtime returns "Internal server error" for all of them);
 #   C. writing Monday on ANOTHER consultant's entry does not visibly succeed;
 #   D. that entry's Monday is UNCHANGED, read back as an entitled user;
-#   E. setting their OWN entry's Status to ToProcess - self-approval - does not
-#      visibly succeed;
+#   E. moving their OWN entry's Status on - to ToProcess, or to AwaitingExport
+#      when it is already ToProcess - does not visibly succeed (self-approval);
 #   F. that entry's Status is UNCHANGED.
 #
 # D and F are the assertions that matter. C and E only establish that the call
@@ -61,8 +61,30 @@ ent_of() { printf "//Main.AssignmentEntry[Main.AssignmentEntry_Assignment/Main.A
 MY_ENT="$(ent_of "$MINE")"
 THEIR_ENT="$(ent_of "$THEIRS")"
 
+# guid_of <xpath> -- the guid of the first object the CURRENT session retrieves.
+#
+# WHY THE ENTRIES ARE PINNED BY GUID (2026-10-30). ent_of matches every entry the
+# consultant has, and each retrieve takes "the first" with no sort, so HR's
+# before-read, the consultant's write and HR's after-read were not guaranteed to
+# touch the same row. Pinning both entries to one guid each, read as HR, makes
+# every step below act on the row the control read.
+guid_of() {
+  playwright-cli eval "() => new Promise(res => { try { if (typeof mx === 'undefined' || !mx.data) return res('ERR:no-mx-client'); const t = setTimeout(() => res('ERR:timeout'), 15000); mx.data.get({ xpath: \"$1\", filter: { amount: 1 }, callback: function(objs){ clearTimeout(t); res(objs && objs.length ? String(objs[0].getGuid()) : 'ERR:notfound'); }, error: function(e){ clearTimeout(t); res('ERR:retrieve-' + ((e && e.message) || 'refused')); } }); } catch (e) { res('ERR:' + e.message); } })" 2>/dev/null | _tt_eval_str
+}
+
 # ------------------------------------------------- control reads, as an entitled user
 tt_login "e2e_hr" "$TT_HR_READY"
+MY_GUID="$(guid_of "$MY_ENT")"
+THEIR_GUID="$(guid_of "$THEIR_ENT")"
+case "$THEIR_GUID" in
+  ERR:notfound) tt_fail "'$THEIRS' has no AssignmentEntry, so there is nothing to attempt a cross-consultant write against. suites/00-setup builds the fixtures; run the suite in order." ;;
+  ERR:*)        tt_fail "the control could not find '$THEIRS' entry ($THEIR_GUID)" ;;
+esac
+case "$MY_GUID" in
+  ERR:*) tt_fail "the control could not find a '$MINE' entry ($MY_GUID)" ;;
+esac
+MY_ENT="//Main.AssignmentEntry[id = '$MY_GUID']"
+THEIR_ENT="//Main.AssignmentEntry[id = '$THEIR_GUID']"
 THEIR_MON_BEFORE="$(tt_authz_readback "$THEIR_ENT" 'Monday')"
 MY_STATUS_BEFORE="$(tt_authz_readback "$MY_ENT" 'Status')"
 case "$THEIR_MON_BEFORE" in
@@ -72,7 +94,16 @@ esac
 case "$MY_STATUS_BEFORE" in
   ERR:*) tt_fail "the control could not read '$MINE' entry Status ($MY_STATUS_BEFORE)" ;;
 esac
-note "before: $THEIRS Monday=$THEIR_MON_BEFORE / $MINE Status=$MY_STATUS_BEFORE"
+# E has to ask for a status the entry does NOT already have. It used to always ask
+# for ToProcess, and on a run where the consultant's first entry was already
+# ToProcess (a zero-hour week goes straight there) the write was a no-op: the
+# commit came back ok and F compared ToProcess with ToProcess. That is a false
+# FAIL on E and a vacuous pass on F, so neither said anything about the rule.
+case "$MY_STATUS_BEFORE" in
+  ToProcess) SELF_TARGET="AwaitingExport" ;;
+  *)         SELF_TARGET="ToProcess" ;;
+esac
+note "before: $THEIRS Monday=$THEIR_MON_BEFORE / $MINE Status=$MY_STATUS_BEFORE (E will ask for $SELF_TARGET)"
 
 # --------------------------------------------------------------- A. be the consultant
 tt_login "$ME" "My Timesheets"
@@ -115,10 +146,10 @@ fi
 
 # ------------------------------------------------------------ E/F. self-approval
 tt_login "$ME" "My Timesheets"
-S="$(tt_authz_write "$MY_ENT" 'Status' 'ToProcess')"
+S="$(tt_authz_write "$MY_ENT" 'Status' "$SELF_TARGET")"
 case "$S" in
   ERR:*) note "E ok: setting own Status did not visibly succeed ($S)" ;;
-  *)     bad "E: '$ME' set their own entry Status and the call returned [$S]" ;;
+  *)     bad "E: '$ME' set their own entry Status to $SELF_TARGET and the call returned [$S]" ;;
 esac
 
 tt_login "e2e_hr" "$TT_HR_READY"
