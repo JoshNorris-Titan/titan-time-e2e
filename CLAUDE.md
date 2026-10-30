@@ -79,6 +79,14 @@ shared `playwright-cli` session** for the whole run — scripts call bare `playw
 runner**: a direct spec run skips `00-setup`'s data clear, and discovery is sorted because run order
 is load-bearing.
 
+**The suite is deliberately small** (cut from 159 steps to 31 on 2026-10-30). It covers the core
+journey only: sign-in, entering and submitting time, PM and customer approval, HR processing and
+export, and the customer-link and isolation security checks. **Do not add a spec** unless Josh asks
+for one by name — Gate 5 in the model manual no longer writes them, and ticket-by-ticket additions
+are what grew the suite past the point it could be kept green. Fixing a kept spec is always fine.
+Rules a unit test can check (hour limits, rollups, permissions) belong in the model's
+`Core` → `995. Unit Tests`, not here.
+
 **Preconditions:** the suite drives a *running deployed* app, so a model change says nothing here
 until it is saved, committed **and deployed**. Ctrl+S and F5 build the local app you must not test.
 
@@ -110,8 +118,8 @@ diagnose, reproduce locally against the same environment, fix, prove red-to-gree
   **model**, cannot be reproduced, would need a change to `.github/workflows/` or `run-tests.sh`, is
   the *same spec* it already fixed once this loop, or could only be made green by weakening the suite
   (deleting a test, adding to `ci-skip.txt`, loosening an assertion, `|| true`, a blind timeout bump).
-- **Budget:** 12 autonomous merges per loop session, one dispatch per iteration; a green run is
-  ~90 minutes against a 210-minute ceiling.
+- **Budget:** 12 autonomous merges per loop session, one dispatch per iteration. Since the
+  2026-10-30 cut-back a full run is roughly 40 minutes; the workflow's 210-minute ceiling predates it.
 
 `main` here has **no branch protection**, so nothing downstream reviews those merges — the rails and
 the PR body (run URL, quoted cause, local red-to-green evidence) are the whole audit trail. Loop
@@ -122,9 +130,10 @@ needs `.e2e-autofix.env` (gitignored, present here, same values as the Actions s
 ## Conventions
 
 - **Layout:** `suites/<NN-area>/`, the numeric prefix being run order — `00-setup` → `10-smoke` →
-  `20-consultant` → `30-approval` → `40-hr` → `50-titan-manager` → `60-email` →
-  `70-tickets/<ticket>/` → `75-export` → `76-bulk` → `80-platform` → `85-security` → `99-teardown`.
-  New tests go in the area they exercise, ticket regressions in `70-tickets/tt<ticket>/`. `lib/` holds
+  `20-consultant` → `30-approval` → `40-hr` → `70-tickets/tt683/` (the export: process, ZIP, PDFs)
+  → `75-export` → `80-platform` → `85-security` → `99-teardown`. `tt683` stays in `70-tickets/`
+  because `75-export` consumes the entries it exports, and moving it would change the order. No
+  new ticket folders: there are no per-ticket regressions any more. `lib/` holds
   shared helpers, `seeders/` the destructive data builders (the runner matches only
   `verify-*.test.sh`, so it never picks them up).
 - **Inside `00-setup` the order is clear → build → seed**, numbered, not accidental:
@@ -136,7 +145,7 @@ needs `.e2e-autofix.env` (gitignored, present here, same values as the Actions s
   `TT_ROOT="$(cd "$(dirname "$0")" && while [ ! -d lib ] && [ "$PWD" != "/" ]; do cd ..; done; pwd)"`
   then `source "$TT_ROOT/lib/_login.sh"`. Depth-independent, and keeps a test runnable without the
   runner. Copy that pattern into any new test.
-- **Naming:** `verify-<slug>.test.sh`; ticket work `verify-tt<ticket>-<case>.test.sh`. `ci-skip.txt`
+- **Naming:** `verify-<slug>.test.sh`. `ci-skip.txt`
   keys on the **basename**, so re-filing a test elsewhere does not invalidate a skip entry.
 - **Selectors:** `.mx-name-*` only — Mendix generates that class from a widget's *Name*, so it is a
   contract you control from the model, not a styling class. Auto-generated names (`textBox1`,
@@ -173,10 +182,9 @@ convenience only. The `e2e_*` role account credentials are in the archived `FIND
 1. **The eval/grep false pass.** `playwright-cli eval "…return 'ok'" | grep -qiw ok` matches the
    *echoed source line*, not the result — so the assertion passes no matter what the page does.
    Decode with the `_tt_eval_str` helper in `lib/_login.sh` instead of grepping raw output. Guarded
-   by `suites/80-platform/verify-no-echo-trap.test.sh`, which fails the run on any new occurrence.
+   by `tools/check-no-echo-trap.sh`, which the Suite strength workflow runs on every PR (it was a
+   nightly step until 2026-10-30).
 2. **Assertions that cannot fail.** The suite has never had a recorded green run. Treat an unexpected
    PASS as suspicious until the assertion has been proven able to fail — break it deliberately and
-   confirm the test goes red. `suites/10-smoke/verify-helper-selftest.test.sh` asserts that property
-   for the shared helpers on every run, and `run-tests.sh --expect-count N` keeps the *run itself*
-   honest when tests vanish from discovery. Neither substitutes for breaking a new assertion on
-   purpose.
+   confirm the test goes red. `run-tests.sh --expect-count N` keeps the *run itself* honest when
+   tests vanish from discovery, but it does not substitute for breaking a new assertion on purpose.
