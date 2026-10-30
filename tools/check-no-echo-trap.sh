@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# verify-no-echo-trap.test.sh
+# check-no-echo-trap.sh  (was suites/80-platform/verify-no-echo-trap.test.sh)
+#
+# Moved out of the nightly run on 2026-10-30, when the suite was cut back to the core
+# journey: it reads files, not the app, so it now runs on every PR in the Suite
+# strength workflow (.github/workflows/guard-suite-strength.yml) instead.
 #
 # Static guard against the suite's most expensive recurring bug: an assertion that
 # cannot fail because `grep` matched the ECHOED JS SOURCE instead of the result.

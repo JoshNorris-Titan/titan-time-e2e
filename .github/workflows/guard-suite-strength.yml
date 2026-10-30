@@ -47,3 +47,10 @@ jobs:
         run: |
           chmod +x ./tools/guard-suite-strength.sh
           ./tools/guard-suite-strength.sh "origin/${{ github.base_ref }}"
+
+      # The echo-trap scan used to be a nightly step (verify-no-echo-trap). It reads
+      # files, not the app, so since the 2026-10-30 cut-back it runs here, on every PR,
+      # where a new false-pass idiom is caught before it merges rather than a night later.
+      # No label overrides it.
+      - name: No assertion matches its own echoed source
+        run: bash ./tools/check-no-echo-trap.sh
