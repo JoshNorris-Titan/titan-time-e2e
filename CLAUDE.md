@@ -21,7 +21,7 @@ git -C "C:/Users/Josh/Mendix/Titan Time/tests" push -u origin <branch>
 gh pr create --repo JoshNorris-Titan/titan-time-e2e
 ```
 
-**What the guard hook enforces** (`guard-git.py`, which replaced a regex on 2026-09-08): it decides
+**What the guard hook enforces** (the mendix-agentic suite's git guard, at the workspace root since SPB-137): it decides
 from the **resolved target**, not the shape of the flags. A repo whose git root holds a `*.mpr` is a
 **model repo** — read-only git only, on every branch. Every other repo, this one included, may commit
 and push freely. **No** repo may run the work-destroying forms — `reset --hard`, `checkout -- .`,
