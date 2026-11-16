@@ -20,7 +20,11 @@
 # The name is ChangeLog/ChangeBy, set by Main.ACT_ApprovalHelper_Approve from
 # Core.SUB_Account_Name on the ACTING user's account -- FullName, falling back to
 # Email. The one exception is ChangeMethod=Token (the emailed client link), which
-# has no signed-in user and renders Project/ContactName instead.
+# has no signed-in user: since TT-828 it renders the name part of the ChangeBy the
+# link wrote at approval time ("Name <email>" -> "Name"), falling back to
+# Project/ContactName only for older rows with no name recorded
+# (Main.SUB_ChangeLog_ApproverName). A later change of project contact no longer
+# changes the line.
 #
 # NOTE FOR ANYONE EXTENDING THESE TESTS. TT-647/648/649 describe a sentence form,
 # "Approved by <name> (<role>) on <date>", with role suffixes distinguishing an HR
