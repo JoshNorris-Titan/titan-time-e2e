@@ -61,6 +61,13 @@ CONSULTANT="${TT683_CONSULTANT:-e2e_consultant}"
 # 2026-10-26 the only approval it made was the first project's, and the step
 # overran its 14 minutes. Read off dev afterwards: one 40h entry, three 0h.
 #
+# ZERO-HOUR PAIRINGS ARE NOT COUNTED. Since TT-826 Export All still marks a
+# zero-hour week Exported, but leaves a consultant/project pairing whose weeks in
+# the month are all zero-hour OUT of the zip - no monthly timesheet PDF. So the
+# drain (tt683_process_all_toprocess in `week` mode) counts and processes only
+# pairings whose entry has hours; a 0h pairing counted here would be a PDF a1
+# expects and never finds.
+#
 # THE TAB IS NAMED, NOT SEARCHED. Trying both tabs for every project costs a
 # failed wait per project. A dual-approval project (manager then client) can still
 # be seeded as "E2E Dual Approval:manager,client".
