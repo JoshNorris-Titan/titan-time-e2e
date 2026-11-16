@@ -149,19 +149,22 @@ actionable="$(tt_token_rows_all_actionable)"
 
 # 3e) FEEDBACK IS OPEN TO THE CLIENT (TT-838, reversing ST-36). Customers on their
 # approval link get the Feedback tab back (project security gives the Anonymous user
-# role FeedbackModule.User) and a "Send us feedback" line at the foot of the page,
-# which is the way in on a phone, where the theme hides the tab. Josh accepted on
-# 2026-11-16 that a submission carries window.location.href (still holding the
-# approval code, see below) to the Mendix Portal's feedback inbox.
+# role FeedbackModule.User and Atlas_Core.User, the role Atlas_Core.FeedbackWidget is
+# visible to) and a "Send us feedback" line at the foot of the page, which is the way
+# in on a phone, where the theme hides the tab with CSS. Josh accepted on 2026-11-16
+# that a submission carries window.location.href (still holding the approval code,
+# see below) to the Mendix Portal's feedback inbox.
 #
-# The line is part of the page, so its link is the assertion. The tab is portalled
-# into <body> by the widget and only logged, since its visibility also depends on
-# the viewport.
+# The widget portals its one button into <body> and renders it whenever the role
+# allows, whatever the viewport (narrow screens only hide it with CSS), so both the
+# tab and the page's own link are asserted by presence.
 fbl="$(playwright-cli eval "() => String(document.querySelectorAll('.mx-name-lnkFeedback').length)" 2>/dev/null | _tt_eval_str)"
 [ "${fbl:-0}" != "0" ] \
   || tt_fail "the customer-approval page has no 'Send us feedback' link (.mx-name-lnkFeedback) — TT-838: customers must be able to send feedback"
 fb="$(playwright-cli eval "() => String(document.querySelectorAll('.mxfeedback-start-button, .mx-name-feedback1').length)" 2>/dev/null | _tt_eval_str)"
-echo "feedback line present on the anonymous approval page (tab elements: ${fb:-?})"
+[ "${fb:-0}" != "0" ] \
+  || tt_fail "the anonymous customer-approval page shows no Feedback tab — TT-838: customers get the tab back (Anonymous needs Atlas_Core.User and FeedbackModule.User)"
+echo "Feedback tab and 'Send us feedback' line present on the anonymous approval page"
 
 # Evidence for ST-36's open question, logged and never asserted: does the address
 # bar still hold the approval code once the page has opened? (It would ride along
