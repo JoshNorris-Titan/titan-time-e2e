@@ -446,9 +446,10 @@ tt683_close_process_popup() {
   sleep 2
 }
 
-# tt683_process_one [skip]
+# tt683_process_one [skip] [hours]
 # Process the (skip+1)-th eligible owned card on the week currently selected.
-# Prints "<consultant>|<project>".
+# Prints "<consultant>|<project>". With a second argument `hours`, rows whose
+# hours cell reads 0 are not eligible (see _tt683_has_hours_js).
 #
 # RETURN CODES MATTER HERE:
 #   0  processed, label printed
@@ -468,13 +469,14 @@ tt683_close_process_popup() {
 # a button and guessing where the card ends. Only rows in the EXPANDED group exist,
 # and tt683_select_week leaves exactly one expanded.
 tt683_process_one() {
-  local skip="${1:-0}" label i owned
+  local skip="${1:-0}" label i owned hf=""
   owned="$(_tt683_owned_js)"
+  [ "${2:-}" = "hours" ] && hf="if(!($(_tt683_has_hours_js))) continue;"
 
-  label="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; return t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim()); } return ''; }" 2>/dev/null | _tt_eval_str)"
+  label="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; ${hf} if(seen++ < $skip) continue; return t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim()); } return ''; }" 2>/dev/null | _tt_eval_str)"
   [ -n "$label" ] && [ "$label" != "null" ] || return 1
 
-  [ "$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; r.querySelector('$TT_HR_BTN_PROCESS').click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ] || return 1
+  [ "$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; ${hf} if(seen++ < $skip) continue; r.querySelector('$TT_HR_BTN_PROCESS').click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ] || return 1
   sleep 4
 
   # Main.AssignmentEntry_Process opens with a footer 'Process' button. It was
@@ -513,12 +515,26 @@ tt683_process_one() {
 # only if a1 starts reporting a single pairing.
 TT683_PROCESS_TARGET="${TT683_PROCESS_TARGET:-2}"
 
+# _tt683_has_hours_js — JS boolean expression: row `r` has more than 0 hours in
+# its .mx-name-txtProcessTotalHours cell (ApprovalHelper.TotalHours, rendered as
+# a bare number). A missing or unreadable cell counts as no hours, so a renamed
+# widget makes week mode find nothing and a0 fail loudly rather than count blind.
+#
+# ZERO-HOUR PAIRINGS DO NOT COUNT TOWARD THE EXPORT TESTS. Since TT-826 a
+# consultant/project pairing whose weeks in the month are all zero-hour is still
+# marked Exported, but gets NO monthly timesheet PDF in the zip. Counting one here
+# would let a0 pass on a pairing a1 can never find in the archive.
+_tt683_has_hours_js() {
+  echo "parseFloat(((r.querySelector('.mx-name-txtProcessTotalHours')||{}).innerText||'').replace(/[^0-9.]/g,''))>0"
+}
+
 # _tt683_week_pairings — the distinct owned "<consultant>|<project>" labels among
-# the processable cards of the week on screen, one per line. Reads each card the
-# same way tt683_process_one does, so a label here is a label it would print.
+# the processable cards WITH HOURS on the week on screen, one per line. Reads each
+# card the same way `tt683_process_one <skip> hours` does, so a label here is a
+# label it would print.
 _tt683_week_pairings() {
-  local owned; owned="$(_tt683_owned_js)"
-  playwright-cli eval "() => { const out=new Set(); for(const r of [...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')])){ if(!r.querySelector('$TT_HR_BTN_PROCESS')) continue; const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; out.add(t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim())); } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
+  local owned has; owned="$(_tt683_owned_js)"; has="$(_tt683_has_hours_js)"
+  playwright-cli eval "() => { const out=new Set(); for(const r of [...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')])){ if(!r.querySelector('$TT_HR_BTN_PROCESS')) continue; const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(!($has)) continue; out.add(t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim())); } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
 }
 
 # tt683_process_all_toprocess [max] [week]
@@ -546,6 +562,9 @@ _tt683_week_pairings() {
 # also keeps single-pairing cards out of AwaitingExport, where they would only
 # compete with the real one for tt683_choose_export_month's pick.
 #
+# `week` mode also counts and processes only cards with hours (zero-hour
+# pairings get no PDF since TT-826; see _tt683_has_hours_js).
+#
 # The other callers want *something* awaiting export and discard the output, so
 # they keep the tab-wide count.
 #
@@ -555,7 +574,8 @@ _tt683_week_pairings() {
 # people's data, each select-and-count costs several seconds, and walking all of
 # them a second time is what pushed a0 to 815s of its 840s budget on 2026-10-26.
 tt683_process_all_toprocess() {
-  local max="${1:-6}" scope="${2:-tab}" only="${3:-}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have
+  local max="${1:-6}" scope="${2:-tab}" only="${3:-}" done_=0 lbl labels one seen="" uniq=0 skip=0 rc=0 skipped=0 have hrs=""
+  [ "$scope" = "week" ] && hrs="hours"
   tt_login "e2e_hr" "$TT_HR_READY"
   tt_hr_click_tab "$TT683_TAB_TOPROCESS" "HR To Process tab"
   tt_hr_wait_pane "To Process week groups"
@@ -581,7 +601,7 @@ tt683_process_all_toprocess() {
     fi
     skip=0
     while [ "$done_" -lt "$max" ] && [ "$uniq" -lt "$TT683_PROCESS_TARGET" ]; do
-      one="$(tt683_process_one "$skip")"; rc=$?
+      one="$(tt683_process_one "$skip" $hrs)"; rc=$?
       if [ "$rc" -eq 2 ]; then
         # Step over this card and try the next one on the same week.
         skip=$((skip + 1)); skipped=$((skipped + 1))
