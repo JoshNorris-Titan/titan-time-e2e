@@ -147,22 +147,24 @@ actionable="$(tt_token_rows_all_actionable)"
 [ "$actionable" = "true" ] \
   || tt_fail "the token page lists a row that is not awaiting client approval (tt_token_rows_all_actionable: $actionable)"
 
-# 3e) NO FEEDBACK TAB FOR THE CLIENT (ST-36). The red Feedback tab sits in the
-# Titan top-bar layout this page uses, and until the 2026-09-28 model commit it
-# showed to Anonymous too: Atlas_Core.FeedbackWidget is visible to the module roles
-# Atlas_Core.Administrator/User, and project security gave the Anonymous user role
-# Atlas_Core.User. A submission sends a screenshot and window.location.href to the
-# Mendix Portal's feedback inbox. The fix lives in project security, so the next
-# Atlas_Core upgrade or a re-ticked role can bring the tab back with nothing in the
-# layout changing; this is the check that notices.
+# 3e) FEEDBACK IS OPEN TO THE CLIENT (TT-838, reversing ST-36). Customers on their
+# approval link get the Feedback tab back (project security gives the Anonymous user
+# role FeedbackModule.User and Atlas_Core.User, the role Atlas_Core.FeedbackWidget is
+# visible to) and a "Send us feedback" line at the foot of the page, which is the way
+# in on a phone, where the theme hides the tab with CSS. Josh accepted on 2026-11-16
+# that a submission carries window.location.href (still holding the approval code,
+# see below) to the Mendix Portal's feedback inbox.
 #
-# The widget portals its one button into <body> and renders nothing when hidden,
-# so absence of the class it always carries is the whole assertion. The layout
-# renders with the page, and the pending list waited for above is on that page.
+# The widget portals its one button into <body> and renders it whenever the role
+# allows, whatever the viewport (narrow screens only hide it with CSS), so both the
+# tab and the page's own link are asserted by presence.
+fbl="$(playwright-cli eval "() => String(document.querySelectorAll('.mx-name-lnkFeedback').length)" 2>/dev/null | _tt_eval_str)"
+[ "${fbl:-0}" != "0" ] \
+  || tt_fail "the customer-approval page has no 'Send us feedback' link (.mx-name-lnkFeedback) — TT-838: customers must be able to send feedback"
 fb="$(playwright-cli eval "() => String(document.querySelectorAll('.mxfeedback-start-button, .mx-name-feedback1').length)" 2>/dev/null | _tt_eval_str)"
-[ "$fb" = "0" ] \
-  || tt_fail "the anonymous customer-approval page shows the Feedback tab ($fb element(s)) — ST-36: visitors must not see it"
-echo "no Feedback tab on the anonymous approval page"
+[ "${fb:-0}" != "0" ] \
+  || tt_fail "the anonymous customer-approval page shows no Feedback tab — TT-838: customers get the tab back (Anonymous needs Atlas_Core.User and FeedbackModule.User)"
+echo "Feedback tab and 'Send us feedback' line present on the anonymous approval page"
 
 # Evidence for ST-36's open question, logged and never asserted: does the address
 # bar still hold the approval code once the page has opened? (It would ride along
