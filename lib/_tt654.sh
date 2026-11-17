@@ -6,8 +6,10 @@
 #
 # TT-654 exposes Titan Time as an MCP server. Its tools (ListMyAssignments,
 # GetMyWeek, SetWeekHours, SubmitWeek) operate on the SAME AssignmentEntry rows
-# the timesheet page uses, and SubmitWeek calls the same server-side flow the
-# page's Submit button now calls (Main.SUB_AssignmentEntry_Submit). So the data
+# the timesheet page uses. Since TT-823, SubmitWeek takes only WeekStartDate and
+# ConfirmWarnings (no ProjectName) and submits the WHOLE week through the same
+# server-side flow as the page's Submit button (Main.SUB_Timesheet_SubmitWeek):
+# lines with hours go to approval, blank lines close at 0 hours. So the data
 # seeded here serves both the Playwright tests and MCP calls against the app.
 #
 # These helpers leave entries in DRAFT (Save Draft, never Submit). That matters:
