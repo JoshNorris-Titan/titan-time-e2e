@@ -22,7 +22,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 MPR="${TT_MPR:-$ROOT/Titan Timee.mpr}"
-MX="${TT_MX_EXE:-C:/Program Files/Mendix/11.12.2/modeler/mx.exe}"
+MX="${TT_MX_EXE:-C:/Program Files/Mendix/11.12.6/modeler/mx.exe}"
 SUPPRESS="$HERE/titan-time.suppressions.json"
 BASELINE="$HERE/baseline.json"
 OUT="$HERE/.last-check.json"
