@@ -10,10 +10,10 @@
 #   DRY RUN (default): opens every record, reports old -> new, saves NOTHING.
 #   APPLY:             EMAILPREP_APPLY=1 — fills the field and clicks Save.
 #
-#   TT_BASE_URL=https://titantime100-development.mendixcloud.com \
+#   TT_BASE_URL=https://timesheet-dev.titanconsulting.net \
 #   TT_ADMIN_USER=MxAdmin TT_ADMIN_PASS=... EMAILPREP_TARGET=jnorris@titanconsulting.net \
 #   mxcli playwright verify tests/verify-emailprep-apply.test.sh \
-#     --base-url https://titantime100-development.mendixcloud.com -t 30m --verbose
+#     --base-url https://timesheet-dev.titanconsulting.net -t 30m --verbose
 #
 # Two surfaces, both reached from the MxAdmin "Admin Hub":
 #   Accounts Overview -> a[aria-label="Edit Account"] -> Email box -> Save
