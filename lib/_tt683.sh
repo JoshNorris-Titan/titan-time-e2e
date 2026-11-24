@@ -471,10 +471,10 @@ tt683_process_one() {
   local skip="${1:-0}" label i owned
   owned="$(_tt683_owned_js)"
 
-  label="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; return t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim()); } return ''; }" 2>/dev/null | _tt_eval_str)"
+  label="$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(!(parseFloat(((r.querySelector('.mx-name-txtProcessTotalHours')||{}).innerText||'0').replace(/[^0-9.]/g,''))>0)) continue; if(seen++ < $skip) continue; return t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim()); } return ''; }" 2>/dev/null | _tt_eval_str)"
   [ -n "$label" ] && [ "$label" != "null" ] || return 1
 
-  [ "$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(seen++ < $skip) continue; r.querySelector('$TT_HR_BTN_PROCESS').click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ] || return 1
+  [ "$(playwright-cli eval "() => { const rows=[...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')]).filter(r=>r.querySelector('$TT_HR_BTN_PROCESS')); let seen=0; for(const r of rows){ const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(!(parseFloat(((r.querySelector('.mx-name-txtProcessTotalHours')||{}).innerText||'0').replace(/[^0-9.]/g,''))>0)) continue; if(seen++ < $skip) continue; r.querySelector('$TT_HR_BTN_PROCESS').click(); return 'ok'; } return 'nf'; }" 2>/dev/null | _tt_eval_str)" = "ok" ] || return 1
   sleep 4
 
   # Main.AssignmentEntry_Process opens with a footer 'Process' button. It was
@@ -516,9 +516,14 @@ TT683_PROCESS_TARGET="${TT683_PROCESS_TARGET:-2}"
 # _tt683_week_pairings — the distinct owned "<consultant>|<project>" labels among
 # the processable cards of the week on screen, one per line. Reads each card the
 # same way tt683_process_one does, so a label here is a label it would print.
+# HOURS ONLY (2026-11-24). A card counts, and is processed, only when its Total
+# Hours is above zero. Since TT-826 a zero-hour week is exported but not printed,
+# so a month drained from zero-hour cards exports with "no timesheet file to
+# download" and no Main.ExportAll_Waiting popup - a1 then failed "the export popup
+# never appeared" on a month whose weeks all had 0.00 hours.
 _tt683_week_pairings() {
   local owned; owned="$(_tt683_owned_js)"
-  playwright-cli eval "() => { const out=new Set(); for(const r of [...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')])){ if(!r.querySelector('$TT_HR_BTN_PROCESS')) continue; const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; out.add(t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim())); } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
+  playwright-cli eval "() => { const out=new Set(); for(const r of [...document.querySelectorAll('$TT_HR_LST_ENTRIES')].flatMap(l=>[...l.querySelectorAll('.mx-name-cntProcessRow')])){ if(!r.querySelector('$TT_HR_BTN_PROCESS')) continue; const t=((r.querySelector('.mx-name-txtProcessConsultant')||{}).innerText||'').trim(); if(!($owned)) continue; if(!(parseFloat(((r.querySelector('.mx-name-txtProcessTotalHours')||{}).innerText||'0').replace(/[^0-9.]/g,''))>0)) continue; out.add(t+'|'+(((r.querySelector('.mx-name-txtProcessProject')||{}).innerText||'?').trim())); } return [...out].join('\n'); }" 2>/dev/null | _tt_eval_str | grep -v '^null$' | grep .
 }
 
 # tt683_process_all_toprocess [max] [week]
