@@ -568,10 +568,15 @@ tt683_process_all_toprocess() {
   labels="$(tt683_toprocess_weeks)"
   [ -n "$labels" ] || return 0
 
+  # A week can be listed as several groups with one label (see tt_hr_select_week);
+  # number the repeats "<label>#<n>" so every group is opened, not the first each time.
+  local occ="" n
   local IFS='|'
   for lbl in $labels; do
     [ -n "$lbl" ] || continue
     unset IFS
+    n=$(printf '%s' "$occ" | grep -cxF "$lbl"); occ="$occ$lbl"$'\n'
+    [ "$n" -gt 0 ] && lbl="$lbl#$((n + 1))"
     if [ -n "$only" ] && [ "$(tt_week_key "$lbl")" != "$(tt_week_key "$only")" ]; then
       IFS='|'; continue
     fi
