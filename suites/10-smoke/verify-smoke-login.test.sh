@@ -9,7 +9,7 @@
 #
 # Environment (override per env; localhost defaults for a local Studio Pro run):
 #   TT_BASE_URL    app origin (no trailing slash), e.g.
-#                  https://titantime100-development.mendixcloud.com
+#                  https://timesheet-dev.titanconsulting.net
 #   TT_ADMIN_USER  admin username (default: MxAdmin)
 #   TT_ADMIN_PASS  admin password
 #

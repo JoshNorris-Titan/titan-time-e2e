@@ -43,12 +43,12 @@ already has that exact content — often it does.
 ## Running
 
 ```bash
-./run-tests.sh --base-url https://titantime100-development.mendixcloud.com   # whole suite
+./run-tests.sh --base-url https://timesheet-dev.titanconsulting.net   # whole suite
 ./run-tests.sh suites/10-smoke/verify-smoke-login.test.sh   # one script
 ./run-tests.sh suites/30-approval                        # one suite folder
 ./run-tests.sh --list                                    # no target needed
 ./run-tests.sh --no-fail-fast                            # don't stop at the first failure
-TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh --skip-file ci-skip.txt
+TT_BASE_URL=https://timesheet-dev.titanconsulting.net ./run-tests.sh --skip-file ci-skip.txt
 ```
 
 **NEVER run this suite against Josh's local F5 app.** Its user accounts are completely different, so
@@ -56,7 +56,7 @@ a local run is not a weaker test but a *meaningless* one — and it still **writ
 consultants' timesheets, assignments and projects and provisioning them again, in a database these
 tests were never written for. Since 2026-09-06 the bookend clear takes structure with it, so a
 misdirected run destroys **projects**, not just timesheet rows. Always pass an explicit deployed
-`--base-url` (cloud dev, `titantime100-development.mendixcloud.com`); the localhost defaults in
+`--base-url` (cloud dev, `timesheet-dev.titanconsulting.net`); the localhost defaults in
 `run-tests.sh` and `lib/_login.sh` are wrong for this suite. **Nothing checks the target for you** —
 the old wrapper `main\.claude\tools\e2e-local.sh` exits 3 unconditionally since the move (it
 resolves the suite *and* the env file under `$ROOT/tests/`, and `TT_E2E_ROOT` overrides only the

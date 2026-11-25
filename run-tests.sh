@@ -141,7 +141,7 @@ FATAL: no target environment. Set TT_BASE_URL or pass --base-url.
   project, and lib/_fixtures.sh then provisions them again), so it will not guess
   where to run.
 
-    TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh
+    TT_BASE_URL=https://timesheet-dev.titanconsulting.net ./run-tests.sh
     TT_ALLOW_LOCAL_TARGET=1 ./run-tests.sh --base-url http://localhost:8080   # local F5 run
 EOF
   exit 2
@@ -178,7 +178,7 @@ FATAL: refusing to run against a local target ($BASE_URL).
   tests were never written for, that destroys data rather than testing anything.
 
   Point it at a deployed environment:
-    TT_BASE_URL=https://titantime100-development.mendixcloud.com ./run-tests.sh
+    TT_BASE_URL=https://timesheet-dev.titanconsulting.net ./run-tests.sh
 
   If you really do mean the local app, say so explicitly:
     TT_ALLOW_LOCAL_TARGET=1 ./run-tests.sh --base-url $BASE_URL
