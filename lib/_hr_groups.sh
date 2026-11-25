@@ -103,7 +103,7 @@ const HG = (() => {
   const ROWS = '.mx-name-cnt' + kind + 'GroupRows', ROW = '.mx-name-cnt' + kind + 'Row';
   const wk = s => { s = String(s || '').replace(/[–—]/g, '-'); const m = s.match(/([A-Z][a-z]{2})\s+(\d{1,2})\s*-\s*(?:([A-Z][a-z]{2})\s+)?(\d{1,2})(?!\d)/); if (!m) return ''; const p = n => String(n).padStart(2, '0'); return m[1] + ' ' + p(m[2]) + ' - ' + (m[3] || m[1]) + ' ' + p(m[4]); };
   const groups = () => { if (!list) return []; return [...list.querySelectorAll(TOG)].map(t => { let g = t; while (g.parentElement && g.parentElement !== list && g.parentElement.querySelectorAll(TOG).length === 1) g = g.parentElement; const label = ((g.querySelector(LBL) || {}).innerText || '').replace(/\s+/g, ' ').trim(); return { t, g, label, key: kind === 'Invoice' ? label : wk(label), open: !!g.querySelector(ROWS) }; }); };
-  const find = w => { const k = wk(w); return groups().find(x => (k && x.key === k) || x.label === w || x.key === w) || groups().find(x => w && x.label.indexOf(w) >= 0) || null; };
+  const find = w => { const nm = String(w).match(/^(.*)#(\d+)$/); if (nm) { const k2 = wk(nm[1]); return groups().filter(x => (k2 && x.key === k2) || x.label === nm[1])[Number(nm[2]) - 1] || null; } const k = wk(w); return groups().find(x => (k && x.key === k) || x.label === w || x.key === w) || groups().find(x => w && x.label.indexOf(w) >= 0) || null; };
   const rows = g => [...g.querySelectorAll(ROW)];
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const pageIn = async root => { for (let i = 0; i < 30; i++) { const b = [...root.querySelectorAll('.mx-listview-loadMore, button.mx-listview-loadMore')].find(x => x.offsetParent !== null); if (!b) return; b.click(); await sleep(1200); } };
@@ -181,7 +181,12 @@ tt_hr_group_expand() {
 # TT_SUBMITTED_WEEK ("Sep 07 - Sep 13"), a picker label and a group key all work.
 tt_hr_select_week() {
   local w="$1" key r
-  key="$(tt_week_key "$w")"; [ -n "$key" ] || key="$w"
+  key="$(tt_week_key "${w%#*}")"; [ -n "$key" ] || key="${w%#*}"
+  # "<week>#<n>" opens the n-th group of that week. The To Process tab shows one
+  # group per distinct timesheet start TIME, so a week whose timesheets were made at
+  # different times of day (06:00 and 12:00 UTC on dev, 2026-11-25) appears as two
+  # groups with the same label, and find() alone always opened the first.
+  case "$w" in *'#'[0-9]*) key="$key#${w##*#}" ;; esac
   case "$(tt_hr_pane_kind)" in
     Process|Sent|Invoice)
       r="$(tt_hr_group_expand "$key")"
